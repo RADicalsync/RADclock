@@ -1,0 +1,391 @@
+RADclock V0.4 documentation.
+Written by Darryl Veitch, 2017/18
+===============================
+
+Convention to point within code:
+	/dir/dir/file : functionorstructureinfile
+
+Glossary:
+ UPD = Updated Parameter Data
+ algo = algorithm, the RADclock clock synchronization algorithm
+
+
+==============================================================
+Summary
+=======
+
+This documents the configuration system of radclock.
+The source files are in RADclockrepo/radclock/radclock/
+The main ones are
+	config_mgr.c
+	radclock_main.c
+The main associated header files are
+	config_mgr.h
+	sync_algo.h
+
+
+==============================================================
+Introduction
+============
+
+RADclock requires configuration to set parameters at a number of levels, including
+input (live or off-line variants) and output options (log files, raw data),
+algo parameters, and verbosity.
+Unless stated otherwise, the functions here are defined within
+config_mgr.c, and the structures and #define constants in config_mgr.h .
+
+Several data structures are used to store and manage the configuration parameters.
+The most important is  struct radclock_config  from config_mgr.h which holds the actual
+(globally visible) parameters.   An instance, *conf, is defined and initialised in
+main, and made globally accessible via
+
+	clock_handle = create_handle(conf, is_daemon);  // create global handle and put conf in it
+	handle = clock_handle;									// a copy local to main
+
+Conf has 28 members (33 including expanding struct phyparam), best appreciated through
+the order given in the following defn which provides an initialisation to
+default or trivial values for all members except  verbose_level.
+
+void config_init(struct radclock_config *conf)
+{
+	/* Init the mask for parameters */
+	conf->mask = UPDMASK_NOUPD;		 // ie NO_UPDate.  Not a parameter and not in keys[]
+
+	/* Runnning defaults */
+	strcpy(conf->conffile, "");									// not in keys[]
+	strcpy(conf->logfile, "");										// not in keys[]
+	strcpy(conf->radclock_version, PACKAGE_VERSION);
+	conf->server_ipc				= DEFAULT_SERVER_IPC;
+	conf->synchro_type			= DEFAULT_SYNCHRO_TYPE;
+	conf->server_ntp				= DEFAULT_SERVER_NTP;
+	conf->adjust_FBclock			= DEFAULT_ADJUST_FBCLOCK;
+	
+	/* Virtual Machine */
+	conf->server_vm_udp 			= DEFAULT_SERVER_VM_UDP;
+	conf->server_xen 				= DEFAULT_SERVER_XEN;
+	conf->server_vmware 			= DEFAULT_SERVER_VMWARE;
+
+	/* Clock parameters */
+	conf->poll_period				= DEFAULT_NTP_POLL_PERIOD;
+	conf->phyparam.TSLIMIT			= TS_LIMIT_GOOD;
+	conf->phyparam.SKM_SCALE		= SKM_SCALE_GOOD;
+	conf->phyparam.RateErrBOUND	= RATE_ERR_BOUND_GOOD;
+	conf->phyparam.BestSKMrate		= BEST_SKM_RATE_GOOD;
+	conf->phyparam.offset_ratio	= OFFSET_RATIO_GOOD;
+	conf->phyparam.plocal_quality	= PLOCAL_QUALITY_GOOD;
+	conf->phat_init				= DEFAULT_PHAT_INIT;
+	conf->asym_host				= DEFAULT_ASYM_HOST;
+	conf->asym_net					= DEFAULT_ASYM_NET;
+
+	/* Network level */
+	strcpy(conf->hostname, "");
+	strcpy(conf->time_server, "");
+	conf->ntp_upstream_port 	= DEFAULT_NTP_PORT;				// not in keys[]
+	conf->ntp_downstream_port 	= DEFAULT_NTP_PORT;				// not in keys[]
+
+	/* Input/Output files and devices. Only one option can be specified at a time
+	   (either from the conf file or the command line) */
+	strcpy(conf->network_device, "");
+	strcpy(conf->sync_in_pcap, "");
+	strcpy(conf->sync_in_ascii, "");
+	strcpy(conf->sync_out_pcap, "");
+	strcpy(conf->sync_out_ascii, "");
+	strcpy(conf->clock_out_ascii, "");
+	strcpy(conf->vm_udp_list, "");
+}
+
+Here 11 of the 21 DEFAULT_ macros defined in config_mgr.h are used.
+Also defined there are special macro types :
+#define SYNCTYPE_{SPY,PIGGY,NTP,1588,PPS,VM_UDP,XEN,VMWARE} = {0,1,2,3,4,5,6,7}
+#define BOOL_{OFF,ON} = {0,1}
+#define CONFIG_QUALITY_{POOR,GOOD,EXCEL,UNKWN} = {0,1,2,3}
+used to emulate enumeration types of many of the parameters.
+
+
+Closely parallelling the config variables in conf are the use of keys:
+struct _key {
+	const char *label;
+	int keytype;
+};
+(defined in config_mgr.c) to associate meaningful strings to convenient integer codes
+(defined in config_mgr.h) representing the different parameter types.  The key array
+
+static struct _key keys[] = {
+	{ "radclock_version",		CONFIG_RADCLOCK_VERSION},		// defined =1 in config_mgr.h
+	{ "verbose_level",			CONFIG_VERBOSE},         		//          10
+	{ "synchronisation_type",	CONFIG_SYNCHRO_TYPE},			//          13
+ ............
+	{ "",			 				CONFIG_UNKNOWN} 					// used to mark the array end
+}
+
+contains 30 of these, of which only CONFIG_TEMPQUALITY, and the internal management
+variable CONFIG_UNKNOWN are not in conf, and only 5 conf members (see comments above)
+do not have counterparts in keys[].
+
+
+
+==============================================================
+The configuration file:  a read/write interface
+==============================================================
+
+The link between the parameter variables in conf, and the management information
+in keys[], is created by
+
+	void write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
+
+which, for each entry of keys[] selected using the keytype CONFIG_ code, writes out to
+fd a carefully formatted  "label = variable"  string.  The resulting config file
+then becomes a human and machine readable mapping between these.
+The key management functions
+
+  const char* find_key_label(struct _key *keys, int codekey)  // get label given keycode
+  int match_key(struct _key *keys, char* keylabel) 			  // get keycode given label
+  int extract_key_value(char* c, char* key, char* value) // get (label,param) from line of file
+
+implicitly define the 3-tuples (label, keytype/code, parameter), and all
+parameters can then be accessed conveniently by switching on the keycode.
+
+An additional function
+
+	int check_valid_option(char* value, char* labels[], int label_sz) // get posn of label in label array
+
+is used for most (non-string) keys[] entries and also for these option types:
+
+static char* labels_bool[] = { "off", "on" };						// map to codes { 0, 1 }
+static char* labels_verb[] = { "quiet", "normal", "high" };		// map to codes { 1, 2, 3 }
+static char* labels_sync[] = { "spy", "piggy", "ntp", "ieee1588", "pps","vm_udp", "xen", "vmware" };
+	// maps to #define SYNCTYPE_{SPY,PIGGY,NTP,1588,PPS,VM_UDP,XEN,VMWARE} = {0,1,2,3,4,5,6,7}
+
+where the array position plays a natural keycode role.
+
+
+
+
+==============================================================
+Main config functions and the UPD masking
+==============================================================
+
+The main internal (ie not in config_mgr.h) functions are as follows.
+
+void write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
+  - used in config_parse only, and doesnt set anything, only writes to file
+  - for each entry of keys[] writes a "label = variable"  string
+  - variable values come from conf if not NULL, else writes DEFAULT_ values (all 21 used)
+  - for CONFIG_TEMPQUALITY (missing from conf) selects based on phyparam values
+  - some output lines disabled by prefacing with '#', including those for
+CONFIG_{HOSTNAME,TIME_SERVER,VM_UDP_LIST,NETWORKDEV,SYNC_{IN,OUT}_{ASCII,PCAP},CLOCK_OUT_ASCII}
+
+
+There are 27 masks used to control the Updating of Parameter Data (UDP):
+#define UPDMASK_NOUPD			0x0000000
+#define UPDMASK_POLLPERIOD		0x0000001
+....
+#define UPDMASK_PID_FILE		0x0800000
+#define UPD_NTP_UPSTREAM_PORT	0x1000000
+#define UPD_NTP_DOWNSTREAM_PORT	0x2000000
+
+and three management macros :
+#define HAS_UPDATE(val,mask)	((val & mask) == mask)   // true if mask  in val
+#define SET_UPDATE(val,mask)	(val |= mask)            // insert mask into val
+#define CLEAR_UPDATE(val,mask)(val &= ~mask)				 // remove mask from val
+
+
+int update_data (struct radclock_config *conf, u_int32_t *mask, int codekey, char *value) {
+  - used in config_parse to update conf using values extracted from given line in config file
+  - switches on codekey to scan all parameters
+  - on input, mask conveys which parameters to ignore, ie not to take an update from file
+    - usually set to UPDMASK_NOUPD=0x0  so that all params will be updated
+	 - exception is after command line parsing, to avoid overwritting command line inputs
+  - on output, record in mask using SET_UPDATE if the input parameter was actually changed
+  - so, on input mask says what you cant touch, on output what you did touch (if you could)
+
+
+========================
+The three top level `external` config functions, accessible since declared in
+config_mgr.h do the heavy lifting. They are:
+
+
+void config_init(struct radclock_config *conf);
+  - called near beginning of main only
+  - initializes all 28 conf members except verbose_level
+
+  
+int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon);
+  - called in radclock_main.c:{rehash_daemon,main} only
+  - on exit, mask preserves the input 'cant update' and ALL the 'did update' params
+
+ Simplified code:
+ ----------------
+	populate conf->{conffile,logfile} if not already present
+	 
+	if conffile missing,
+	 	call  write_config_file(fd, keys, NULL);  to create it
+  
+	if conffile already there (eg just created it), then:
+	 have_all_tmpqual = 0;    // allows expert temp values to be accepted
+    for each line in conffile
+	    extract the (label, actual parameter value)  on non-comment lines
+		 get corresponding codekey  (ie keytype)
+		 update_data(conf, mask, codekey, value);   // mask used here only, can be updated
+
+	// Ensure all data up to date, conffile could have been from old package
+	write_config_file(fd, keys, conf);
+	 
+   if is_daemon
+	  set conf->sync_in_{ascii,pcap} = ""  for consistency
+ ----------------
+
+
+void config_print(int level, struct radclock_config *conf);
+  - called in radclock_main.c:{rehash_daemon,main} only
+  - straightforward hardwired printing of every element of conf (including all 6 phyparam members), except mask, but not in order of config_init .
+
+
+
+
+==============================================================
+Use of configuration:   initialization and updating
+==============================================================
+
+Configuration is mainly a job for the main program at the beginning of execution:
+
+ Simplified code:
+ ----------------
+   uint32_t param_mask = 0;		  	// local variable, not conf->mask
+	conf = (struct radclock_config *) malloc(sizeof(struct radclock_config));
+	config_init(conf);
+	param_mask = UPDMASK_NOUPD;  		// initialize to 0, meaning none updated
+
+	Command line parsing:  when reading each argument:
+	  record parameters updated into param_mask using SET_UPDATE(param_mask, UPDMASK_..)
+  	  update actual conf->param  member
+	 
+	// Set params according to config file, but ignore those recorded in param_mask
+   config_parse(handle->conf, &param_mask, handle->is_daemon))
+		[ write_config_file if needed
+		  read config_file line by line with update_data
+		  write_config_file again to ensure all good		]
+		
+   correct any incompatible configuration params
+	config_print(LOG_NOTICE, handle->conf);       // record actual config used
+   param_mask = UPDMASK_NOUPD; 		             // reset mask to accept all updates
+ ----------------
+	
+	
+The point of using a file as an interface is that it allows parameter settings
+to be updated on the fly:  it is not desirable to kill and restart a process
+(including all clock history) every time any parameter needs changing.
+A plain text config file also allows manual updating and checking of current parameters.
+
+A live running RADclock can be triggered by a SIGHUP to reparse the
+configuration file and to allow selected parameter changes to be accessed by the related
+threads to affect execution.  This is achieved through the following function, which
+acts like a daemon to 'rehash' the configuration.
+
+static int rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
+	
+This calls config_parse to reread the config file, which marks any updates
+(ie changes compared to existing values in conf) in param_mask.
+A subset of parameters where updates are allowed, or may be attempted are then checked & processed.
+To summarise changes config_print is called before exit.
+ 
+	 Params that can be acted on:
+		 server_ipc:  					on or off
+		 server_ntp:  					on or off
+		 server_vm_udp:				on or off
+		 UPDMASK_SYNC_OUT_ASCII:	close then reopen (reopen will trigger file saving)
+		 UPDMASK_CLOCK_OUT_ASCII:	close then reopen (reopen will trigger file saving)
+		 UPDMASK_SYNC_OUT_PCAP:		close using update_dumpout_source method
+		 UPDMASK_{SYNCHRO_TYPE,SERVER_NTP,TIME_SERVER,HOSTNAME} call update_filter_source method
+	 	 VERBOSE, adjust_FBclock	no specific action, done by call to update_data via config_parse
+		 no action at all:		DELTA_HOST, DELTA_NET:  (should be CONFIG_ASYM_{HOST,NET})
+
+		 
+	 To signal to the algo that parameters under its responsibility, namely
+		 TEMPQUALITY, POLLPERIOD   (results in call to update_peer)
+		 DELTA_{HOST,NET} 			(no current action)
+	 may be updated, conf is used:
+		 conf->mask = param_mask;
+
+
+Finally, rehash_daemon is invoked within an infinite loop in main (when runmode is
+RADCLOCK_SYNC_LIVE of course), when start_live() kills the threads and exits with 0 :
+	 
+		while (err == 0) {
+			err = start_live(handle);
+			if (err == 0) {
+				if (rehash_daemon(handle, param_mask))
+					verbose(LOG_ERR, "SIGHUP - Failed to rehash daemon !!.");
+			}
+		}
+
+
+Note that  conf->mask  is only ever used as follows:
+Set to	UPDMASK_NOUPD  in  config_init
+		  	UPDMASK_NOUPD  in  pthread_dataproc.c:process_stamp
+		   param_mask     in  rehash_daemon
+Read in
+		   process_bidir_stamp
+
+
+
+==============================================================
+Temperature environment settings
+==============================================================
+
+The algo is based on an abstraction, a model, of the vcounter.
+The related parameters are defined in sync_algo.h
+
+struct radclock_phyparam {
+	double TSLIMIT;
+	double SKM_SCALE;
+	double RateErrBOUND;
+	double BestSKMrate;
+	int 	 offset_ratio;
+	double plocal_quality;
+};
+where each of these has #defined {POOR,GOOD,EXCEL} values available.
+
+These parameters vary with temperature environment, and need to be selected as a
+function of it.  As a result, whereas the actual parameters are those above, stored
+in  conf->phyparam, the choice of their values is controlled by temperature
+parameters, controlled in turn by temperature configuration parameters
+(recall that  keys.CONFIG_TEMPQUALITY  was absent from *conf).
+
+Traditional temperature parameters:
+   Only 3 configurations existed:  where each phyparam member was one of {POOR,GOOD,EXCEL} together
+   The function
+		int get_temperature_config(struct radclock_config *conf)
+	autodetects these simple cases and returns a corresponding overall temperature variable of type
+	#define CONFIG_QUALITY_{POOR,GOOD,EXCEL,UNKWN} = {0,1,2,3} .
+	A corresponding key array allows manipulation analogously to the (key[],conf) system:
+	
+static struct _key temp_quality[] = {
+	{ "poor", 			CONFIG_QUALITY_POOR},
+	{ "good",			CONFIG_QUALITY_GOOD},
+	{ "excellent",		CONFIG_QUALITY_EXCEL},
+	{ "",			 		CONFIG_QUALITY_UNKWN} // Must be the last one
+};
+
+   This connects to the CONFIG_TEMPQUALITY keycode in write_config_file as follows:
+		switch (get_temperature_config(conf)) {
+ 			case CONFIG_QUALITY_POOR:
+		  		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TEMPQUALITY ),
+					temp_quality[CONFIG_QUALITY_POOR].label);
+
+
+Expert temperature parameters  [ still experimental ]
+	Here the phyparams may be set more generally.
+	This system does not use keys.CONFIG_TEMPQUALITY, but sets radclock_phyparam directly
+	(currently though just out of the available {POOR,GOOD,EXCEL} values), within write_config_file
+
+
+Control between these two systems is mediated using the external (global to config_mgr.c)
+variable
+  int have_all_tmpqual = 0; 		/* select temperature mode */
+  1: means an overall (Traditional) environment where CONFIG_TEMPQUALITY exists
+  0: enables expert setting to be made, eg update_data will then set each phyparam
+     member individually (or default to GOOD if a problem).
+	  
+The variable is only used within update_data and config_parse.  It is currently a hack because
+although global, it is set in two places: externally, and within config_parse.

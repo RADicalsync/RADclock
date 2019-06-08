@@ -1,0 +1,534 @@
+RADclock V0.4 documentation.
+Written by Darryl Veitch, 2016
+===============================
+
+Convention to point within code:
+	/dir/dir/file : functionorstructureinfile
+
+Glossary:
+ rd = raw data
+ rdb = raw data bundle
+ bidir = bidirectional
+ unidir = unidirectional
+ algo = algorithm, the RADclock clock synchronization algorithm
+ {c,s}-halfstamp = {client,source}-halfstamp
+
+
+==============================================================
+Summary
+=======
+
+This documents the stamp functionality of radclock, including obtaining the
+underlying raw data (rd) from data sources of different types, and the
+definition, formation and storage of stamps based on them.
+The source files are in RADclockrepo/radclock/radclock/
+The main ones are
+	stampinput.c
+	stampinput-{ascii,tracefile,livepcap,spy}.c
+	rawdata.c
+	create_stamp.c
+The main associated header files are
+	sync_algo.h
+	stampinput{,_int}.h
+	rawdata.h
+	create_stamp.h
+
+
+==============================================================
+Introduction
+============
+
+RADclock can operate on reference timing data of different types, obtained from
+different sources. Not all (type,source) combinations make sense or are currently supported.
+The conceptual types are enumerated in rawdata.h as
+typedef enum { 
+	RD_UNKNOWN,			// placeholder
+	RD_TYPE_SPY,		// data obtained by `spying on' the host's own (non-RADclock) system clock
+	RD_TYPE_NTP,		// the main case, getting NTP pkt data via pcap
+	RD_TYPE_1588,		// 1588 data from the kernel: not yet fully implemented
+	RD_TYPE_PPS,		// PPS data from the kernel:  not yet fully implemented
+} rawdata_type_t;
+Analogous definitions at the stamp level (STAMP_NTP etc) are defined in sync_algo.h
+
+The idea of a "stamp" is that it should hold a fundamental timestamp-tuple, that is
+a reference timestamp(s) and the matching raw vcounter timestamp(s),
+forming a canonical unit of input to some synchronization algorithm.
+The definition is chosen to be general, covering both the traditional bidirectional
+(bidir) paradigm, where you have in fact two (timeserver,raw) timestamp pairs
+(outgoing from client to server, and incoming from server to client) in a single
+four-tuple, and the unidirectional paradigm (unidir), needed for PPS input or for
+NTP broadcast, where there is just a single (ref,raw) pair.
+
+The stamp data structure: struct stamp_t holds more than just the
+{uni,bi}dir_stamp typed tuple itself (see sync_algo.h for definitions):
+
+struct stamp_t {
+    stamp_type_t type;  // STAMP_{UNKNOWN,SPY,NTP,PPS}
+    int qual_warning;	/* warning sent to algo if something suspicious */
+    uint64_t id;        // matching key for client/server pkt pair
+	// Captured NTP fields
+    char server_ipaddr[INET6_ADDRSTRLEN];
+    int ttl;
+    int stratum;
+    int LI;			// value of LI bits in response header, values in {0,1,2,3}
+    uint32_t refid;
+    double rootdelay;
+    double rootdispersion;
+	// Actual (ref,raw) timestamp tuples
+    union stamp_u {
+        struct unidir_stamp ustamp;   /* this is just a counter */
+        struct bidir_stamp  bstamp;   /* traditional algo fourtuple */
+    } st;
+};
+
+The stamp code grew out of the bidir paradigm based on NTP packet exchange, and
+bpf-based kernel modifications to provide access to corresponding raw timestamps.
+Although it is now more general, it remains NTP and bidir centric in a number of areas.
+For example stamp_t is NTP centric and doesnt really cover PPS.
+Nonetheless, much of the complexity of the current code is due to an attempt to
+provide generality and modularity, to allow future expansion into PPS and IEEE1588
+in particular, or to allow multiple sources, without having to rewrite the higher level functions.
+
+Matching the (attempted) uniform definition of stamp_t is a generic
+definition of a stamp source.  Struct stampsource (in stampinput_int.h) defines a
+high level view of a stamp''s data, and pointers to functions (methods) to perform key
+operations on it such as initialization and get_next_stamp, without having to know which
+kind of stamp we are talking about.  The functions that form the bridge, and
+the workhorse functions they rely on that do the real work, are given in
+stampinput-{ascii,tracefile,livepcap,spy}.c  .
+The workhorse functions make use of lower level routines, defined in rawdata.c,
+that extract the data from the actual underlying sources themselves, such as bpf via pcap.
+An exception is stampinput-ascii, which has no need of raw support as it is
+already preprocessed at a level above that (each line of the ascii file contains
+a full and valid bidir stamp).
+
+In the most important case, namely STAMP_NTP with bidir stamps,
+RADclock is operating with a remote timing reference which is an NTP server.
+Here raw timestamps are obtained from the kernel, and remote server timestamps
+from NTP packets.
+There are three ways in which such data can be passed to RADclock, selectable
+according the RADclock input parameters:
+	running live from pcap :  the primary method used to capture new data
+	running dead from pcap :  reruns raw data previously (optionally) stored by a live pcap run
+	running dead from ascii:  reruns ascii data previously (optionally) generated
+									  and stored by a live or dead pcap run, or emulator.
+
+In the following sections we will focus mainly, but not exclusively, on the most
+important and complex of these, running live from pcap.
+In this context, by "packet" we mean (both here and in the code) the part of the
+frame pcap has captured. This begins with the link layer header
+(typically DLT_EN10MB=Ethernet), followed by the IP packet IP[UDP[NTP]] .
+
+
+
+==============================================================
+Obtaining the raw data (rd) of packets, and the rd list/queue
+==============================================================
+
+Unless stated otherwise, the functions here are defined within rawdata.c, and
+the struct types in rawdata.h .
+Again we focus on the main case of bidir NTP packets.
+
+The packets themselves are captured by pcap via an infinite-loop call to
+pcap_loop  within capture_raw_data().
+Fundamentally, pcap provides a pcap header: "pcap_hdr", and the packet: "packet_data",
+It gives these to the callback fn fill_rawdata_pcap, which maps these as well
+as the vcounter value into a rd_pcap_pkt structure within a raw data bundle (rdb)
+structure, given below.
+
+Note that the vcounter value is itself returned (or even hidden, thanks to the
+RADclock kernel code) inside the data provided by pcap, and needs to be extracted.
+For this purpose fill_rawdata_pcap calls the libradclock function extract_vcount_stamp.
+Exactly how this works is a kernel specific issue lying below the rd level described here.
+
+The idea of a rd_pcap_pkt is to collect the full raw data related to a captured packet,
+regardless of incoming/outgoing direction (thus the structure remains useful for pcap
+based unidir).
+
+struct rd_pcap_pkt {           // defined in rawdata.h
+	vcounter_t vcount;				/* Raw vcount */
+	struct pcap_pkthdr pcap_hdr;	/* PCAP header */
+	void* buf;							/* Points to packet_data */
+};
+
+The idea of the rdb is to allow this raw data to be chained in a queue, and
+to provide abstraction so that different raw data types can be supported.
+
+struct raw_data_bundle {        	// defined in rawdata.h
+	struct raw_data_bundle *next;	// next oldest rdb
+	int read;						/* Have I been read? i.e. ready to be freed? */
+	rawdata_type_t type;			/* If we know the type, let's put it there */
+	union rd_t {
+		struct rd_pcap_pkt  rd_pkt;
+		struct rd_spy_stamp rd_spy;
+	} rd;
+};
+
+The queue data type itself is
+
+struct raw_data_queue { 			// the queue itself
+	struct raw_data_bundle *rdb_start;
+	struct raw_data_bundle *rdb_end;
+	pthread_mutex_t rdb_mutex;
+};
+
+The rd queue is created in radclock_main.c:create_handle as the pcap_queue member
+of the radclock_handle structure (see radclock_daemon.h), itself accessible via
+a global pointer, clock_handle, defined at the top of radclock_main.c .
+
+The rd queue is used as a FIFO queue. Its purpose is as a raw data buffer, enabling
+new data to be added quickly, and extracted asynchonously later.
+
+Insertions (at head) and deletions (at tail) of an rdb into the list performed by
+	inline void insert_rdb_in_list(struct raw_data_queue *rq, struct raw_data_bundle *rdb)
+	struct raw_data_bundle* free_and_cherrypick(struct raw_data_queue *rq)
+To avoid certain problems free_and_cherrypick will never remove the last rdb,
+which means it must handle the case when an rdb has already been read but not yet
+removed (hence the read member of the structure above), and be prepared to remove
+it later. Hence although insertion is simple and classic, deletion is not in this list.
+
+The callback fill_rawdata_pcap puts the filled rbd into a list using insert_rdb_in_list.
+The call to free_and_cherrypick occurs within deliver_rawdata_pcap, which uses
+the rdb to populate and return a radpcap_packet_t structure (fills all fields
+except ss_if), as well as the vcount separately.
+
+// These are defined in create_stamp.h
+// Note that the member names are misleading and should be changed !
+#define RADPCAP_PACKET_BUFSIZE 65535	  // max this out, you never know
+typedef struct radpcap_packet_t {
+    void *header;		// header=buffer, hence points to pcap_hdr
+    void *payload;	// points to frame (start of linklayer header, not NTP payload!)
+    void *buffer;		// everything that was in the rdb:  [pcap_hdr; frame/buf ]
+    size_t size;		// size of everything, ie of [pcap_hdr; frame/buf ]
+    u_int32_t type;	/* rt protocol type, set by pcap_datalink */
+    struct sockaddr_storage ss_if;	/* Capture interface IP address */
+} radpcap_packet_t;
+
+This structure keeps everything that was in the rdb, but restructures it and
+adds some networking metadata.  It represents the passage from rd processing to
+stamp creation, however the rational for the extra complexity is not entirely clear.
+How it is used is covered under stamp creation below.
+
+Note that the vcount was already extracted and held separately within the rd
+structure, and so is not held explicitly here, though it is still there
+implicitly within the pcap data.  The vcount is recovered again from a
+radpcap_packet_t packet as follows (see create_stamp.c) :
+
+get_network_stamp
+	get_packet(handle,userdata, packet)  ( becomes get_packet_livepcap when called)
+		extract vcount and puts it in standard header (see below)
+	update_stamp_queue(peer->q, packet, stats)
+		get_vcount(packet, &vcount))    // extract from standard header
+		push_{server,client}_halfstamp(q, ntp, &vcount, ...);  // vcount now safe in queue
+
+The reason why vcount is extracted, then thrown away and need to extract again, is because
+the source may be different.  If it is live then you have it already, but if dead, it must
+be extracted from the SLL header, so a generic means is needed to store and then extract it
+regardless of source.  This is the SLL header trick, used not just for raw storage but also
+as a source-independent format.
+
+
+
+
+
+==============================================================
+Raw data storage
+================
+
+It is advantageous to store the underlying data of a RADclock synchronization
+experiment or run, as this allows updated versions of the RADclock algorithm to
+be tested and compared based on a (potentially rich) set of historical data.
+
+The "rawer" such data is the better, as this allows not only the algo, but
+also other aspects of the RADclock software, such as stamp creating and vetting,
+to be tested. It also allows other available data which is not currently
+used, or not used in detail, to be stored for potential future exploitation by
+RADclock, or as metadata to provide context for troubleshooting or research.
+An example is TTL values from captured IP packets, or timeserver Stratum levels.
+Much of this data is placed into the stamp structure (stamp_t), but it is not
+extensively used.
+
+The level of data storage in RADclock is chosen to be that of the raw data (rd).
+In other words, all the data provided by the timing reference, together with a
+corresponding raw vcount timestamp.  In the case of the RD_TYPE_NTP type,
+this corresponds to that stored in the rd_pcap_pkt structure.
+
+Although conceptually rd_pcap_pkt contains the desired data, it makes sense to
+store on file in a pcap friendly format, so that existing pcap functions can
+be used to open, read, write and close a file containing the raw data.
+
+Since pcap_loop provides a "pcap_hdr", and the packet: "packet_data", it seems that
+we could simply push these to file using a call to pcap_dump as soon as we get them
+from pcap, say within rawdata.c:fill_rawdata_pcap .
+The problem with this is that the vcount value is hidden within the pcap data,
+and the details of exactly how depend on the kernel raw timestamping implementation,
+and potentially the link layer used and other factors.
+
+In order to provide a standardized storage format that is still pcap-legal we
+proceed as follows.  First, we wait until the raw data, including the vcount have
+already been extracted. We then replace the original frame header within the packet
+with a Linux SLL which has a convenient 16 byte size including an 8 byte address field,
+and place the vcount value within this address field.   This modified packet data,
+and the unaltered pcap_hdr data, can then be stored via pcap_dump.
+The other fields in the SLL header are populated with useful? and legal values
+to avoid any red flags from pcap.
+
+It is convenient to do this at the workhorse stamp creation level.
+The functions involved are all in stampinput_livepcap.c. The simplified calls are:
+	get_packet_livepcap(,,,)
+    	deliver_rawdata_pcap(handle, packet, &vcount); // get the pre-extracted data
+        insert_sll_header(packet)            	// replace original frame header
+        set_vcount_in_sll(packet, vcount)    	// put the vcount into fake header
+		pcap_dump(traceoutput, pcap_hdr, packet) // param names changed for clarity
+
+Raw files are used when RADclock is invoked using a "running dead from pcap" source,
+also known as reading from a tracefile.  In this case the pcap data is read
+using a call to pcap_next_ex within stampinput_tracefile.c:get_packet_tracefile .
+Clearly, since the original frame header has been discarded, the original link
+layer details cannot be recovered by running RADclock with such raw input.
+
+The rd level is before stamp creation. Both the higher level raw writing
+(get_packet_livepcap) and raw reading functions (get_packet_tracefile) are
+central functions within the stamp generation process, and fill/return
+radpcap_packet_t structures. This means that when using raw stored input,
+stamp creation operations such as stamp matching (see below), and everything above
+them, proceed exactly as if the data were provided live. Code levels below rd,
+such as any kernel interactions, cannot be activated or tested in this way.
+
+
+
+
+==============================================================
+Accessing stamps
+================
+
+To obtain stamps a stampsource variable is first created, then made available
+to the global radclock handle. This is done by the lines
+	stamp_source = create_source(handle);    // returns a (struct stampsource *)
+	handle->stamp_source = (void *) stamp_source;
+within init_handle(), called by main.
+
+Along with create_source, the top level stamp functions are defined in stampinput.c:
+
+  int get_next_stamp(struct radclock_handle *handle, struct stampsource *source, struct stamp_t *stamp)
+  void       destroy_source(struct radclock_handle *handle, struct stampsource *source)
+  int  update_filter_source(struct radclock_handle *handle, struct stampsource *source)
+  int update_dumpout_source(struct radclock_handle *handle, struct stampsource *source)
+
+and basic stampsource structures in stampinput_int.h :
+
+// Note: the source type is not recorded within the stampsource structure.
+struct stampsource
+{
+	void *priv_data;                  // actual data will depend on source type
+	struct stampsource_def *def;
+	struct timeref_stats ntp_stats;   // NTP centric already!
+};
+
+struct stampsource_def
+{
+	/* Initialise the source */
+	int (*init)(struct radclock_handle *handle, struct stampsource *source);
+	/* Get the next stamp, return 0 on sucess */
+	int (*get_next_stamp)(struct radclock_handle *handle, struct stampsource *source, struct stamp_t *stamp);
+	/* Break blocking loop getting packets */
+	void (*source_breakloop)(struct radclock_handle *handle,struct stampsource *source);
+	/* Clean up */
+	void (*destroy)(struct radclock_handle *handle, struct stampsource *source);
+	/* Update source BPF filter */
+	int (*update_filter)(struct radclock_handle *handle,struct stampsource *source);
+	/* Update source RAW file dump out */
+	int (*update_dumpout)(struct radclock_handle *handle,struct stampsource *source);
+};
+
+The top level functions are simple wrappers calling the relevant functions
+already pointed to within stamp_source.def, using #define INPUT_OPS(x) x->def
+as a shorthand.
+
+We now explain how create_source initializes the function pointers within
+stamp_source.def , which are generic, ie with no indication as to source type.
+They are assigned to the source-specific functions obeying
+the prototype, by using configuration parameters accessed via
+	handle->run_mode = {RADCLOCK_SYNC_DEAD,RADCLOCK_SYNC_LIVE} 		and
+	handle->conf->synchro_type = SYNCTYPE_{SPY,NTP,PIGGY,PPS,1588}
+to map to the desired source type, and thus to the needed specific function sets,
+declared as externs at top of file:
+	extern struct stampsource_def ascii_source;
+	extern struct stampsource_def livepcap_source;
+	extern struct stampsource_def filepcap_source;
+	extern struct stampsource_def spy_source.
+
+For example in the case of livepcap_source, the *def member is set to
+the following external variable defined at the end of stampinput-livepcap.c :
+struct stampsource_def livepcap_source =
+{
+	.init 				= livepcapstamp_init,
+	.get_next_stamp 	= livepcapstamp_get_next,
+	.source_breakloop	= livepcapstamp_breakloop,
+	.destroy 			= livepcapstamp_finish,
+	.update_filter  	= livepcapstamp_update_filter,
+	.update_dumpout 	= livepcapstamp_update_dumpout,
+};
+where the fns on the RHS are also defined in stampinput-livepcap.c .
+
+To follow the chain down to meet the rd level discussed above, consider
+static int livepcapstamp_get_next(struct radclock_handle *handle, struct stampsource *source,
+	                              struct stamp_t *stamp)
+This function is (somewhat confusingly) in fact mainly a wrapper for a generic
+get_network_stamp function (see below), but it passes the actual workhorse function
+stampinput-livepcap.c:get_packet_livepcap to it, thereby making it source specific.
+(the same trick applies to the other source types).
+
+Finally, get_packet_livepcap  gets packet data using the rd to stamp bridging
+function deliver_rawdata_pcap  described under the rd documentation above.
+Like it, it returns a radpcap_packet_t, not a stamp.
+
+In the end, stamps are obtained by calling get_next_stamp() within process_stamp,
+which is core function called either directly by main, or through the DATA_PROC thread.
+
+A summary of all this minus the detail, in the case of livepcap, is:
+
+Source File 			   	Function                     		Returns         Comment
+--------------------------------------------------------------------------------
+pthread_mgr.c 				  thread_data_processing 									 [ infinite loop ]
+pthread_dataproc.c     		process_stamp						rad_data			 [ calls algo ]
+stampinput.c   			    get_next_stamp						stamp           [ fn pointer ]
+stampinput-livepcap.c	     livepcapstamp_get_next			stamp           [ wrapper ]
+create_stamp.c 					get_network_stamp					stamp				 [ generic taking callback]
+											update_stamp_queue
+											get_fullstamp_from_queue_andclean stamp_t
+stampinput-livepcap.c		  		get_packet_livepcap			radpcap_packet_t [writes to .raw]
+rawdata.c									deliver_rawdata_pcap		radpcap_packet_t, vcount
+rawdata.c										free_and_cherrypick  rdb
+
+Consume data from rd queue ^  	[DATA_PROC thread]
+============================================================================================
+Produce live data to rd queue v	[MAIN thread]
+
+rawdata.c										insert_rdb_in_list	rdb
+rawdata.c									fill_rawdata_pcap			rdb				[ pcap_loop callback ]
+rawdata.c 								pcap_loop 						pcap_hdr, pkt  [ infinite loop ]
+rawdata.c							capture_raw_data
+radclock_main.c 				  start_live
+radclock_main.c 				 main
+
+See also RADclockDoc_threads for more detail on the lower half of this summary.
+
+
+==============================================================
+Creating stamps & stamp queue
+=============================
+
+Unless stated otherwise, the functions here are defined within create_stamp.c .
+
+In the bidir paradigm, an essential task is that of packet matching, meaning
+working out which incoming and outgoing packets (and associated raw timestamps)
+belong together in the client<-->server exchange, and bringing them together
+into a valid four-tuple.  This means that a measured client
+packet must be held somehow until its transformed self returns from the server.
+
+Several scenarios must be dealt with successfully. Most common is a
+failure of the server to respond to a measured outgoing packet. Others include
+out of order server packets, the possibility of duplicate server packets, and apparently
+impossible ones such as an incoming server packet with no matching outgoing client packet.
+It is necessary to have a matching system that can deal with any possible ambiguity.
+If a clear match it not possible then dropping the stamp is acceptable, since
+packet loss is in any case a common occurence to which the algo must be robust.
+
+To address the above stamp matching issues comprehensively, we define a stamp
+queue, using the following declarations
+
+struct stq_elt {          // the element in the stamp queue, basically a stamp_t
+	struct stamp_t stamp;
+	struct stq_elt *prev;
+	struct stq_elt *next;
+};
+struct stamp_queue {      // the queue itself, access to it and its size
+	struct stq_elt *start;
+	struct stq_elt *end;
+	int size;
+};
+#define MAX_STQ_SIZE	20
+
+The queue is created by init_peer_stamp_queue(&peer) and then passed to the handle
+handle->active_peer = (void*) &peer; .  Here peer is a (struct bidir_peer *)
+(defined in sync_algo.h) whose last member peer->q is a pointer to the queue.
+In the case of dead pcap input this occurs in main, and for live pcap
+in pthread_mgr.c:thread_data_processing(void *c_handle).
+
+Insertion into the stamp queue is performed by
+	int insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
+where mode = MODE_{CLIENT,SERVER} is the NTP definition of client or server
+packets, and deletion by
+	int get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
+however these functions do not merely insert and delete elements, they also
+perform the actual packet matching including much packet vetting.
+In fact insertion is always of client or server `halfstamps` rather than
+complete ones, and the stamp is only complete or `full` after the second half arrives.
+
+Matching is based on the use of a key, held by the id field in a stamp, that
+should be unique to every client-server pair.   The key used is the
+timestamp inserted into the xmt field of the client NTP header by the NTP sending client
+(this could be a system clock, or RADclock based timestamp, depending on circumstances),
+which is replicated into the org field of the returning server packet.
+It should be unique in practice as it it 64 bits wide, and the system clock
+(even if inaccurate) is typically non-decreasing, with a period smaller than
+the time to transmit UDP packets back-to-back.  However, the system clock can
+sometimes jump backwards, so that id-order may not be the same as true temporal order.
+
+The following operations are performed on half-stamps passed to insertandmatch_halfstamp :
+ - if the id of the half-stamp is new,
+      trim off bottom stamp if queue exceeds MAX_STQ_SIZE
+      create a new element and insert at head
+ - if the id is already present:
+ 	  if    this side has been seen before, discard as a duplicate
+	  else  this is the other side, use it to complete the stamp in situ
+
+The following operations are performed by get_fullstamp_from_queue_andclean :
+ - scans the list from tail to head, if no complete stamps, return 1
+ - if find one, return it, then remove it as well as all dangerous halfstamps
+
+A dangerous halfstamp is one which could result in an out of order return of a
+fullstamp at some later time.  Here the time-ordering of a stamp is given by the
+Ta field (the vcount raw timestamp of the outgoing client packet).
+This can occur, for example, due to the network reordering client or server timestamps.
+
+
+
+-----------------------
+The top level stamp accessing function (generic across live or dead pcap) is
+ int get_network_stamp(struct radclock_handle *handle, void *userdata,
+	  int (*get_packet)(struct radclock_handle *, void *, radpcap_packet_t **),
+	  struct stamp_t *stamp, struct timeref_stats *stats)
+
+ Simplified code:
+ ----------------
+  get_packet_livepcap  // (get_packet set to this), get new radpcap_packet_t, write to .raw file
+  stats->ref_count++;  // count them
+
+  update_stamp_queue(peer->q, packet, stats);	// convert to half stamp, enqueue/match/vett
+    get_valid_ntp_payload                       // get NTP data at last
+    case MODE_CLIENT:
+        bad_packet_client(ntp, ss, &ss_dst, stats);
+        push_client_halfstamp(q, ntp, &vcount);             // "Stamp queue: inserting client stamp..
+        	 insertandmatch_halfstamp(q, &stamp, MODE_CLIENT)	// "  stamp queue:
+    case MODE_SERVER:
+        bad_packet_server(ntp, ss, &ss_src, stats);	// based on server's opinion of self
+        push_server_halfstamp(q, ntp, &vcount, &ss_src, &ttl); // "Stamp queue: inserting server..
+        	 insertandmatch_halfstamp(q, &stamp, MODE_SERVER)     // "  stamp queue:
+
+  if fullstamp available
+  	get_fullstamp_from_queue_andclean(peer->q, stamp);	// get a full stamp out, drop older half stamps
+
+  verbosity for
+    stamp queue operations
+    NTP server sanity change
+
+
+A final level of stamp vetting is performed by insane_bidir_stamp within process_stamp,
+which acts on the stamp pulled from the queue by get_fullstamp_from_queue_andclean
+(via get_next_stamp).
+
+
+
+
