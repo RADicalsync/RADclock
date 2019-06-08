@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux <julien@synclab.org>
+ * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2013-2017, Darryl Veitch <darryl.veitch@uts.edu.au>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,19 +32,39 @@
 
 // TODO this file is really poorly named
 
-/*
- * These don't exist in the standard math library
- */
+/* These don't exist in the standard math library */
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
+/*
+ * NTP timestamp fields in NTP timescale+format, need UTC <--> NTP conversions.
+ *   epoch:		  (NTP,UTC) = Jan 1 (1900,1970)        NTP = UTC + JAN_1970
+ *   frac format:(NTP,tvalUTC) = (#(2^-32)s, #mus)    NTP = UTC*1e-6 *2^32
+ */
+static inline void
+UTCld_to_NTPtime(long double *time, l_fp *NTPtime)
+{
+	NTPtime->l_int = (uint32_t) *time;
+	NTPtime->l_fra = (uint32_t) (4294967296.0*(*time - NTPtime->l_int) + 0.5);
+	NTPtime->l_int += JAN_1970;
+}
+
+static inline long double
+NTPtime_to_UTCld(l_fp ntp_ts)
+{
+	long double  time;
+	time  = (long double)(ntohl(ntp_ts.l_int) - JAN_1970);
+	time += (long double)(ntohl(ntp_ts.l_fra)) / 4294967296.0;
+	return (time);
+}
 
 static inline void
-timeld_to_timeval(long double *time, struct timeval *tv)
+UTCld_to_timeval(long double *time, struct timeval *tv)
 {
 	tv->tv_sec  = (uint32_t) *time;
 	tv->tv_usec = (uint32_t) (1000000*(*time - tv->tv_sec) + 0.5);
 }
+
 
 /* Subtract two timeval */
 static inline void

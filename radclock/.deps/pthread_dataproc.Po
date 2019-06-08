@@ -1,4 +1,4 @@
-pthread_rawdata.o pthread_rawdata.o: pthread_rawdata.c \
+pthread_dataproc.o pthread_dataproc.o: pthread_dataproc.c \
   /usr/include/arpa/inet.h /usr/include/sys/cdefs.h \
   /usr/include/sys/_types.h /usr/include/machine/_types.h \
   /usr/include/machine/endian.h /usr/include/string.h \

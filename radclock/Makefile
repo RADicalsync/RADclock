@@ -82,7 +82,7 @@ PROGRAMS = $(bin_PROGRAMS)
 am_radclock_OBJECTS = client_ntp.$(OBJEXT) create_stamp.$(OBJEXT) \
 	fixedpoint.$(OBJEXT) config_mgr.$(OBJEXT) rawdata.$(OBJEXT) \
 	pthread_mgr.$(OBJEXT) pthread_ntpserver.$(OBJEXT) \
-	pthread_rawdata.$(OBJEXT) pthread_trigger.$(OBJEXT) \
+	pthread_dataproc.$(OBJEXT) pthread_trigger.$(OBJEXT) \
 	radclock_main.$(OBJEXT) stampinput.$(OBJEXT) \
 	stampinput-ascii.$(OBJEXT) stampinput-livepcap.$(OBJEXT) \
 	stampinput-tracefile.$(OBJEXT) stampinput-spy.$(OBJEXT) \
@@ -258,7 +258,7 @@ radclock_SOURCES = \
 		rawdata.c \
 		pthread_mgr.c \
 		pthread_ntpserver.c \
-		pthread_rawdata.c \
+		pthread_dataproc.c \
 		pthread_trigger.c \
 		radclock_main.c \
 		stampinput.c \
@@ -375,7 +375,7 @@ include ./$(DEPDIR)/create_stamp.Po
 include ./$(DEPDIR)/fixedpoint.Po
 include ./$(DEPDIR)/pthread_mgr.Po
 include ./$(DEPDIR)/pthread_ntpserver.Po
-include ./$(DEPDIR)/pthread_rawdata.Po
+include ./$(DEPDIR)/pthread_dataproc.Po
 include ./$(DEPDIR)/pthread_trigger.Po
 include ./$(DEPDIR)/radclock_main.Po
 include ./$(DEPDIR)/rawdata.Po

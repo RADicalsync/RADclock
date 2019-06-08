@@ -49,12 +49,12 @@
 #include "radclock.h"
 #include "radclock-private.h"
 #include "radclock_daemon.h"
-#include "misc.h"
 #include "verbose.h"
 #include "sync_history.h"
 #include "sync_algo.h"
 #include "config_mgr.h"
 #include "proto_ntp.h"
+#include "misc.h"
 #include "pthread_mgr.h"
 #include "jdebug.h"
 
@@ -152,22 +152,19 @@ ntp_client_init(struct radclock_handle *handle)
 
 /* Create a fresh NTP request pkt.
  * Each call will return a unique pkt since the vcounter is read afresh.
- * Potential uniqueness failure due to limited resolution is dealt with.
- * NTP timestamp fields are in NTP format, requiring UTC --> NTP conversion.
- *   epoch:		  (NTP,UTC) = Jan 1 (1900,1970)        NTP = UTC + JAN_1970
- *   frac format:(NTP,UTC) = (#(2^-32)s, #mus)        NTP = UTC*1e-6 *2^32
+ * Potential uniqueness failure due to finite resolution is dealt with.
  */
 static int
 create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
-		struct timeval *xmt)
+		struct timeval *xmt_tval)
 {
-	struct timeval reftime;
 	long double time;
+	l_fp reftime, xmt;
 	vcounter_t vcount;
 	int err;
 
-	static long double last_xmt = 0.0;			// used to let first packet through
-	static struct timeval last_nonce = {0,0};	// used to ensure nonce is unique
+	static long double last_time = 0.0;		// used to let first packet through
+	static l_fp last_xmt = {0,0};				// used to ensure nonce is unique
 
 	pkt->li_vn_mode	= PKT_LI_VN_MODE(LEAP_NOTINSYNC, NTP_VERSION, MODE_CLIENT);
 	pkt->stratum		= STRATUM_UNSPEC;
@@ -181,9 +178,24 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	/* Reference time [ time client clock was last updated ] */
 	vcount = RAD_DATA(handle)->last_changed;
 	read_RADabs_UTC(&handle->rad_data, &vcount, &time);
-	timeld_to_timeval(&time, &reftime);
-	pkt->reftime.l_int = htonl(reftime.tv_sec + JAN_1970);
-	pkt->reftime.l_fra = htonl(reftime.tv_usec * 4294967296.0 / 1e6);
+	
+	UTCld_to_NTPtime(&time, &reftime);
+	pkt->reftime.l_int = htonl(reftime.l_int);
+	pkt->reftime.l_fra = htonl(reftime.l_fra);
+
+//	UTCld_to_timeval(&time, &reftime);
+//	pkt->reftime.l_int = htonl(reftime.tv_sec + JAN_1970);
+//	pkt->reftime.l_fra = htonl((uint32_t)(reftime.tv_usec * 4294967296.0 / 1e6));
+//
+//	verbose(LOG_NOTICE, "reftime tval: %6lu",	reftime.tv_usec);
+//	verbose(LOG_NOTICE, "reftime tval: %6u",	reftime.tv_usec);
+//	verbose(LOG_NOTICE, "reftime NTPt: %10lu.%20lu [s],  time = %10.9Lf",
+//		reftimeNTP.l_int, reftimeNTP.l_fra, time);
+//
+//	verbose(LOG_NOTICE, "reftime NTPt: %6lu",	(uint32_t)(reftimeNTP.l_fra / 4294967296.0 * 1e6 +0.5));
+//	verbose(LOG_NOTICE, "reftime NTPt: %6u",	(uint32_t)(reftimeNTP.l_fra / 4294967296.0 * 1e6+0.5));
+//	verbose(LOG_NOTICE, "reftime tval: %10lu.%20lu [s],  time = %10.9Lf",
+//		reftime.tv_sec + JAN_1970, (uint32_t)(reftime.tv_usec * 4294967296.0 / 1e6), time);
 
 	// TODO: need a more symmetric version of the packet exchange?
 	pkt->org.l_int		= 0;
@@ -197,12 +209,12 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 		return (1);
 	read_RADabs_UTC(&handle->rad_data, &vcount, &time);
 
-	/* Sanity test for apparently identical pkts:  should be impossible */
-	//verbose (LOG_ERR, "last_xmt = %10.9Lf, time = %10.9Lf, vcount= %llu", last_xmt, time, (long long unsigned) vcount);
-	if (last_xmt > 0 && time == last_xmt) {	// subsequent pkts have same ld timestamp
-		verbose(LOG_ERR, "xmt = last_xmt !! pkt id not unique! last_xmt =%10.9Lf,"
+	/* Sanity test for apparently identical pkts based on long double time:  should be impossible */
+	//verbose (LOG_ERR, "last_time = %10.9Lf, time = %10.9Lf, vcount= %llu", last_time, time, (long long unsigned) vcount);
+	if (last_time > 0 && time == last_time) {	// subsequent pkts have same ld timestamp
+		verbose(LOG_ERR, "xmt = last_time !! pkt id not unique! last_time =%10.9Lf,"
 			" time = %10.9Lf, vcount= %llu",
-			last_xmt, time, (long long unsigned) vcount);
+			last_time, time, (long long unsigned) vcount);
 		return (1);  // return to prevent infinite loop in this insane case
 	/* This can provoke an infinite loop! under a naturally occurring condition after a full
 	   kernel rebuild, where no old RTC value (I guess) triggering the wierd `bogus' event of
@@ -216,24 +228,28 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	 */
 	}
 
-	timeld_to_timeval(&time, xmt);
-	//verbose(LOG_NOTICE, "last nonce: %10ld.%6lu [s]", last_nonce.tv_sec, last_nonce.tv_usec);
-	//verbose(LOG_NOTICE, "xmt  nonce: %10ld.%6lu [s]", xmt->tv_sec, xmt->tv_usec);
+	UTCld_to_NTPtime(&time, &xmt);
+
+	//verbose(LOG_DEBUG, "last nonce: %10ld.%10lu [s]", last_xmt.l_int, last_xmt.l_fra);
+	//verbose(LOG_DEBUG, "xmt  nonce: %10ld.%10lu [s]", xmt.l_int, xmt.l_fra);
 
 	/* Check, and ensure, that xmt timestamp unique, needed for use as a nonce */
-	if ( last_xmt > 0 && xmt->tv_sec == last_nonce.tv_sec
-						&& xmt->tv_usec == last_nonce.tv_usec) {
-		verbose(LOG_WARNING, "xmt nonce not unique: %10ld.%6lu [s], vcount= %llu",
-			xmt->tv_sec, xmt->tv_usec, (long long unsigned) vcount);
-		xmt->tv_usec += 1;	// TODO: treat overflow case properly
-		verbose(LOG_WARNING,"    nonce fraction increased to %7lu [s]", xmt->tv_usec);
+	if ( last_time > 0 && xmt.l_int == last_xmt.l_int
+							 && xmt.l_fra == last_xmt.l_fra) {
+		verbose(LOG_WARNING, "xmt nonce not unique: %10lu.%10lu [s], vcount= %llu",
+			xmt.l_int, xmt.l_fra, (long long unsigned) vcount);
+		xmt.l_fra += 1;	// TODO: treat overflow case properly
+		verbose(LOG_WARNING,"    nonce fraction increased to %10lu [s]", xmt.l_fra);
 	}
 
-	pkt->xmt.l_int = htonl(xmt->tv_sec + JAN_1970);
-	pkt->xmt.l_fra = htonl(xmt->tv_usec * 4294967296.0 / 1e6);
+	pkt->xmt.l_int = htonl(xmt.l_int);
+	pkt->xmt.l_fra = htonl(xmt.l_fra);
 
-	last_xmt = time;
-	last_nonce = *xmt;
+	last_time = time;
+	last_xmt.l_int = xmt.l_int;
+	last_xmt.l_fra = xmt.l_fra;
+	
+	UTCld_to_timeval(&time, xmt_tval);					// need to return a timeval
 	
 	return (0);
 }

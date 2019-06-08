@@ -48,12 +48,12 @@
 #include "radclock.h"
 #include "radclock-private.h"
 #include "radclock_daemon.h"
-#include "misc.h"
 #include "verbose.h"
 #include "sync_history.h"
 #include "sync_algo.h"
 #include "pthread_mgr.h"
 #include "proto_ntp.h"
+#include "misc.h"
 #include "jdebug.h"
 #include "config_mgr.h"
 
@@ -66,7 +66,7 @@ build_timestamp_tval(struct radclock_handle *handle,
 	long double time;
 
 	read_RADabs_UTC(&handle->rad_data, &vcount, &time);
-	timeld_to_timeval(&time, tv);
+	UTCld_to_timeval(&time, tv);
 }
 
 

@@ -53,7 +53,7 @@ radclock_SOURCES = \
 		rawdata.c \
 		pthread_mgr.c \
 		pthread_ntpserver.c \
-		pthread_rawdata.c \
+		pthread_dataproc.c \
 		pthread_trigger.c \
 		radclock_main.c \
 		stampinput.c \

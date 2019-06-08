@@ -49,12 +49,11 @@
 #include "radclock.h"
 #include "radclock-private.h"
 #include "radclock_daemon.h"
-#include "misc.h"
 #include "verbose.h"
 #include "sync_history.h"
 #include "sync_algo.h"
 #include "config_mgr.h"
-//#include "proto_ntp.h"
+#include "proto_ntp.h"
 #include "pthread_mgr.h"
 #include "jdebug.h"
 

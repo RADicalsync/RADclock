@@ -42,9 +42,9 @@
 #include "sync_history.h"
 #include "sync_algo.h"
 #include "fixedpoint.h"
-#include "misc.h"
 #include "verbose.h"
 #include "proto_ntp.h"
+#include "misc.h"
 #include "stampinput.h"
 #include "stampoutput.h"
 #include "config_mgr.h"
@@ -162,7 +162,7 @@ read_clocks(struct radclock_handle *handle, struct timeval *sys_tv,
 
 	*counter = (vcounter_t) ((before + after)/2);
 	read_RADabs_UTC(&handle->rad_data, counter, &time);
-	timeld_to_timeval(&time, rad_tv);
+	UTCld_to_timeval(&time, rad_tv);
 }
 
 
@@ -208,7 +208,7 @@ update_FBclock(struct radclock_handle *handle)
 	if (OUTPUT(handle, n_stamps) == NTP_BURST) {
 		radclock_get_vcounter(handle->clock, &vcount);
 		read_RADabs_UTC(&handle->rad_data, &vcount, &time);
-		timeld_to_timeval(&time, &rad_tv);
+		UTCld_to_timeval(&time, &rad_tv);
 		err = settimeofday(&rad_tv, NULL);
 		if ( err < 0 )
 			verbose(LOG_WARNING, "System clock update failed on settimeofday()");
@@ -525,22 +525,24 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	 * Test should run once per trigger-grid point. Due to structure of TRIGGER--
 	 * PROC interactions, process_stamp runs each time, so this is true.
 	 */
-	err_read = radclock_get_vcounter(handle->clock, &vcount);
-	if (err_read < 0)
-		return (-1);
+	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
+		err_read = radclock_get_vcounter(handle->clock, &vcount);
+		if (err_read < 0)
+			return (-1);
 
-	if ((vcount - RAD_DATA(handle)->last_changed) * RAD_DATA(handle)->phat >
-			10*(((struct bidir_peer*)(handle->active_peer))->poll_period)) {
-		if (!HAS_STATUS(handle, STARAD_STARVING)) {
-			verbose(LOG_WARNING, "Clock is starving. Gap has exceeded 10 stamps");
-			ADD_STATUS(handle, STARAD_STARVING);
+		if ((vcount - RAD_DATA(handle)->last_changed) * RAD_DATA(handle)->phat >
+				10*(((struct bidir_peer*)(handle->active_peer))->poll_period)) {
+			if (!HAS_STATUS(handle, STARAD_STARVING)) {
+				verbose(LOG_WARNING, "Clock is starving. Gap has exceeded 10 stamps");
+				ADD_STATUS(handle, STARAD_STARVING);
+			}
 		}
 	}
 
 	/* No error, but no stamp to process */
 	if (err == 1)
 		return (1);
-	
+
 	/* If the new stamp looks insane just don't pass it for processing, keep
 	 * going and look for the next one. Otherwise, record it.
 	 */

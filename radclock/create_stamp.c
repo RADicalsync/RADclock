@@ -49,8 +49,9 @@
 #include "radclock_daemon.h"
 #include "verbose.h"
 #include "proto_ntp.h"
-#include "sync_history.h"        /* Because need  struct bidir_stamp defn */
-#include "sync_algo.h"        /* Because need  struct bidir_stamp defn */
+#include "misc.h"
+#include "sync_history.h"
+#include "sync_algo.h"
 #include "ntohll.h"
 #include "create_stamp.h"
 #include "jdebug.h"
@@ -76,18 +77,6 @@ struct stamp_queue {
 /* To prevent allocating heaps of memory if stamps are not paired in queue */
 #define MAX_STQ_SIZE	20
 
-
-/*
- * Converts fixed point NTP timestamp to floating point UNIX time
- */
-long double
-ntp_stamp_to_fp_unix_time(l_fp ntp_ts)
-{
-	long double  sec;
-	sec  = (long double)(ntohl(ntp_ts.l_int) - JAN_1970);
-	sec += (long double)(ntohl(ntp_ts.l_fra)) / 4294967296.0;
-	return (sec);
-}
 
 
 radpcap_packet_t *
@@ -727,8 +716,8 @@ push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 	stamp.LI = PKT_LEAP(ntp->li_vn_mode);
 	stamp.rootdelay = ntohl(ntp->rootdelay) / 65536.;
 	stamp.rootdispersion = ntohl(ntp->rootdispersion) / 65536.;
-	BST(&stamp)->Tb = ntp_stamp_to_fp_unix_time(ntp->rec);
-	BST(&stamp)->Te = ntp_stamp_to_fp_unix_time(ntp->xmt);
+	BST(&stamp)->Tb = NTPtime_to_UTCld(ntp->rec);
+	BST(&stamp)->Te = NTPtime_to_UTCld(ntp->xmt);
 	BST(&stamp)->Tf = *vcount;
 
 	verbose(VERB_DEBUG, "Stamp queue: inserting server stamp->id: %llu",
@@ -1081,7 +1070,7 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 		if (stamp->stratum == STRATUM_REFPRIM)
 			snprintf(refid, 16, "%c%c%c%c", *(c+3), *(c+2), *(c+1), *(c+0));
 		else
-			snprintf(refid, 16, "%i.%i.%i.%i", *(c+3), *(c+2), *(c+1), *(c+0));
+			snprintf(refid, 16, "%d.%d.%d.%d", *(c+3), *(c+2), *(c+1), *(c+0));
 		verbose(LOG_WARNING, "New NTP server info on packet %u:", stats->ref_count);
 		verbose(LOG_WARNING, "SERVER: %s, STRATUM: %d, TTL: %d, ID: %s, "
 				"LEAP: %u", stamp->server_ipaddr, stamp->stratum, stamp->ttl,

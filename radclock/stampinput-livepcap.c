@@ -62,7 +62,6 @@
 #include "stampinput_int.h"
 #include "ntohll.h"
 #include "rawdata.h"
-#include "misc.h"
 #include "jdebug.h"
 
 

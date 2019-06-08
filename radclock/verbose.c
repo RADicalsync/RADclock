@@ -38,7 +38,6 @@
 #include "radclock_daemon.h"
 #include "sync_history.h"
 #include "sync_algo.h"
-#include "misc.h"
 #include "config_mgr.h"
 #include "verbose.h"
 #include "jdebug.h"
