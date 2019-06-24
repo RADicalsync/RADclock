@@ -607,9 +607,10 @@ ffclock_reset_clock(struct timespec *ts)
 	ffclock_updated = INT8_MAX;
 	mtx_unlock(&ffclock_mtx);
 
-	printf("ffclock reset: %s (%llu Hz), time = %ld.%09lu\n", tc->tc_name,
-	    (unsigned long long)tc->tc_frequency, (long)ts->tv_sec,
-	    (unsigned long)ts->tv_nsec);
+	printf("ffclock reset: at vcount = %llu:  %s (%llu Hz), time = %ld.%09lu\n",
+		(unsigned long long)cest.update_ffcount, tc->tc_name,
+		(unsigned long long)tc->tc_frequency, (long)ts->tv_sec,
+		(unsigned long)ts->tv_nsec);
 }
 
 /*
@@ -656,7 +657,7 @@ ffclock_windup(unsigned int delta)
 	struct bintime bt, gap_lerp;
 	ffcounter ffdelta;
 	uint64_t frac;
-	unsigned int secs_to_nextupdate;
+	u_int secs_to_nextupdate;
 	uint8_t forward_jump, ogen;
 
 	/*
@@ -687,10 +688,24 @@ ffclock_windup(unsigned int delta)
 	bintime_add(&ffth->tick_error, &bt);
 
 
-	ffdelta = cest->next_expected - cest->update_ffcount;
-	ffclock_convert_delta(ffdelta, cest->period, &bt);
-	secs_to_nextupdate = bt.sec;
-
+   if (cest->next_expected == 0)  // no updates from daemon yet
+		secs_to_nextupdate = 0;
+	else {
+		ffdelta = cest->next_expected - cest->update_ffcount;
+		ffclock_convert_delta(ffdelta, cest->period, &bt);
+		secs_to_nextupdate = (u_int) bt.sec;
+	}
+	/* Verbosity to check initializations working */
+	/*
+	if ( (ffth->tick_ffcount) < 3*timehands->th_counter->tc_frequency ) { // <3sec
+		printf("ffclock_windup: tick_ffcount = %llu: %llu %llu  %llu secs_to_update: %u\n",
+			(long long unsigned) ffth->tick_ffcount,
+			(long long unsigned) cest->update_ffcount,
+			(long long unsigned) cest->period,
+			(long long unsigned) cest->next_expected, secs_to_nextupdate);
+	}
+	*/
+	
 	/*
 	 * Assess the status of the clock. If the actual time since the last update 
 	 * is large enough for drift to become noticeable, and this is indeed the 
@@ -812,6 +827,7 @@ ffclock_windup(unsigned int delta)
 		ogen = 1;
 	ffth->gen = ogen;
 	fftimehands = ffth;
+	
 }
 
 /*
@@ -856,6 +872,10 @@ ffclock_change_tc(struct timehands *th)
 		ogen = 1;
 	ffth->gen = ogen;
 	fftimehands = ffth;
+	
+	printf("ffclock_change_tc: at vcount = %llu, to  %s (%llu Hz)\n",
+		(unsigned long long)ffth->tick_ffcount, tc->tc_name,
+		(unsigned long long)tc->tc_frequency);
 }
 
 /*

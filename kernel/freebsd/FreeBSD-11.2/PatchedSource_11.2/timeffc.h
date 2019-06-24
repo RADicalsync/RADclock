@@ -46,10 +46,10 @@ struct ffclock_estimate
 	ffcounter	update_ffcount;	/* Counter value at last update. */
 	ffcounter	next_expected;		/* Estimated time of next update [counter] */
 	ffcounter	leapsec_expected;	/* Estimated time of next leap second [counter]. */
-	uint64_t	period;					/* Estimate of current counter period  [2^-64 s] */
-	uint32_t	errb_abs;				/* Bound on absolute clock error [ns]. */
-	uint32_t	errb_rate;				/* Bound on relative counter period error [ps/s] */
-	uint32_t	status;					/* Clock status. */
+	uint64_t	period;				/* Estimate of current counter period  [2^-64 s] */
+	uint32_t	errb_abs;			/* Bound on absolute clock error [ns]. */
+	uint32_t	errb_rate;			/* Bound on relative counter period error [ps/s] */
+	uint32_t	status;				/* Clock status. */
 	int16_t		leapsec_total;		/* Sum of leap seconds seen since clock start. */
 	int8_t		leapsec_next;		/* Next leap second (in {-1,0,1}). */
 };

@@ -51,11 +51,11 @@ struct ffclock_estimate
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast). */
 	vcounter_t	update_ffcount;	/* Counter value at last update. */
 	vcounter_t	next_expected;		/* Estimated time of next update [counter] */
+	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second. */
 	uint64_t	period;					/* Estimate of current counter period  [2^-64 s] */
 	uint32_t	errb_abs;				/* Bound on absolute clock error [ns]. */
 	uint32_t	errb_rate;				/* Bound on relative counter period error [ps/s] */
 	uint32_t	status;					/* Clock status. */
-	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second. */
 	int16_t		leapsec_total;		/* Sum of leap seconds seen since clock start. */
 	int8_t		leapsec_next;		/* Next leap second (in {-1,0,1}). */
 };
