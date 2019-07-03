@@ -410,11 +410,14 @@ A circular buffer is created in a similar way to timehands :
 static struct fftimehands ffth[10];								// buffer
 static struct fftimehands *volatile fftimehands = ffth;  // pointer to current fftimehands
 where the initial circular linking is performed neatly by ffclock_init().
+after initializing the entire array to zero using memset.
 
 The cest member variable holds the data of the (kernel version of the) daemon''s FF clock.
 It is important to note that it will be updated on a poll_period timescale set by
 the daemon, whereas fftimehands will advance to fresh ticks independently of this,
-and 1000''s of times more frequently.
+and 1000''s of times more frequently.   Each member of the cest is initialized to zero by
+ffclock_init(), including the update_ffcount variable, which remains zero unless
+ffclock_reset_clock() is called, or a true update pushed by the daemon.
 
 The timehands and fftimehands systems are separate, with separate generation variables,
 however they update on ticks in a synchronous manner, because the timehands update
@@ -509,8 +512,11 @@ struct radclock_data {
 	long double ca;			// K_p - thetahat(t) - leapsectotal? [s]
 	double ca_err;				// estimated error (currently minET) in thetahat and ca [s]
 	unsigned int status;		// status word (contains 9 bit fields)
-	vcounter_t last_changed;// raw timestamp T(tf) of last stamp processed [counter]
-	vcounter_t next_expected// estimated T value of next stamp, and hence update [counter]
+	vcounter_t last_changed;		// raw timestamp T(tf) of last stamp processed [counter]
+	vcounter_t next_expected;		// estimated T value of next stamp, and hence update [counter]
+	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none
+	int leapsec_total;				// sum of leap seconds seen since clock start
+	int leapsec_next;					// value of the expected next leap second {-1 0 1}
 };
 
 
@@ -528,6 +534,10 @@ status = status
 	The kernel has separate status system (undeveloped) including
 	timeeff.c:FFCLOCK_STA_{UNSYNC,WARMUP}  and these interact and correspond:
 	{STARAD,FFCLOCK_STA}:  _UNSYNC = {0x0001,1}  _WARMUP = {0x0002,2}
+
+leapsec_{expected,total,next} == leapsec_{expected,total,next}
+	However their integer types are potentially different.
+	Respectively:   {ffcounter,int16_t,int8_t} <--> {vcounter_t,int,int}
 
 
 /* Corresponding Fields [same except for format conversion (with negligible rounding error) ] */
@@ -574,27 +584,53 @@ FF --> algo
 vcounter_t next_expected == vcounter_t next_expected
 	FF <-- algo:	Direct. The kernel should know when an update is expected.
 						Status update code in ffclock_windup needs this.
-	FF --> algo:	N/A: poll_period is owned by daemon.
+	FF --> algo:	set to 0, as poll_period is owned by daemon.
 						The kernel can never tell the daemon what the poll_period is,
 						particularly if the daemon is dead.
 
-/* Missing Correpondances */
-leapsec_{next,total,} == ?
-   These support the leapsec system.  The algo should not know about leap seconds, so it is
-	consistent that there are no links from radclock_data here, however, the daemon
-	needs to have leap awareness.  This is a complicated topic and is treated below.
 
 
+==============================================================
+Setting of FFclock data
+======================================
+
+We document the complete set of ways in which FFclock data can be set.
+Initialization to 0 of all members of fftimehands, and hence all members of fftimehands.cest
+for each timehand, is first performed in kern_tc:SYSINIT-->inittimecounter-->ffclock_init .
+After this a cest in a current tick can be modified in one of three ways:
+  - push `update` from the daemon
+  - ffclock_reset (called by ?? --> subr_rtc.c:inittodr), perhaps several times during boot
+    sets  {update_{time,ffcount},period,status} only
+  - by ffclock_change_tc (call by tc_windup() if needed)
+    sets {period,status} only
+
+A common scenario after boot is:
+	ffclock_init;
+	ffclock_change_tc  on the first invocation of  tc_windup->windup_ffclock
+		{period,status} = {nominal,FFCLOCK_STA_UNSYNC}
+	no change for 100s of invocations of windup_ffclock
+	ffclock_reset
+		{update_{time,ffcount},period,status} = {passed ts,now,nominal,FFCLOCK_STA_UNSYNC}
+	no change for 1000s of invocations of windup_ffclock
+	daemon launched,  pulls current kernel value of cest
+   first daemon push of rad_data
+		setting;   all fields,  now next_expected>0
+
+If the daemon is initializing, then fill_radclock_data will provide the very rough value
+of period to the algo as a option for use, prior to any algo update push.
+
+If the daemon was running but later ceases to push updates, then the value of
+cest will likely never changed.  This is detected in ffclock_windup by observing
+that cest is old (update_ffcount) and late (next_expected).
+
+Libprocesses in that scenario will be using this out of date kernel version via
+the inversion routine fill_radclock_data, with inversion failures:
+  - phat = plocal   (true phat lost)
+  - next_expected = 0  ( signals kernel has no idea when next update coming )
+but otherwise values are valid, in particular the leapsecond fields will work.
 
 
-
-/* TODO notes:
-  - ffclock_estimate is a really poor name, but points to Ca storage instead of (phat,ca), I guess
-	 more natural is ffclock_data
-  - consider if add next_expected field on FF side, and if so, alter status update code in ffclock_windup to use it and remove  FFCLOCK_SKM_SCALE.  See notes.
-*/
-
-
+/* TODO:  look at whether update_{time,ffcount} should also be set in ffclock_change_tc */
 
 
 
@@ -666,8 +702,8 @@ between the FF timecounter, the FF clock based on it, and the system clock funct
 Timecounter (tc) Mechanism:  Detail
 ======================================
 
-The operating principle of tick-state, held in {ff}timehands, is that it is consists
-of values that correspond to, and/or where recorded at, the beginning of a tick,
+The operating principle of tick-state, held in {ff}timehands, is that it consists
+of values that correspond to, and/or were recorded at, the beginning of a tick,
 technically the location of the tc_delta raw timestamp call. This state
 is to be used for any timestamp purposes initiated at any time during that tick.
 
@@ -703,7 +739,7 @@ pointers versus *pointers, and other inconsistencies.
 	tho->th_counter->tc_poll_pps(tho->th_counter)	// if tc of PPS type, poll it
 
 	// update UTC members
-	update th_{micro,nano)time				// use 'magic' ntp_update_second processing, includes leap
+	update th_{micro,nano}time				// use 'magic' ntp_update_second processing, includes leap
 
 	// process a changed timecounter
 	if (th->th_counter != timecounter) {// if global tc different to one used in current tick
@@ -1127,11 +1163,11 @@ ffclock_getcounter
 	received as a vcounter_t.
 
 sys_ffclock_{set,get}estimate
-   {setting,getting} the global FFclock state variable  ffclock_estimate
-	Access to  ffclock_estimate  is protected by ffclock_mtx, preventing potential multiple
+   {setting,getting} the global FFclock state variable cest of type ffclock_estimate.
+	Access to  cest  is protected by ffclock_mtx, preventing potential multiple
 	user processes from any inconsistent actions or consequences.
-	Setting (updating) of the FF data is communicated to the ffclock_winup controlling
-	fftimehands updating via  the global  ffclock_updated++ (typically from 0 to 1).
+	Setting (updating) of the FF data is communicated to the ffclock_windup controlling
+	fftimehands updating via the global  ffclock_updated++ (typically from 0 to 1).
 
 Dont forget that the syscall code runs in kernel context, and so has access to any mutexes
 defined there.
@@ -1142,7 +1178,7 @@ SYSCTL:
 ======================================
 
 The SYSCTL tree associated with FF components is defined in kern_ffclock.c .
-The provided controls are for the management of the Universal sysclock in general
+The provided controls are for the management of the Universal sysclock in general,
 the FF system clock more specifically [see also next section], and tc level controls that
 can impact the FF clock and the FF daemon, such as a change of tc.
 
@@ -1175,6 +1211,28 @@ static int sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 
 The macro SYSCTL_HANDLER_ARGS is defined in sysctl.h as
 #define SYSCTL_HANDLER_ARGS struct sysctl_oid *oidp, void *arg1, intptr_t arg2, struct sysctl_req *req
+
+/*
+ * This describes the access space for a sysctl request.  This is needed
+ * so that we can use the interface from the kernel or from user-space.
+ */
+struct sysctl_req {
+        struct thread   *td;            /* used for access checking */
+        int              lock;          /* wiring state */
+        void            *oldptr;
+        size_t           oldlen;
+        size_t           oldidx;
+        int             (*oldfunc)(struct sysctl_req *, const void *, size_t);
+        void            *newptr;
+        size_t           newlen;
+        size_t           newidx;
+        int             (*newfunc)(struct sysctl_req *, void *, size_t);
+        size_t           validlen;
+        int              flags;
+};
+
+int     sysctlbyname(const char *, void *, size_t *, const void *, size_t);
+
 
 Those sysctl calls used by the daemon are accessed via sysctlbyname() and are
 summarised in a section of RADclockDoc_library.  Only three calls are used:
@@ -1211,6 +1269,8 @@ _net
 
 /* TODO:
 		- resolve bypass/passthrough confusion and complete code on kernel side
+		- rename macros to  SYSCLOCK_{FF,FB}
+		- verbosity and fixes?   to  sysctl_kern_sysclock_active
 */
 
 
@@ -1565,8 +1625,8 @@ Leapsecond system  [ kernel, and kernel<-->daemon ]
 ======================================
 
 The leapsecond system is independent of that used for the traditional FB clock.
-All required leap second information is provided by the daemon, via the relevant
-members passed into ffclock_estimate:
+All required leap second information is provided by the daemon, via the three
+relevant members in rad_data, passed directly into ffclock_estimate:
 	vcounter_t	leapsec_next;		/* Estimated counter value of next leap second. */
 	int16_t		leapsec_total;		/* Sum of leap seconds seen since clock start. */
 	int8_t		leapsec;				/* Next leap second (in {-1,0,1}). */

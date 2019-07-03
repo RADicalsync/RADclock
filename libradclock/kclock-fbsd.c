@@ -35,7 +35,6 @@
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #ifdef HAVE_SYS_TIMEFFC_H
-#include <sys/timeffc.h>
 #endif
 #include <sys/socket.h>
 
@@ -108,6 +107,10 @@ init_kernel_clock(struct radclock *clock)
 
 
 #ifdef HAVE_SYS_TIMEFFC_H
+/* Error code:  err = 1    was called for wrong kernel
+ *                   -1    failed to recover FFdata
+ *                    0    success [with warning if kernel data dodgy]
+ */
 int
 get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 {
@@ -129,17 +132,18 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 	/* FreeBSD system call */
 	err = ffclock_getestimate(cest);
 	if (err < 0) {
-// TODO Clean up verbose logging
-		logger(RADLOG_ERR, "Clock estimate init from kernel failed");
-		fprintf(stdout, "Clock estimate init from kernel failed");
+		logger(RADLOG_ERR, "Failed to recover FFdata from kernel");
+		//fprintf(stdout, "Failed to recover FFdata from kernel");
 		return (1);
 	}
 
-	/* Sanity check to avoid introducing crazy data */
+	/* Sanity check warnings when FFdata not fully set */
+	if (cest->next_expected == 0)
+		logger(RADLOG_WARNING, "FFdata from kernel never set by daemon");
+	
 	if ((cest->update_time.sec == 0) || (cest->period == 0)) {
-		logger(RADLOG_ERR, "Clock estimate from kernel look bogus - ignored");
-		fprintf(stdout, "Clock estimate from kernel look bogus - ignored");
-		return (0);
+		logger(RADLOG_WARNING, "FFdata never set by kernel");
+		printout_FFdata(cest);
 	}
 		
 	return (0);

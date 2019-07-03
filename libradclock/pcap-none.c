@@ -34,7 +34,7 @@
 
 
 int
-descriptor_set_tsmode(struct radclock *clock, pcap_t *p_handle, int kmode)
+descriptor_set_tsmode(struct radclock *clock, pcap_t *p_handle, int *mode)
 {
 	return (1);
 }

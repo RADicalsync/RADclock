@@ -78,7 +78,7 @@ radclock_get_local_period_mode(struct radclock *clock,
 
 
 int
-radclock_get_last_stamp(struct radclock *clock, vcounter_t *last_vcount)
+radclock_get_last_changed(struct radclock *clock, vcounter_t *last_vcount)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
@@ -107,7 +107,7 @@ radclock_get_last_stamp(struct radclock *clock, vcounter_t *last_vcount)
 
 
 int
-radclock_get_till_stamp(struct radclock *clock, vcounter_t *till_vcount)
+radclock_get_next_expected(struct radclock *clock, vcounter_t *till_vcount)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
@@ -163,7 +163,7 @@ radclock_get_period(struct radclock *clock, double *period)
 
 
 int
-radclock_get_offset(struct radclock *clock, long double *offset)
+radclock_get_bootoffset(struct radclock *clock, long double *offset)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
@@ -219,7 +219,7 @@ radclock_get_period_error(struct radclock *clock, double *err_period)
 
 
 int
-radclock_get_offset_error(struct radclock *clock, double *err_offset)
+radclock_get_bootoffset_error(struct radclock *clock, double *err_offset)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
@@ -360,5 +360,52 @@ radclock_get_min_RTT(struct radclock *clock, double *min_RTT)
 	} while (generation != shm->gen || !shm->gen);
 
 	return (0);
+}
+
+
+/* Functions to print out rad_data and FF_data neatly */
+void
+printout_FFdata(struct ffclock_estimate *cest)
+{
+	logger(RADLOG_NOTICE, "Pretty printing FF_data.");
+	logger(RADLOG_NOTICE, "\t period %llu", cest->period);
+	logger(RADLOG_NOTICE, "\t update_time: %llu.%llu [bintime]\t\t status: 0x%04X",
+		cest->update_time.sec, cest->update_time.frac, cest->status);
+	logger(RADLOG_NOTICE, "\t update_ffcount: %llu  next_expected: %llu  (u_diff: %llu)",
+		cest->update_ffcount, cest->next_expected,
+		cest->next_expected - cest->update_ffcount);
+	logger(RADLOG_NOTICE, "\t errb_{abs,rate} = %lu  %lu",
+		cest->errb_abs, cest->errb_rate);
+	logger(RADLOG_NOTICE, "\t leapsec_{expected, total,next}:  %llu  %u  %u",
+		cest->leapsec_expected, cest->leapsec_total, cest->leapsec_next);
+	logger(RADLOG_NOTICE,"-------------------------------------------------------------");
+}
+
+
+void
+printout_raddata(struct radclock_data *rad_data)
+{
+	long double UTCtime_l, UTCtime_n;
+
+	logger(RADLOG_NOTICE, "Pretty printing rad_data");
+	logger(RADLOG_NOTICE, "\t phat: %10.10le\t phat_local: %l0.10e\t (diff: %8.2le)",
+		rad_data->phat, rad_data->phat_local, rad_data->phat - rad_data->phat_local);
+	logger(RADLOG_NOTICE, "\t ca: %Lf\t ca_err: %10.3le,\t\t status: 0x%04X",
+		rad_data->ca, rad_data->ca_err, rad_data->status);
+	logger(RADLOG_NOTICE, "\t last_changed: %llu  next_expected: %llu  (u_diff: %llu)",
+		rad_data->last_changed, rad_data->next_expected,
+		rad_data->next_expected - rad_data->last_changed);
+	logger(RADLOG_NOTICE, "\t phat_err: %7.5le\t phat_local_err: %7.5lf",
+		rad_data->phat_err, rad_data->phat_local_err);
+	logger(RADLOG_NOTICE, "\t leapsec_{expected,total,next}:  %llu  %u  %u",
+		rad_data->leapsec_expected, rad_data->leapsec_total, rad_data->leapsec_next);
+
+	/* Translate raw timestamp fields to UTC for convenient checking */
+	logger(RADLOG_NOTICE,"\t --------------------------------------");
+	read_RADabs_UTC(rad_data, &rad_data->last_changed,  &UTCtime_l, 1);
+	read_RADabs_UTC(rad_data, &rad_data->next_expected, &UTCtime_n, 1);
+	logger(RADLOG_NOTICE,"\t UTC at (last_changed, next_expected) = %10.6Lf  %10.6Lf (diff: %Lf)",
+		UTCtime_l, UTCtime_n, UTCtime_n - UTCtime_l);
+	logger(RADLOG_NOTICE,"-------------------------------------------------------------");
 }
 

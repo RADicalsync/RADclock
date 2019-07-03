@@ -1068,9 +1068,9 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 
 		c = (char *) &(stamp->refid);
 		if (stamp->stratum == STRATUM_REFPRIM)
-			snprintf(refid, 16, "%c%c%c%c", *(c+3), *(c+2), *(c+1), *(c+0));
+			snprintf(refid, 32, "%c%c%c%c", *(c+3), *(c+2), *(c+1), *(c+0));
 		else
-			snprintf(refid, 16, "%d.%d.%d.%d", *(c+3), *(c+2), *(c+1), *(c+0));
+			snprintf(refid, 32, "%d.%d.%d.%d", *(c+3), *(c+2), *(c+1), *(c+0)); 
 		verbose(LOG_WARNING, "New NTP server info on packet %u:", stats->ref_count);
 		verbose(LOG_WARNING, "SERVER: %s, STRATUM: %d, TTL: %d, ID: %s, "
 				"LEAP: %u", stamp->server_ipaddr, stamp->stratum, stamp->ttl,

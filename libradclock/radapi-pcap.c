@@ -39,36 +39,13 @@
 #include "logger.h"
 
 
-
-// TODO should be able to clean that up
-#define K_RADCLOCK_TSMODE_SYSCLOCK		0x0001  /* return SW timeval and raw vcounter */
-#define K_RADCLOCK_TSMODE_RADCLOCK		0x0002  /* return timeval based on RADclock and raw vcounter */
-#define K_RADCLOCK_TSMODE_FAIRCOMPARE  	0x0003  /* return SW timeval, and vcounter read just before SW in global data */
-
-
-
 int
 radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
 		radclock_tsmode_t mode)
 {
-	int kmode;
 	if (clock == NULL) {
 		logger(RADLOG_ERR, "Clock handle is null, can't set mode");
 		return (-1);
-	}
-
-	switch (mode) {
-		case RADCLOCK_TSMODE_SYSCLOCK:
-			kmode = K_RADCLOCK_TSMODE_SYSCLOCK;
-			break;
-		case RADCLOCK_TSMODE_RADCLOCK:
-			kmode = K_RADCLOCK_TSMODE_RADCLOCK;
-			break;
-		case RADCLOCK_TSMODE_FAIRCOMPARE:
-			kmode = K_RADCLOCK_TSMODE_FAIRCOMPARE;
-			break;
-		default:
-			return (-EINVAL);
 	}
 
 	/* working from non-live capture return silently */
@@ -77,7 +54,7 @@ radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
 	}
 
 	/* Call to system specific method to set the mode */
-	if (descriptor_set_tsmode(clock, p_handle, kmode))
+	if (descriptor_set_tsmode(clock, p_handle, &mode))
 		return (-1);
 
 	clock->tsmode = mode;
@@ -88,23 +65,22 @@ radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
 
 
 int
-radclock_get_tsmode(struct radclock *handle, pcap_t *p_handle,
+radclock_get_tsmode(struct radclock *clock, pcap_t *p_handle,
 		radclock_tsmode_t *mode)
 {
-	int kmode;
+	int kmode;  // can remove this if descriptor_get_tsmode wont set if error
 	
-	if (handle == NULL) {
+	if (clock == NULL) {
 		logger(RADLOG_ERR, "Clock handle is null, can't set mode");
 		return (-1);
 	}
 	
 	/* Call to system specific method to get the mode */
 	kmode = 0;
-	if (descriptor_get_tsmode(handle, p_handle, &kmode))
+	if (descriptor_get_tsmode(clock, p_handle, &kmode))
 		return (-1);
 
-	//TODO align enum with kernel modes
-	*mode = kmode;
+	*mode = kmode;		// only set if get safe value
 
 	return (0);
 }

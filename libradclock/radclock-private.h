@@ -129,7 +129,7 @@ struct radclock {
 #define PRIV_USERDATA(x) (&(x->user_data))
 #ifdef linux
 # define PRIV_DATA(x) (&(x->linux_data))
-#else
+#else 
 # define PRIV_DATA(x) (&(x->bsd_data))
 #endif
 
@@ -157,7 +157,7 @@ int descriptor_get_tsmode(struct radclock *clock, pcap_t *p_handle, int *kmode);
 /**
  * System specific call for setting the capture mode on the pcap capture device.
  */
-int descriptor_set_tsmode(struct radclock *clock, pcap_t *p_handle, int kmode);
+int descriptor_set_tsmode(struct radclock *clock, pcap_t *p_handle, int *mode);
 
 
 /**
@@ -182,32 +182,50 @@ int shm_init_writer(struct radclock *clock);
 int shm_detach(struct radclock *clock);
 
 
+
 /* Read the RADclock absolute clock within the daemon. Two versions:
  * 	read_RADabs_native  leap-free absolute clock of the algo (formerly counter_to_time)
  * 	read_RADabs_UTS	  UTC absolute clock, which includes leaps
  * The clocks can be read into the future or past wrt the rad_data used.
+ *
+ * Each takes a plocal flag, which controls if the plocal variable is used.
+ * For most purposes, including the time sent in client or server NTP packets,
+ * the flag is set to PLOCAL_ACTIVE, with a typical default  1 = active = using plocal.
+ * The radclock library routines instead use clock->local_period_mode  to select
+ * per-clock preferences passed to read_RADabs_{native,UTC} .
  */
+
+/* Global setting for use of plocal refinement for in-daemon timestamping */
+# define PLOCAL_ACTIVE	1		//  {0,1} = {inactive, active}
+
 static inline void
-read_RADabs_native(struct radclock_data *rad_data, vcounter_t *vcount, long double *time)
+read_RADabs_native(struct radclock_data *rad_data, vcounter_t *vcount,
+	long double *time, int useplocal)
 {
 	vcounter_t last;
 
 	do {
 		last  = rad_data->last_changed;
 		*time = *vcount * (long double)rad_data->phat + rad_data->ca;
-		*time += (*vcount - last) * (long double)(rad_data->phat_local - rad_data->phat);
+		if ( useplocal == 1 && rad_data->phat != rad_data->phat_local )
+			*time += (*vcount - last) * (long double)(rad_data->phat_local - rad_data->phat);
 	} while (last != rad_data->last_changed);
 }
 
 static inline void
-read_RADabs_UTC(struct radclock_data *rad_data, vcounter_t *vcount, long double *time)
+read_RADabs_UTC(struct radclock_data *rad_data, vcounter_t *vcount,
+	long double *time, int useplocal)
 {
 	vcounter_t last;
 
 	do {
 		last  = rad_data->last_changed;
 		*time = *vcount * (long double)rad_data->phat + rad_data->ca;
-		*time += (*vcount - last) * (long double)(rad_data->phat_local - rad_data->phat);
+		if ( useplocal == 1 && rad_data->phat != rad_data->phat_local ) {
+			//fprintf(stdout, "** read_RADabs_UTC:  without: %LF, ", *time);
+			*time += (*vcount - last) * (long double)(rad_data->phat_local - rad_data->phat);
+			//fprintf(stdout, "*** with:  %Lf (plocal = %d)\n", *time, useplocal);
+		}
 	} while (last != rad_data->last_changed);
 	
 	/* Include leapseconds in native RADclock to form UTC RADclock */
@@ -215,6 +233,14 @@ read_RADabs_UTC(struct radclock_data *rad_data, vcounter_t *vcount, long double 
 	if ( rad_data->leapsec_expected != 0  &&  *vcount > rad_data->leapsec_expected)
 		*time -= rad_data->leapsec_next; // if new leap flagged, and past it, then include it
 }
+
+
+struct ffclock_estimate;
+
+/* Functions to print out rad_data and FF_data neatly and fully */
+void printout_raddata(struct radclock_data *rad_data);
+void printout_FFdata(struct ffclock_estimate *cest);
+
 
 
 #endif

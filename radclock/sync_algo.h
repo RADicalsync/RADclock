@@ -61,7 +61,7 @@
 #define TS_LIMIT_POOR			0.000015
 // [sec] maximum timescale of validity of the Simple Skew Model (SKM)
 #define SKM_SCALE_EXCEL			1024.0
-#define SKM_SCALE_GOOD			1024.0
+#define SKM_SCALE_GOOD			64.0
 #define SKM_SCALE_POOR			 512.0
 // bound on rate error regardless of time scale
 #define RATE_ERR_BOUND_EXCEL	0.0000001
@@ -92,15 +92,6 @@ struct radclock_phyparam {
 	int offset_ratio;
 	double plocal_quality;
 };
-
-
-/*
- * Dealing with communication between algo and main
- * - plocal
- */
-#define PLOCAL_STOP		0	// this means stop now, but if already off, 'carry on'
-#define PLOCAL_START	1	// this means start now, but if on already, 'carry on'
-#define PLOCAL_RESTART	2	// this means restart Now
 
 
 /*

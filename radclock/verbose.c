@@ -203,7 +203,7 @@ void verbose(int facility, const char* format, ...)
 			sprintf(ctime_buf, "Replay");
 		else {
 			radclock_get_vcounter(verbose_data.handle->clock, &vcount);
-			read_RADabs_UTC(&verbose_data.handle->rad_data, &vcount, &currtime);
+			read_RADabs_UTC(&verbose_data.handle->rad_data, &vcount, &currtime, PLOCAL_ACTIVE);
 			/* The cast should 'floor' currtime */
 			currsec = (time_t) currtime;
 			t = localtime(&currsec);

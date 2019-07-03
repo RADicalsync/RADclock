@@ -265,10 +265,8 @@ get_packet_livepcap(struct radclock_handle *handle, void *userdata,
 
 	/* Retrieve the next packet from the raw data buffer */
 	err = deliver_rawdata_pcap(handle, packet, &vcount);
-	if (err) {
-		/* Raw data buffer is empty */
+	if (err)		// Raw data buffer is empty, or wrong RD_TYPE
 		return (1);
-	}
 
 	/* Replace the link layer header by the Linux SLL header for generic
 	 * encapsulation of the IP payload */
@@ -289,7 +287,7 @@ get_packet_livepcap(struct radclock_handle *handle, void *userdata,
 	// this is not a vcount issue, already have our hands on that !
 	if (handle->clock->kernel_version == 2) {
 		//verbose(LOG_ERR, "KV=2 issue: Create pcap timestamp from RADclock !! CHECK ME");
-		read_RADabs_UTC(&handle->rad_data, &vcount, &time);
+		read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
 		pcap_hdr = (struct pcap_pkthdr *)packet->header;
 		pcap_hdr->ts.tv_sec = (time_t) time;
 		pcap_hdr->ts.tv_usec = (suseconds_t)(1e6 * (time - (time_t)time));
@@ -310,7 +308,7 @@ get_packet_livepcap(struct radclock_handle *handle, void *userdata,
 
 	*packet_p = packet;
 
-	/* Return packet quality */
+	/* Return with valid packet data */
 	return (0);
 }
 
@@ -545,7 +543,10 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	 * - set a valid BPF filter to get rid of packets we don't want
 	 */
 	err = get_address_by_name(addr_name, conf->hostname);
-//	if (err)  { return (NULL); }
+	if (err) {
+		verbose(LOG_ERR, "Failed to get address by name");
+		//return (NULL);  
+	}
 	
 	/* If we have a host, means we supposely know who we are */
 	if (strlen(conf->hostname) > 0)
@@ -573,11 +574,9 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 			addr_if);
 	verbose(LOG_NOTICE, "Opening device %s", conf->network_device);
 
-	/* Build the BPF filter string
-	 */
+	/* Build the BPF filter string */
 	strcpy(fltstr, "");
-	strsize = build_BPFfilter(handle, fltstr, MAXLINE, addr_if,
-			conf->time_server);
+	strsize = build_BPFfilter(handle, fltstr, MAXLINE, addr_if, conf->time_server);
 	if ((strsize < 0) || (strsize > MAXLINE-2)) {
 		verbose(LOG_ERR, "BPF filter string error (too long?)");
 		return (NULL);
@@ -590,8 +589,7 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	 */
 	if ((p_handle = pcap_open_live(conf->network_device, BPF_PACKET_SIZE,
 			promiscuous, bpf_timeout, errbuf)) == NULL) {
-		verbose(LOG_ERR, "Open failed on live interface, pcap says:  %s",
-				errbuf);
+		verbose(LOG_ERR, "Open failed on live interface, pcap says:  %s", errbuf);
 		return (NULL);
 	}
 	else
@@ -614,6 +612,7 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	}
 
 	return (p_handle);
+	
 pcap_err:
 	pcap_close(p_handle);
 	return (NULL);
@@ -669,28 +668,11 @@ livepcapstamp_init(struct radclock_handle *handle, struct stampsource *source)
 	// TODO that could be written in a more simpler way once we clean the sources
 	handle->clock->pcap_handle = LIVEPCAP_DATA(source)->live_input;
 
-	/* Set the timestamping mode of the pcap handle for the radclock
-	 * It should be RADCLOCK_TSMODE_SYSCLOCK !
-	 */
-	// TODO move somewhere else or don't use the library
-	// if bsd-kernel version < 2 then SYSCLOCK
-	// else RADCLOCK
-	// Distinguish between clock and format, v2 in BSD makes timestamps be a
-	// mess
-	// TODO this is messy
-#ifdef WITH_FFKERNEL_FBSD
-	if (handle->clock->kernel_version == 2)
-		err = radclock_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
-			RADCLOCK_TSMODE_RADCLOCK);
-	else
-		err = radclock_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
-			RADCLOCK_TSMODE_SYSCLOCK);
-#else
-		err = radclock_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
-			RADCLOCK_TSMODE_SYSCLOCK);
-#endif
+	/* Set the capture mode to match the daemon requirements */
+	err = radclock_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
+			RADCLOCK_TSMODE_SYSCLOCK);   // will rename RADCLOCK_TSMODE_DAEMON
 	if (err) {
-		verbose(LOG_WARNING, "Could not set RADclock timestamping mode");
+		verbose(LOG_WARNING, "Could not set needed RADclock timestamping mode");
 		return (-1);
 	}
 

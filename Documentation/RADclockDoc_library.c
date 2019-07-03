@@ -478,7 +478,7 @@ based bracketing of system clock reads (via read_clocks), which aims to slave th
 system clock to RADclock, preserving monotonicity of the former.
 
 This is a simple, non-optimized and non-ideal approach, motivated by the desire to make the system clock be basically well behaved by following RADclock, thereby avoiding the erratic behaviour of ntpd which can complicate experiments operationally (for example if the host houses a DAG card, it can confuse the `which second is which` setting of the card).
-A second motivation was to provide, operationally, a means to replace nptd by RADclock without having to reengineer the system clock interface in any way, thereby allowing users to benefit from RADclock without having to do anything, in particular without having to compile in the RADclock library. However it still requires an FFkernel, currently, but not if a userland-only version of the daemon were developed. This will be superseded by kernels offering true FFclock support.
+A second motivation was to provide, operationally, a means to replace nptd by RADclock without having to reengineer the system clock interface in any way, thereby allowing users to benefit from RADclock without having to do anything, in particular without having to compile in the RADclock library. This functionality was how in fact CAIDA was accessing RADclock.  However it still requires an FFkernel, currently, but not if a userland-only version of the daemon were developed. This will be superseded by kernels offering true FFclock support, though use of the difference clock will still require the API to be use directly in most cases, and app developers to be willing to make the effort.
 
 
 
@@ -597,13 +597,12 @@ struct ffclock_estimate
 
 };
 
-which does not preserve all the original rad_data and the additional
+which does not quite preserve all the original rad_data and the additional
 fields are more complex.  This is partly because the kernel FFclock data must offer generic
 support to any FFclock, not only RADclock. In particular, the phat_local concept
 and parameter is specific to RADclock.
-Full details of the correspondance is provided in FFclockDoc_FreeBSDv4  .
-
-
+Full details of the correspondance is provided in FFclockDoc_FreeBSDv4 under
+"FF algo data kernel <--> daemon translation".
 
 
 
@@ -665,6 +664,10 @@ The relevant configuration variable (config_mgr.c) is
 and is one of the variables can be reset to on or off during restarts.
 This variable is a misnomer as there is no server (or thread, except MAIN) as such
 associated to the SHM underlying the IPC.
+
+Note that the command line option -x turns the ipc server off, but there is no
+option to turn it on. Thus for the IPC to work, it MUST be set on in the
+conf file!
 
 
 
@@ -766,7 +769,7 @@ RADclock''s view of its status and the quality of its estimates:
 #define STARAD_WARMUP			0x0002	// in warmup phase, error estimates unreliable
 #define STARAD_KCLOCK			0x0004	// RADclock kernel time is reliable
 #define STARAD_SYSCLOCK			0x0008	// system clock (if RADclock controlled) is accurate
-#define STARAD_STARVING			0x0010	// quality stamps lacking (pkts lost, bad congestion)
+#define STARAD_STARVING			0x0010	// stamps lacking (pkts lost, server unavailable, match failure)
 #define STARAD_PERIOD_QUALITY	0x0020	// RADclock period estimate is poor
 #define STARAD_PERIOD_SANITY	0x0040	// consecutive period sanity checks triggered
 #define STARAD_OFFSET_QUALITY	0x0080 	// RADclock absolute time poor (relatively speaking..)
@@ -789,12 +792,12 @@ We now turn to those functions which are defined in radapi-getset.c .
 
 Out of the 9 fields stored in the current rad_data within clock-ipc_shm,
 7 functions are devoted to simply extracting them individually:
-int radclock_get_last_stamp	(clock, vcounter_t *last_vcount)	//			 = last_changed
-int radclock_get_till_stamp	(clock, vcounter_t *till_vcount)	// 		 = next_expected
+int radclock_get_last_changed	(clock, vcounter_t *last_vcount)	//			 = last_changed
+int radclock_get_next_expected	(clock, vcounter_t *till_vcount)	// 	 = next_expected
 int radclock_get_period			(clock, double *period)				// period = phat_local
-int radclock_get_offset			(clock, long double *offset)		// offset = ca
+int radclock_get_bootoffset			(clock, long double *offset)		// offset = ca
 int radclock_get_period_error	(clock, double *err_period)		//			 = phat_err
-int radclock_get_offset_error	(clock, double *err_offset)		//			 = ca_err
+int radclock_get_bootoffset_error	(clock, double *err_offset)		//			 = ca_err
 int radclock_get_status			(clock, unsigned int *status)		// status = status
 
 For each of these functions, if the SHM segment does not exist, the data is taken from
@@ -861,7 +864,7 @@ This is to enable quality assessment, which depends on whether the parameters us
 were up to date, somewhat out of date, or worse, with respect to the counter values
 defining the time interval being calculated.
 
-The quality assessment functions radapi-time.c:{raddata_quality,in_skm} are not public,
+The quality assessment functions radapi-time.c:{raddata_quality,in_SKMwin} are not public,
 but are called by ffcounter_to_abstime_{shm,kernel} and radclock_{elapsed,duration}.
 
 

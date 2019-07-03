@@ -2156,7 +2156,6 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 
 output_results:
 
-
 	/* We lock the global data to to ensure data consistency. Do not want shared
 	 * memory segment be half updated and 3rd party processes get bad data.
 	 * Also we lock the matlab output data at the same time
@@ -2167,13 +2166,7 @@ output_results:
 	pthread_mutex_lock(&handle->globaldata_mutex);
 
 	/* Update handle variable for returning. */
-	RAD_DATA(handle)->phat			= peer->phat;
-	RAD_DATA(handle)->phat_err		= peer->perr;
-	RAD_DATA(handle)->phat_local		= peer->plocal;
-	RAD_DATA(handle)->phat_local_err	= peer->plocalerr;
-	RAD_DATA(handle)->ca				= peer->K-(long double)peer->thetahat;
-	RAD_DATA(handle)->ca_err			= peer->minET;	// initialize to this stamp
-	RAD_DATA(handle)->last_changed	= stamp->Tf;
+	//RAD_DATA(handle)->ca_err			= peer->minET;	// initialize to this stamp
 	
 	/* The next_expected field has to take into account the fact that ntpd sends
 	 * packets with true period intervals [poll-1,poll+2] (see an histogram of 
@@ -2186,8 +2179,7 @@ output_results:
 		 * varying poll period when in piggy back mode
 		 * RAD_DATA(handle)->next_expected	= stamp->Tf + ((peer->poll_period - 1.5) / peer->phat);
 		 */
-		//RAD_DATA(handle)->next_expected = stamp->Tf +
-								(vcounter_t) (peer->poll_period / peer->phat);
+		//RAD_DATA(handle)->next_expected = stamp->Tf +(vcounter_t) (peer->poll_period / peer->phat);
 
 	/* Clock error estimates.
 	 * Aging similar to fast recovery after gap

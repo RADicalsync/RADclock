@@ -71,7 +71,7 @@ Three values are supported:
   >1:  `Max`   all VERB messages will be printed
 
 VERB messages are printed to a radclock specific logfile, with run_mode dependent defaults:
-#define DAEMON_LOG_FILE	"/var/log/radclock.log"      // is live And daemonized
+#define DAEMON_LOG_FILE	"/var/log/radclock.log"      // if live And daemonized
 #define BIN_LOG_FILE		"radclock.log"               // otherwise
 which can be overridden via conf->logfile,  and messages are printed to stderr
 if the file is not available.
@@ -93,6 +93,13 @@ on run_mode:
 		openlog ("radclock ", LOG_CONS | LOG_PID | LOG_NDELAY, LOG_DAEMON); // LOG_DAEMON facility
 	 and shutdown in main using closelog()
   RADCLOCK_SYNC_DEAD   stderr  (since in that case there will be an associated terminal)
+
+
+An abuse of the above VERB/LOG division is allowed to support convenient runtime
+verbosity control of non-VERB messages. Namely, verbose_level values above 1 can be used
+to activate arbitrary additional verbosity, including that written using
+verbose(LOG_*) or logger(RADLOD_*) levels.  For example in clock_init_live:
+if ( VERB_LEVEL>1 ) printout_FFdata(&cest);   // printout_FFdata uses logger(RADLOG_NOTICE
 
 
 In all cases, the actual string printed is as follows :
@@ -171,6 +178,12 @@ In all cases a call to verbose will work.  It will try to open a logfile
 but if it fails, it will fall back to outputting to stderr if needed.
 All LOG messages will therefore be logged, but VERB messages will depend on verbosity level.
 
+Prior to the initialization, needed verbosity is achieved by direct use of
+fprintf to stdout  (for example in command line parameter parsing), or
+stderr, and the output is the first to appear.
+
+In command line parsing, each occurrence of option "v" increases verbose_level
+by one, eg  -vvv results in verbose_level=3 .
 
 
 ==============================================================

@@ -177,7 +177,7 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 
 	/* Reference time [ time client clock was last updated ] */
 	vcount = RAD_DATA(handle)->last_changed;
-	read_RADabs_UTC(&handle->rad_data, &vcount, &time);
+	read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
 	
 	UTCld_to_NTPtime(&time, &reftime);
 	pkt->reftime.l_int = htonl(reftime.l_int);
@@ -207,9 +207,14 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	err = radclock_get_vcounter(handle->clock, &vcount);
 	if (err < 0)
 		return (1);
-	read_RADabs_UTC(&handle->rad_data, &vcount, &time);
+	read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
 
-	/* Sanity test for apparently identical pkts based on long double time:  should be impossible */
+	/* Sanity test for apparently identical pkts based on ld time
+	 * After kernel init of FFclock data, but before any kernel setting, and before
+	 * any valid stamp (or first two stamps), period=0 and so time = 0 = last_time,
+	 * so sanity test will not run. In that initial phase, 1 or more responses
+	 * will be sent with xmt=NTP0.  Once time>0, test can run, but shouldn't ever.
+	 */
 	//verbose (LOG_ERR, "last_time = %10.9Lf, time = %10.9Lf, vcount= %llu", last_time, time, (long long unsigned) vcount);
 	if (last_time > 0 && time == last_time) {	// subsequent pkts have same ld timestamp
 		verbose(LOG_ERR, "xmt = last_time !! pkt id not unique! last_time =%10.9Lf,"
@@ -218,7 +223,7 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 		return (1);  // return to prevent infinite loop in this insane case
 	/* This can provoke an infinite loop! under a naturally occurring condition after a full
 	   kernel rebuild, where no old RTC value (I guess) triggering the wierd `bogus' event of
-		get_kernel_ffclock (which by the way is just verbosity, with no real effect, needs fixing)
+		get_kernel_ffclock 
 		Need to understand bogus and either fix, or test for it here so 'time' advances.
 		Need to avoid the infinite loop possibility, in which case, need to see if the
 		return statement should be put back in, or remove this sanity test completely.

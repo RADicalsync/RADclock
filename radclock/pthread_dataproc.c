@@ -124,7 +124,7 @@ update_ipc_shared_memory(struct radclock_handle *handle)
 		generation = 1;
 	shm->gen = generation;
 
-	verbose(LOG_NOTICE, "Updated IPC Shared memory");
+	if ( VERB_LEVEL>2 ) verbose(LOG_NOTICE, "Updated IPC Shared memory");
 	return (0);
 }
 
@@ -161,7 +161,7 @@ read_clocks(struct radclock_handle *handle, struct timeval *sys_tv,
 		(after - before) * RAD_DATA(handle)->phat * 1e6 );
 
 	*counter = (vcounter_t) ((before + after)/2);
-	read_RADabs_UTC(&handle->rad_data, counter, &time);
+	read_RADabs_UTC(&handle->rad_data, counter, &time, PLOCAL_ACTIVE);
 	UTCld_to_timeval(&time, rad_tv);
 }
 
@@ -207,7 +207,7 @@ update_FBclock(struct radclock_handle *handle)
 	 */
 	if (OUTPUT(handle, n_stamps) == NTP_BURST) {
 		radclock_get_vcounter(handle->clock, &vcount);
-		read_RADabs_UTC(&handle->rad_data, &vcount, &time);
+		read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
 		UTCld_to_timeval(&time, &rad_tv);
 		err = settimeofday(&rad_tv, NULL);
 		if ( err < 0 )
@@ -220,7 +220,7 @@ update_FBclock(struct radclock_handle *handle)
 		tx.modes = MOD_FREQUENCY | MOD_STATUS;
 		tx.status = STA_UNSYNC;
 		tx.freq = 0;
-		err = ntp_adjtime(&tx);
+		err = NTP_ADJTIME(&tx);
 		return (err);
 	}
 
@@ -244,7 +244,7 @@ update_FBclock(struct radclock_handle *handle)
 		}
 	
 		memset(&tx, 0, sizeof(struct timex));
-		err = ntp_adjtime(&tx);
+		err = NTP_ADJTIME(&tx);
 		verbose(VERB_DEBUG, "System clock stats (offset freq status) %.09f %.2f %d",
 				(double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
 				tx.status);
@@ -268,7 +268,7 @@ update_FBclock(struct radclock_handle *handle)
 			tx.modes = MOD_FREQUENCY | MOD_STATUS;
 			tx.status = STA_UNSYNC;
 			tx.freq = 0;
-			err = ntp_adjtime(&tx);
+			err = NTP_ADJTIME(&tx);
 
 			verbose(VERB_DEBUG, "System clock stats (offset freq status) %.09f %.2f %d",
 				(double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
@@ -310,7 +310,7 @@ update_FBclock(struct radclock_handle *handle)
 		tx.offset = (int32_t) (offset * KERN_RES);
 		tx.status = STA_PLL | STA_FLL;
 		tx.freq = freq * (1L << SHIFT_USEC);
-		err = ntp_adjtime(&tx);
+		err = NTP_ADJTIME(&tx);
 
 		verbose(VERB_DEBUG, "System clock frequency skew estimation end "
 			"(%d.%.06d | %"VC_FMT")",
@@ -498,7 +498,6 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	double error_bound 		= 0;
 	double error_bound_avg 	= 0;
 	double error_bound_std 	= 0;
-	int poll_period = 0;
 	int err, err_read;
 	
 	/* Check hardware counter has not changed */
@@ -625,8 +624,8 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 			now = 0;
 		//verbose(LOG_NOTICE, "** Leapsec ctrl: now = %llu", now);
 		
-		if	( stamp.st.bstamp.Te >= tleap  ||  OUTPUT(handle, leapsec_expected) > 0
-					&& now >= OUTPUT(handle, leapsec_expected)) { // radclock must leap
+		if	( stamp.st.bstamp.Te >= tleap || ( OUTPUT(handle, leapsec_expected) > 0
+					&& now >= OUTPUT(handle, leapsec_expected) )) { // radclock must leap
 			/* Reset radclock leap parameters */
 			OUTPUT(handle, leapsec_total) += OUTPUT(handle, leapsec_next);
 			OUTPUT(handle, leapsec_expected) = 0;    // signal no leap is imminent
@@ -638,7 +637,7 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 			leap_warningcount = 0;
 			leap_imminent = 0;
 		} else {							// leap still ahead, update preparations
-			read_RADabs_UTC(&handle->rad_data, &(stamp.st.bstamp.Tf), &radtime);
+			read_RADabs_UTC(&handle->rad_data, &(stamp.st.bstamp.Tf), &radtime, 1);
 			OUTPUT(handle, leapsec_expected) = stamp.st.bstamp.Tf +
 					(vcounter_t) ((tleap - radtime)/(long double)peer->plocal);
 			verbose(LOG_NOTICE, "** Leapsec ctrl: jump imminent, leap of %d expected in %4.2Lf [sec] (leapsec_expected = %llu)",
@@ -678,7 +677,11 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	RAD_DATA(handle)->leapsec_expected	= OUTPUT(handle, leapsec_expected);
 	
 	pthread_mutex_unlock(&handle->globaldata_mutex);
-
+	
+	if ( VERB_LEVEL>2 ) {
+		verbose(LOG_ERR, "In process_stamp");
+		printout_raddata(RAD_DATA(handle));
+	}
 
 	/*
 	 * RAD data copy actions, only relevant when running Live
@@ -695,7 +698,7 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 				update_ipc_shared_memory(handle);
 		}
 
-		/* Update FFclock parameters, provide RADclock is synchronized */
+		/* Update FFclock parameters, provided RADclock is synchronized */
 		if (!HAS_STATUS(handle, STARAD_UNSYNC)) {
 			if (handle->clock->kernel_version < 2) {
 				update_kernel_fixed(handle);
@@ -727,8 +730,14 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 				}
 	#endif
 				fill_ffclock_estimate(&handle->rad_data, &handle->rad_error, &cest);
+				if ( VERB_LEVEL>2 ) printout_FFdata(&cest);
 				set_kernel_ffclock(handle->clock, &cest);
-				verbose(VERB_DEBUG, "Feed-forward kernel clock has been set.");
+				verbose(VERB_DEBUG, "FF kernel data has been updated.");
+				if ( VERB_LEVEL>2 ) { // check was updated as expected
+					get_kernel_ffclock(handle->clock, &cest);
+					printout_FFdata(&cest);
+				}
+
 			}
 		}
 
@@ -765,7 +774,7 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 			!(OUTPUT(handle, n_stamps) % ((int)(3600*6/peer->poll_period)))))
 	{
 		read_RADabs_UTC(&handle->rad_data, &(RAD_DATA(handle)->last_changed),
-				&currtime);
+				&currtime, PLOCAL_ACTIVE);
 		min_RTT = RAD_ERROR(handle)->min_RTT;
 		timediff = (double) (currtime - (long double) BST(&stamp)->Te);
 

@@ -45,8 +45,6 @@
 #include "kclock.h"
 #include "logger.h"
 
-
-
 /*
  * Create radclock structure
  */
@@ -211,8 +209,7 @@ shm_init_writer(struct radclock *clock)
  * Processes still running will be attached to old shared memory segment
  * and won't catch updates from the new instance of the daemon (the new
  * segment would have a new id).
- * Best is to have the shared memory created once, reused and never
- * deleted.
+ * Best is to have the shared memory created once, reused and never deleted.
  */
 int
 shm_detach(struct radclock *clock)
@@ -263,9 +260,8 @@ radclock_init(struct radclock *clock)
 void
 radclock_destroy(struct radclock *clock)
 {
-
 	/* Detach IPC shared memory */
-	shmdt(clock->ipc_shm);
+	shm_detach(clock->ipc_shm);
 
 	/* Free the clock and set to NULL, useful for partner software */
 	free(clock);
@@ -286,7 +282,7 @@ radclock_register_pcap(struct radclock *clock, pcap_t *pcap_handle)
 
 
 /*
- * Map the radclock data to the kernel FFclock data structure.
+ * Map the radclock data into the kernel FFclock data structure.
  */
 void
 fill_ffclock_estimate(struct radclock_data *rad_data,
@@ -308,21 +304,22 @@ fill_ffclock_estimate(struct radclock_data *rad_data,
 		cest->leapsec_next 		= rad_data->leapsec_next;
 		cest->leapsec_expected	= rad_data->leapsec_expected;
 
-
-		/* What I would like to do is:
-		* cest->time.frac = (time - (time_t) time) * (1LLU << 64);
+		/* Would like:  cest->time.frac = (time - (time_t) time) * (1LLU << 64);
 		* but cannot push '1' by 64 bits, does not fit in LLU. So push 63 bits,
-		* multiply for best resolution and loose resolution of 1/2^64.
-		* Same for phat.
+		* multiply for best resolution and lose resolution of 1/2^64.
 		*/
-		//read_RADabs_native(rad_data, &Tlast, &time);
+		//read_RADabs_native(rad_data, &Tlast, &time, 0);  // phat only
 		time = Tlast * (long double)rad_data->phat + rad_data->ca; // native clock
 
 		cest->update_time.sec = (time_t) time;
 		frac = (time - (time_t) time) * (1LLU << 63);
 		cest->update_time.frac = frac << 1;
 
-		period = ((long double) rad_data->phat_local) * (1LLU << 63);
+		if ( PLOCAL_ACTIVE )
+			period = ((long double) rad_data->phat_local) * (1LLU << 63);
+		else
+			period = ((long double) rad_data->phat) * (1LLU << 63);
+		
 		cest->period = period << 1;
 
 		//cest->errb_abs = (uint32_t) rad_err->error_bound_avg * 1e9;
@@ -359,12 +356,12 @@ fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data
 	rad_data->last_changed = (vcounter_t) cest->update_ffcount;
 	rad_data->next_expected = 0;	// signal that the kernel can't know this
 	rad_data->status = (unsigned int) cest->status;
-	rad_data->leapsec_total	= 0;
-	rad_data->leapsec_next = 0;
-	rad_data->leapsec_expected = 0;
+	rad_data->leapsec_total		= cest->leapsec_total;
+	rad_data->leapsec_next 		= cest->leapsec_next;
+	rad_data->leapsec_expected = cest->leapsec_expected;
 	
 
-	tmp = (long double) cest->period / (1LLU << 32);
+	tmp = ((long double) cest->period) / (1LLU << 32);
 	rad_data->phat_local = (double) (tmp / (1LLU << 32));
 	rad_data->phat = rad_data->phat_local;	// true phat recovery not possible
 	
@@ -372,19 +369,12 @@ fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data
 	rad_data->phat_err = rad_data->phat_local_err;
 	rad_data->ca_err = (double) cest->errb_abs / 1e9;
 	
-	/*
-	 * Cannot push 64 times in a LLU at once. Push twice 32 instead. In this
-	 * direction (get and not set), it is ok to do it that way. We do risk to
-	 * look heavy digits or resolution. See set_kernel_ffclock() in radclock
-	 * code.
+	/* Cannot push 64 times in a LLU at once. Push twice 32 instead. In this
+	 * direction (get and not set), it is ok to do it that way.
 	 */
 	/* Want ca = Cabs(tlast) - phat*T(tlast), but phat not in cest, use plocal */
 	rad_data->ca = (long double) cest->update_time.sec;
 	tmp = ((long double) cest->update_time.frac) / (1LL << 32);
 	rad_data->ca += tmp / (1LL << 32);
 	rad_data->ca -= (long double) rad_data->phat_local * rad_data->last_changed;
-
-	logger(RADLOG_NOTICE, "Retrieved clock estimate init from kernel");
-
-	//fprintf(stdout, "  ** BYPASSING VERB in fill_radclock_data:  period=%llu  phat = %.10lg, C = %7.4Lf\n", (unsigned long long) cest->period, rad_data->phat, rad_data->ca);
 }

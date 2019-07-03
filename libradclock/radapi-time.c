@@ -78,19 +78,28 @@ raddata_quality(vcounter_t now, vcounter_t last, vcounter_t valid, double phat)
 // can read counter, then data updated, then compare ... BOOM!
 	if (now < last)
 		return 3;
+   //fprintf(stdout,"raddata_quality:  made it past first rtn3\n");
 
 	/*
 	 * Several scenarios again:
 	 * - the data is really old, clock status should say the same
 	 * - virtual machine migrated, but cannot be sure. Mark data as very bad.
 	 */
-	if (phat * (now - valid) > OUT_SKM)
-		return 3;
+	//if (phat * (now - valid) > OUT_SKM)
+		//return 3;
 
 	/* The data is old, but still in SKM_SCALE */
-	if (now > valid)
+	if (now > valid) {
+		//fprintf(stdout,"raddata_quality:  inside now>valid \n");
+		if (phat * (now - valid) > OUT_SKM) {
+		   //fprintf(stdout,"raddata_quality:  rtn3\n");
+			return 3;
+		}
+		//fprintf(stdout,"raddata_quality:  rtn2\n");
 		return 2;
-
+	}
+	
+	//fprintf(stdout,"raddata_quality:  rtn0 \n");
 	return 0;
 }
 
@@ -99,7 +108,7 @@ raddata_quality(vcounter_t now, vcounter_t last, vcounter_t valid, double phat)
 
 /*
  * Build the time using the UTC absolute clock plus the local relative rate
- * correction (has no effect if not running plocal).
+ * correction.
  */
 static inline int
 ffcounter_to_abstime_shm(struct radclock *clock, vcounter_t vcount,
@@ -118,15 +127,17 @@ ffcounter_to_abstime_shm(struct radclock *clock, vcounter_t vcount,
 		last  = SHM_DATA(shm)->last_changed;
 		phat  = SHM_DATA(shm)->phat;
 
-		//*time = vcount * (long double)phat + SHM_DATA(shm)->ca;
-		read_RADabs_UTC(SHM_DATA(shm), &vcount, time);
-		
-		if ((clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON)
-			&& ((SHM_DATA(shm)->status & STARAD_WARMUP) != STARAD_WARMUP))
-		{
-			*time += (vcount - last) *
-				(long double)(SHM_DATA(shm)->phat_local - phat);
-		}
+		if ( clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON )
+			read_RADabs_UTC(SHM_DATA(shm), &vcount, time, 1);
+		else
+			read_RADabs_UTC(SHM_DATA(shm), &vcount, time, 0);
+
+//		if ((clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON)
+//			&& ((SHM_DATA(shm)->status & STARAD_WARMUP) != STARAD_WARMUP))
+//		{
+//			*time += (vcount - last) *
+//				(long double)(SHM_DATA(shm)->phat_local - phat);
+//		}
 	} while (generation != shm->gen || !shm->gen);
 
 	return raddata_quality(vcount, last, valid, phat);
@@ -140,28 +151,11 @@ ffcounter_to_abstime_kernel(struct radclock *clock, vcounter_t vcount,
 	struct ffclock_estimate cest;
 	struct radclock_data rad_data;
 
-// TODO FIXME error code is out of whack
 	if (get_kernel_ffclock(clock, &cest))
 		return (1);
 	fill_radclock_data(&cest, &rad_data);
 
-	*time = vcount * rad_data.phat + rad_data.ca;
-	/* Include leapseconds to form UTC RADclock */
-	*time -= rad_data.leapsec_total;	// subtracting means including leaps!
-	if ( rad_data.leapsec_expected != 0  &&  vcount > rad_data.leapsec_expected)
-		*time -= rad_data.leapsec_next;	// if new leap flagged, and past it, then include it
-	
-	long double timeagain;
-	read_RADabs_UTC(&rad_data, &vcount, &timeagain);
-
-   logger(RADLOG_ERR, "*** compare direct and read_RADabs_UTC %lf :", *time-timeagain);
-	// Currently this will do nothing as phat from kernel is always = plocal
-	if ((clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON) &&
-			((rad_data.status & STARAD_WARMUP) != STARAD_WARMUP))
-	{
-		*time += (vcount - rad_data.last_changed) *
-			(long double)(rad_data.phat_local - rad_data.phat);
-	}
+	read_RADabs_UTC(&rad_data, &vcount, time, 0);	// no point trying plocal
 
 	return raddata_quality(vcount, rad_data.last_changed, rad_data.next_expected,
 			rad_data.phat);
@@ -191,8 +185,10 @@ ffcounter_to_difftime_shm(struct radclock *clock, vcounter_t from_vcount,
 		valid = SHM_DATA(shm)->next_expected;
 		last  = SHM_DATA(shm)->last_changed;
 		phat  = SHM_DATA(shm)->phat;
-		*time = (till_vcount - from_vcount) *
-				(long double)SHM_DATA(shm)->phat_local;
+		if ( clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON )
+			*time = (till_vcount - from_vcount) * (long double)SHM_DATA(shm)->phat_local;
+		else
+			*time = (till_vcount - from_vcount) * (long double)SHM_DATA(shm)->phat;
 	} while (generation != shm->gen || !shm->gen);
 
 	return raddata_quality(now, last, valid, phat);
@@ -211,16 +207,12 @@ ffcounter_to_difftime_kernel(struct radclock *clock, vcounter_t from_vcount,
 	if (radclock_get_vcounter(clock, &now))
 		return (1);
 
-
-// TODO FIXME error code is out of whack
 	if (get_kernel_ffclock(clock, &cest))
 		return (1);
 	fill_radclock_data(&cest, &rad_data);
-
-	*time = (till_vcount - from_vcount) * (long double)rad_data.phat_local;
-
-	return raddata_quality(now, rad_data.last_changed, rad_data.next_expected,
-			rad_data.phat);
+	*time = ((double)(till_vcount) - (double)from_vcount) * (long double)rad_data.phat_local;
+	
+	return 	raddata_quality(now, rad_data.last_changed, rad_data.next_expected, rad_data.phat);
 }
 
 
@@ -236,18 +228,19 @@ ffcounter_to_difftime_kernel(struct radclock *clock, vcounter_t from_vcount,
 // 		- Validity of the global data
 // 		- error code(s) to return
 static inline int
-in_skm(struct radclock *clock, const vcounter_t *past_count, const vcounter_t *vc)
+in_SKMwin(struct radclock *clock, const vcounter_t *past_count, const vcounter_t *vc)
 {
 	struct radclock_shm *shm;
 	vcounter_t now;
 
-	if (!vc)
+	if (!vc)		// if counter not passed, read it here
 		radclock_get_vcounter(clock, &now);
-	now = *vc;
+	else
+		now = *vc;
 
 	shm = (struct radclock_shm *) clock->ipc_shm;
 	if ((now - *past_count) * SHM_DATA(shm)->phat < 1024)
-		return (1);
+		return (1);	// is within SKMwin
 	else
 		return (0);
 }
@@ -310,15 +303,17 @@ radclock_elapsed(struct radclock *clock, const vcounter_t *from_vcount,
 		return (1);
 	
 	/* Retrieve clock data */
-	if (clock->ipc_shm)
+	if (clock->ipc_shm) {
 		quality = ffcounter_to_difftime_shm(clock, *from_vcount, vcount, duration);
-	else
+		if (!in_SKMwin(clock, from_vcount, &vcount))
+			return (1);
+	} else
 		quality = ffcounter_to_difftime_kernel(clock, *from_vcount, vcount, duration);
 
 // TODO is this the  good behaviour, we should request the clock data associated
 // to from_vcount? maybe not
-	if (!in_skm(clock, from_vcount, &vcount))
-		return (1);
+//	if (!in_SKMwin(clock, from_vcount, &vcount))
+//		return (1);
 
 	return (quality);
 }
@@ -340,17 +335,19 @@ radclock_duration(struct radclock *clock, const vcounter_t *from_vcount,
 		return (1);
 	
 	/* Retrieve clock data */
-	if (clock->ipc_shm)
-		quality = ffcounter_to_difftime_shm(clock, *from_vcount, *till_vcount,
-				duration);
-	else
-		quality = ffcounter_to_difftime_kernel(clock, *from_vcount, *till_vcount,
-				duration);
+	if (clock->ipc_shm) {
+		quality = ffcounter_to_difftime_shm(clock, *from_vcount, *till_vcount, duration);
+		if (!in_SKMwin(clock, from_vcount, &vcount)) {
+			fprintf(stdout, "radclock_duration: inside \n");
+			return (1);
+		}
+	} else
+		quality = ffcounter_to_difftime_kernel(clock, *from_vcount, *till_vcount, duration);
 
 // TODO is this the  good behaviour, we should request the clock data associated
 // to from_vcount? maybe not
-	if (!in_skm(clock, from_vcount, &vcount))
-		return (1);
+//	if (!in_SKMwin(clock, from_vcount, &vcount))
+//		return (1);
 
 	return (quality);
 }

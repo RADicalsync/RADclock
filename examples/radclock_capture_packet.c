@@ -193,7 +193,7 @@ main (int argc, char *argv[])
 
 	/* We do a bit of warm up to heat the IPC socket on slow systems */
 	for (ret = 0; ret < 5; ret++ ) {
-		radclock_get_last_stamp(clock_handle, &vcount);
+		radclock_get_last_changed(clock_handle, &vcount);
 		sleep(1);
 	}
 

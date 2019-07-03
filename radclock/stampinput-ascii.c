@@ -1,6 +1,7 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux <julien@synclab.org>
- * All rights reserved.
+ * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2013-2017, Darryl Veitch <darryl.veitch@uts.edu.au>
+* All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -46,10 +47,6 @@
 #include "stampinput_int.h"
 #include "jdebug.h"
 
-
-
-#define NTPtoUTC_OFFSET  2272060800lu  // [sec] since NTP base epoch [current UNIX + 730 days = 2 years]
-#define NTPtoUNIX_OFFSET 2208988800lu  // [sec] since NTP base epoch, currently!
 
 #define ASCII_DATA(x) ((struct ascii_data *)(x->priv_data))
 
@@ -143,13 +140,6 @@ asciistamp_get_next(struct radclock_handle *handle, struct stampsource *source,
 		// skip to start of next line (robust to 5 or more column input)
 		while((fgetc(stamp_fd))!= '\n'){}
 
-		// TODO: Do we still need to keep this ??
-		// hack to convert old ascii files with NTP TSs to UNIX
-		if ( BST(stamp)->Te > NTPtoUNIX_OFFSET )
-		{
-			BST(stamp)->Tb -= NTPtoUNIX_OFFSET;
-			BST(stamp)->Te -= NTPtoUNIX_OFFSET;
-		}
 		// TODO: need to detect stamp type, ie, get a better input format
 		stamp->type = STAMP_NTP;
 		stamp->qual_warning = 0;

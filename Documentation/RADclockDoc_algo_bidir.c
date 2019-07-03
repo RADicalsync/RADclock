@@ -39,18 +39,24 @@ Introduction
 ============
 
 
-
+/*
+ * Structure representing the radclock parameters
+ */
 struct radclock_data {
-	double phat;
-	double phat_err;
-	double phat_local;
-	double phat_local_err;
-	long double ca;
-	double ca_err;
-	unsigned int status;
-	vcounter_t last_changed;
-	vcounter_t next_expected;
+	double phat;				// very stable estimate of long term counter period [s]
+	double phat_err;			// estimated bound on the relative error of phat [unitless]
+	double phat_local;		//	stable estimate on shorter timescale period [s]
+	double phat_local_err;  // estimated bound on the relative error of plocal [unitless]
+	long double ca;			// K_p - thetahat(t) - leapsectotal? [s]
+	double ca_err;				// estimated error (currently minET) in thetahat and ca [s]
+	unsigned int status;		// status word (contains 9 bit fields)
+	vcounter_t last_changed;	// raw timestamp T(tf) of last stamp processed [counter]
+	vcounter_t next_expected;	// estimated T value of next stamp, and hence update [counter]
+	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none
+	int leapsec_total;				// sum of leap seconds seen since clock start
+	int leapsec_next;					// value of the expected next leap second {-1 0 1}
 };
+
 
 
 
@@ -84,6 +90,13 @@ RADclock versus the algo
 Leap second treatment
 ============================
 
+All leapsecond processing is contained within process_stamp(), which owns and sets
+the rad_data member of the handle which defines the RADclock.  To be clear, the
+RADclock absolute clock Ca is a UTC clock!
+
+The algo itself sets peer variables, but does not update rad_data. Moreover it
+operates natively, that is without any knowledge of leap seconds that have occurred since boot.
+
 
 
 
@@ -102,9 +115,27 @@ pclocal Clock Algorithm
 ============================
 
 
-==============================================================
+================================q==============================
 plocal Selection Control
 ============================
+
+	  C_a(t) = p*T(t) + K_p  - thetahat  +  (T(t) - T(tlast))*(plocal-p)    (1)
+
+
+This has now been sorted:  write text based on DISCUSSoion in RADclock_notepad
+
+
+radclock.h:
+typedef enum { RADCLOCK_LOCAL_PERIOD_ON, RADCLOCK_LOCAL_PERIOD_OFF }	radclock_local_period_t;
+
+
+
+
+
+
+
+
+
 
 
 ==============================================================

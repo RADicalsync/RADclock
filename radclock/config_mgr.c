@@ -308,7 +308,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 	if ( (conf) && (strlen(conf->time_server) > 0) )
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER), conf->time_server);
 	else
-		fprintf(fd, "#%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER), DEFAULT_TIME_SERVER);
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER), DEFAULT_TIME_SERVER);
 
 
 	fprintf(fd, "\n\n\n");

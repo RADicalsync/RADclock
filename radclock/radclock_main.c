@@ -73,6 +73,7 @@
 #include "proto_ntp.h"
 #include "jdebug.h"
 
+#include <sys/sysctl.h>
 
 /* Default PID lockfile (-P overrides this) */
 #define DAEMON_LOCK_FILE ( RADCLOCK_RUN_DIRECTORY "/radclock.pid" )
@@ -576,11 +577,20 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 		err = get_kernel_ffclock(clock, &cest);
 
 	if (err < 0) {
-		verbose(LOG_ERR, "Did not get initial ffclock data from kernel");
+		verbose(LOG_ERR, "Failed to get initial ffclock data from kernel");
 		return (1);
 	}
+	
+	/* Check FFclock data from kernel, map it to rad_data, and check mapping */
+	verbose(LOG_NOTICE, "clock_init_live: retrieved and mapped FFclock data");
+	if ( VERB_LEVEL>1 ) printout_FFdata(&cest);
 	fill_radclock_data(&cest, rad_data);
-
+	if ( VERB_LEVEL>2 ) {  // check conversion, and inversion, are as expected
+		printout_raddata(rad_data);
+		fill_ffclock_estimate(rad_data, &clock_handle->rad_error, &cest);
+		printout_FFdata(&cest);
+	}
+	
 	err = radclock_init_vcounter_syscall(clock);
 	if (err)
 		return (1);
@@ -594,6 +604,60 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	if (err)
 		return (1);
 	verbose(LOG_NOTICE, "Kernel clock support initialised");
+
+	/* Get information about FF status from kernel [need to move to kern dep code] */
+	#define	MAX_SYSCLOCK_NAME_LEN 16
+	int inttopass;
+	char nametopass[32];
+	char nameavail[32];
+	size_t sn;
+	size_t si = sizeof inttopass;
+	
+	verbose(LOG_NOTICE, "clock_init_live:  testing sysctl interface");
+
+	err = sysctlbyname("kern.timecounter.hardware", &nametopass[0], &sn, NULL, 0);
+	verbose(LOG_NOTICE, "\t Hardware counter: %s", nametopass);
+	
+	sn = sizeof(nametopass);
+	strlcpy(nametopass,"HPET",sn);
+	verbose(LOG_NOTICE, "\t Trying to change counter to %s", nametopass);
+	err = sysctlbyname("kern.timecounter.hardware", &nametopass[0], &sn, NULL, 0);
+	verbose(LOG_NOTICE, "\t ** Hardware counter: %s", nametopass);
+	
+	err = sysctlbyname("kern.sysclock.ffclock.version", &inttopass, &si, NULL, 0);
+	verbose(LOG_NOTICE, "\t FF Kernel version: %d", inttopass);
+	//inttopass=99;
+	//err = sysctlbyname("kern.sysclock.ffcounter_bypass", &inttopass, &si, NULL, 0);
+	//verbose(LOG_NOTICE, "  FFcounter bypass state: %d", inttopass);
+	
+	sn = sizeof(nameavail);	// reset, as each call with a proc modifies sn
+	err = sysctlbyname("kern.sysclock.available", &nameavail[0], &sn, NULL, 0);
+	verbose(LOG_NOTICE, "\t Available sysclocks: %s", nameavail);
+	
+	
+	
+	/* Get the active sysclock */
+	sn = sizeof(nametopass);
+	err = sysctlbyname("kern.sysclock.active", &nametopass[0], &sn, NULL, 0);
+	verbose(LOG_NOTICE, "\t Active sysclock: %s", nametopass);
+
+	/* To set the active sysclock, pass its name in */
+	// Prepare the name
+	sn = sizeof(nametopass);
+	strlcpy(nametopass,"feed-forward",sn);  // userland doesnt understand SYSCLOCK_{FFWD,FBCK}
+	//nametopass[13] = '\0';
+	verbose(LOG_NOTICE, "\t Trying to change sysclock to: %s", nametopass);
+	
+	// Ask to change to it
+	err = sysctlbyname("kern.sysclock.active", &nametopass[0], &sn, NULL, 0);
+	verbose(LOG_NOTICE, "\t ** Active sysclock: %s [sn = %u]", nametopass, strlen(nametopass));
+	
+	// Check afterward if has changed
+	sn = sizeof(nametopass);
+	memset(nametopass,0,sn);
+	nametopass[0] = '\0';
+	err = sysctlbyname("kern.sysclock.active", &nametopass[0], &sn, NULL, 0);
+	verbose(LOG_NOTICE, "\t Active sysclock: %s", nametopass);
 
 	return (0);
 }
@@ -877,6 +941,7 @@ main(int argc, char *argv[])
 	/* Initialise verbose data to defaults */
 	verbose_data.handle = NULL;
 	verbose_data.is_daemon = 0;
+	verbose_data.is_initialized = 0;
 	verbose_data.verbose_level = 0;
 	verbose_data.fd = NULL;
 	strcpy(verbose_data.logfile, "");
@@ -1008,7 +1073,7 @@ main(int argc, char *argv[])
 			break;
 		case 'v':
 			SET_UPDATE(param_mask, UPDMASK_VERBOSE);
-			conf->verbose_level++;
+			conf->verbose_level++;	// -vvv results in  verbose_level = 3
 			break;
 		case 'U':
 			SET_UPDATE(param_mask, UPD_NTP_UPSTREAM_PORT);

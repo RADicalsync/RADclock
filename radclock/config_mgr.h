@@ -38,6 +38,9 @@
 #define	RAD_MINPOLL	1		/* min poll interval (s) */
 #define	RAD_MAXPOLL	1024	/* max poll interval (s) */
 
+/* Global setting for use of plocal refinement for in-daemon timestamping */
+//# define PLOCAL_ACTIVE	1		//  {0,1} = {inactive, active}
+
 
 /* 
  * Define max size for command line and configuration file parameters 
@@ -90,16 +93,16 @@
 #define DEFAULT_PHAT_INIT			1.e-9
 #define DEFAULT_ASYM_HOST			0.0				// 0 micro-sconds
 #define DEFAULT_ASYM_NET			0.0				// 0 micro-seconds 
-#define DEFAULT_HOSTNAME			"numbat.cubinlab.ee.unimelb.edu.au"
-#define DEFAULT_TIME_SERVER			"ntp.cubinlab.ee.unimelb.edu.au"
+#define DEFAULT_HOSTNAME			"platypus2.tklab.feit.uts.edu.au"
+#define DEFAULT_TIME_SERVER		"ntp1.net.monash.edu.au"
 #define DEFAULT_NETWORKDEV			"xl0"
 #define DEFAULT_SYNC_IN_PCAP		"sync_input.pcap"
 #define DEFAULT_SYNC_IN_ASCII		"sync_input.ascii"
 #define DEFAULT_SYNC_OUT_PCAP		"sync_output.pcap"
-#define DEFAULT_SYNC_OUT_ASCII		"sync_output.ascii"
-#define DEFAULT_CLOCK_OUT_ASCII		"clock_output.ascii"
+#define DEFAULT_SYNC_OUT_ASCII	"sync_output.ascii"
+#define DEFAULT_CLOCK_OUT_ASCII	"clock_output.ascii"
 
-#define DEFAULT_VM_UDP_LIST			"vm_udp_list"
+#define DEFAULT_VM_UDP_LIST		"vm_udp_list"
 
 
 /*

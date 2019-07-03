@@ -65,7 +65,7 @@ build_timestamp_tval(struct radclock_handle *handle,
 {
 	long double time;
 
-	read_RADabs_UTC(&handle->rad_data, &vcount, &time);
+	read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
 	UTCld_to_timeval(&time, tv);
 }
 

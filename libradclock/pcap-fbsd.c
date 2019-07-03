@@ -35,7 +35,7 @@
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #ifdef HAVE_SYS_TIMEFFC_H
-#include <sys/timeffc.h>
+#include <sys/timeffc.h>   // TODO, remove this include kclock.h instead
 #endif
 #include <sys/socket.h>
 
@@ -112,33 +112,51 @@
 // FIXME this is kind of a mess, all options need to be double-check for
 // backward compatibility
 int
-descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int kmode)
+descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 {
 	u_int bd_tstamp = 0;
+	int override_mode = *mode;
 
 	switch (handle->kernel_version) {
-
 	case 0:
 	case 1:
-		if (ioctl(pcap_fileno(p_handle), BIOCSRADCLOCKTSMODE, (caddr_t)&kmode) == -1) {
+		if (ioctl(pcap_fileno(p_handle), BIOCSRADCLOCKTSMODE, (caddr_t)mode) == -1) {
 			logger(RADLOG_ERR, "Setting capture mode failed");
 			return (1);
 		}
 		break;
 
+	/* KV>=2: Faircompare mode now identical to SYSCLOCK */
 	case 2:
+		switch (*mode) {
+			case RADCLOCK_TSMODE_SYSCLOCK:
+			case RADCLOCK_TSMODE_FAIRCOMPARE:
+				logger(RADLOG_ERR, "Requested timestamping mode unsupported: "
+					"attempting RADCLOCK_TSMODE_RADCLOCK");
+				override_mode = RADCLOCK_TSMODE_RADCLOCK;
+				bd_tstamp = BPF_T_FFCOUNTER;
+				break;
+			case RADCLOCK_TSMODE_RADCLOCK:  // this is the only option!
+				bd_tstamp = BPF_T_FFCOUNTER;
+				break;
+			default:
+				logger(RADLOG_ERR, "descriptor_set_tsmode: unknown timestamping mode.");
+				return (1);
+		}
+		*mode = override_mode;	// inform caller of changed mode
+		if (ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp) == -1) {
+			logger(RADLOG_ERR, "Setting capture mode failed: %s", strerror(errno));
+			return (1);
+		}
+		break;
+		
 	case 3:
-		/* No more Faircompare mode in kernel version 2, it is identical to
-		 * SYSCLOCK
-		 */
-		switch (kmode) {
+		switch (*mode) {
 			case RADCLOCK_TSMODE_SYSCLOCK:
 			case RADCLOCK_TSMODE_FAIRCOMPARE:
 				bd_tstamp = BPF_T_MICROTIME;
 				break;
 			case RADCLOCK_TSMODE_RADCLOCK:
-				// TODO this is not very clean, need to do better management of
-				// the format flag
 				bd_tstamp = BPF_T_FFCOUNTER;
 //				bd_tstamp = BPF_T_FFCOUNTER | BPF_T_FFCLOCK;
 //				bd_tstamp = BPF_T_MICROTIME | BPF_T_FFCLOCK | BPF_T_MONOTONIC;
@@ -147,50 +165,25 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int kmode)
 				logger(RADLOG_ERR, "descriptor_set_tsmode: Unknown timestamping mode.");
 				return (1);
 		}
-
 		if (ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp) == -1) {
 			logger(RADLOG_ERR, "Setting capture mode failed: %s", strerror(errno));
 			return (1);
 		}
-
 		break;
 
 	default:
 		logger(RADLOG_ERR, "Unknown kernel version");
 		return (1);
-
 	}
 
 	return (0);
 }
 
-
-int
-descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *kmode)
+static void
+decode_pcap_tsflags_KV2(u_int bd_tstamp)
 {
-	u_int bd_tstamp = 0;
-
-	switch (handle->kernel_version) {
-
-	case 0:
-	case 1:
-		if (ioctl(pcap_fileno(p_handle), BIOCGRADCLOCKTSMODE, (caddr_t)kmode) == -1) {
-			logger(RADLOG_ERR, "Getting timestamping mode failed");
-			return (1);
-		}
-		break;
-
-	case 2:
-	case 3:
-		if (ioctl(pcap_fileno(p_handle), BIOCGTSTAMP, (caddr_t)(&bd_tstamp)) == -1) {
-			logger(RADLOG_ERR, "Getting timestamping mode failed: %s", strerror(errno));
-			return (1);
-		}
-
-// TODO:  make this verbosity into a static fn:   decode_pcap_tsflags()  to use here and before/after in set_
-//    make it conditional inside on KV≥2 although bad, will clean out KV in due course
 		logger(RADLOG_NOTICE, "Decoding PCAP timestamp mode flags (bd_tstamp = %u (0x%04x))",
-				 bd_tstamp,bd_tstamp);
+				 bd_tstamp, bd_tstamp);
 	 	switch (BPF_T_FORMAT(bd_tstamp)) {
 		case BPF_T_MICROTIME:
 			logger(RADLOG_NOTICE, "     FORMAT = MICROTIME");
@@ -226,7 +219,52 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *kmode)
 			logger(RADLOG_NOTICE, "     CLOCK = FFCLOCK");
 			break;
 		}
-	
+}
+
+
+int
+descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *kmode)
+{
+	u_int bd_tstamp = 0;
+
+	switch (handle->kernel_version) {
+
+	case 0:
+	case 1:
+		if (ioctl(pcap_fileno(p_handle), BIOCGRADCLOCKTSMODE, (caddr_t)kmode) == -1) {
+			logger(RADLOG_ERR, "Getting timestamping mode failed");
+			return (1);
+		}
+		break;
+
+	case 2:
+		if (ioctl(pcap_fileno(p_handle), BIOCGTSTAMP, (caddr_t)(&bd_tstamp)) == -1) {
+			logger(RADLOG_ERR, "Getting timestamping mode failed: %s", strerror(errno));
+			return (1);
+		}
+		decode_pcap_tsflags_KV2(bd_tstamp);
+
+		switch (bd_tstamp & BPF_T_CLOCK_MASK) {
+		case BPF_T_SYSCLOCK:
+		// FIXME: need to retrieve sysctl clock active
+		case BPF_T_FBCLOCK:
+			logger(RADLOG_ERR, "Capture clock = FBCLOCK or SYSCLOCK, brute force mapping to tsmode RADCLOCK");
+			*kmode = RADCLOCK_TSMODE_RADCLOCK;// hack to force input of RADCLOCK = output, to avoid other errors
+			break;
+
+		case BPF_T_FFCLOCK:
+			logger(RADLOG_ERR, "Capture clock = FFCLOCK, but mapping to tsmode RADCLOCK");
+			*kmode = RADCLOCK_TSMODE_RADCLOCK;
+			break;
+		}
+		break;
+
+	case 3:
+		if (ioctl(pcap_fileno(p_handle), BIOCGTSTAMP, (caddr_t)(&bd_tstamp)) == -1) {
+			logger(RADLOG_ERR, "Getting timestamping mode failed: %s", strerror(errno));
+			return (1);
+		}
+		decode_pcap_tsflags_KV2(bd_tstamp);
 
 		switch (bd_tstamp & BPF_T_CLOCK_MASK) {
 		case BPF_T_SYSCLOCK:
@@ -234,7 +272,7 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *kmode)
 		
 		case BPF_T_FBCLOCK:
 			logger(RADLOG_ERR, "Capture clock = FBCLOCK or SYSCLOCK, brute force mapping to tsmode RADCLOCK");
-			*kmode = RADCLOCK_TSMODE_RADCLOCK;// hack to force input of RADCLOCK = output, to avoid other errors
+			*kmode = RADCLOCK_TSMODE_RADCLOCK;
 			break;
 
 		case BPF_T_FFCLOCK:
@@ -480,7 +518,7 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 			err = extract_vcount_stamp_v2(clock->pcap_handle, header, packet, vcount);
 		else {
 			*vcount = 0;
-			err = 2;
+			logger(RADLOG_ERR, "Timestamping mode should be RADCLOCK");
 		}
 		break;
 	case 3:
@@ -501,8 +539,6 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 	if (err) {
 		logger(RADLOG_ERR, "Cannot extract vcounter from packet timestamped: %ld.%ld",
 			header->ts.tv_sec, header->ts.tv_usec);
-		if (err == 2)
-			logger(RADLOG_ERR, "Timestamping mode should be RADCLOCK");
 		return (1);
 	}
 

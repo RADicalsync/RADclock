@@ -85,8 +85,7 @@ found_ffwd_kernel_version (void)
 	size_ctl = sizeof(version);
 
 	/* Sysctl for version 2 and 3*/
-	ret = sysctlbyname("kern.sysclock.ffclock.version", &version, &size_ctl,
-			NULL, 0);
+	ret = sysctlbyname("kern.sysclock.ffclock.version", &version, &size_ctl, NULL, 0);
 	if (ret < 0) {
 
 		/* Sysctl for version 1 */
@@ -94,8 +93,7 @@ found_ffwd_kernel_version (void)
 		
 		if (ret < 0) {
 			/* The old way we used before explicit versioning. */
-			ret = sysctlbyname("net.bpf.bpf_radclock_tsmode", &version,
-				&size_ctl, NULL, 0);
+			ret = sysctlbyname("net.bpf.bpf_radclock_tsmode", &version, &size_ctl, NULL, 0);
 
 			if (ret == 0)
 				version = 0;
@@ -105,11 +103,8 @@ found_ffwd_kernel_version (void)
 		}
 	}
 
-	if (version == -1)
-		logger(RADLOG_WARNING, "No feed-forward kernel support detected");
-	else
-		logger(RADLOG_NOTICE, "Feed-Forward kernel detected (version: %d)",
-			version);
+	if (version > -1)
+		logger(RADLOG_NOTICE, "Feed-Forward kernel detected (version: %d)", version);
 
 	/* A quick reminder for the administrator. */
 	switch (version) {
@@ -120,7 +115,7 @@ found_ffwd_kernel_version (void)
 
 	case 1:
 	case 0:
-		logger(RADLOG_WARNING, "The Feed-Forward kernel support is a bit old. "
+		logger(RADLOG_WARNING, "The Feed-Forward kernel support is very old. "
 				"You should update your kernel.");
 		break;
 
