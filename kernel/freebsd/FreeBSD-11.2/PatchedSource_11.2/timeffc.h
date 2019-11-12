@@ -93,6 +93,7 @@ extern int sysclock_active;
  * Flags for use by sysclock_snap2bintime() and various ffclock_ functions to
  * control how the timecounter hardware is read and how the hardware snapshot is
  * converted into absolute time.
+ * The flags all set independent bits and so are OR-able.
  * {FB|FF}CLOCK_FAST:	Do not read the hardware counter, instead using the
  *			value at last tick. The time returned has a resolution
  *			of the kernel tick timer (1/hz [s]).
@@ -103,11 +104,11 @@ extern int sysclock_active;
  */
 #define	FFCLOCK_FAST		0x00000001
 #define	FFCLOCK_LERP		0x00000002
-#define	FFCLOCK_LEAPSEC		0x00000004
+#define	FFCLOCK_LEAPSEC	0x00000004
 #define	FFCLOCK_UPTIME		0x00000008
 #define	FFCLOCK_MASK		0x0000ffff
 
-#define	FBCLOCK_FAST		0x00010000 /* Currently unused. */
+#define	FBCLOCK_FAST		0x00010000 /* Currently unused */
 #define	FBCLOCK_UPTIME		0x00020000
 #define	FBCLOCK_MASK		0xffff0000
 
@@ -158,7 +159,7 @@ void sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast);
 
 /* Convert a timestamp from the selected system clock into bintime. */
 int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, uint32_t flags);
+    int whichclock, int wantUptime, int fflerp);
 
 /* Resets feed-forward clock from RTC */
 void ffclock_setto_rtc(struct timespec *ts);

@@ -2143,8 +2143,8 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 	struct bintime bt;
 	struct sysclock_snap cs;
 	struct bpf_d *d;
-	int tstype, whichclock;
-	u_int clockflags, slen;
+	int tstype;
+	u_int slen;
 #ifdef BPF_JITTER
 	bpf_jit_filter *bf;
 #endif
@@ -2192,19 +2192,17 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 
 			d->bd_fcount++;
 #ifdef FFCLOCK
+			printf(" ** in bpf_tap **\n");
 			if (BPF_T_FORMAT(d->bd_tstamp) == BPF_T_FFCOUNTER)
 				bcopy(&cs.ffcount, &bt, sizeof(ffcounter));
 			else
 #endif
-				if (tstype == BPF_TSTAMP_NORMAL ||
-				tstype == BPF_TSTAMP_FAST) {
-				    whichclock = -1;
-				    SET_CLOCKCFG_FLAGS(d->bd_tstamp,
-					cs.sysclock_active, whichclock, clockflags);
-				    KASSERT(whichclock >= 0, ("Bogus BPF tstamp "
-					"configuration: 0x%04x", d->bd_tstamp));
-				    sysclock_snap2bintime(&cs, &bt, whichclock,
-					clockflags);
+				if (tstype == BPF_TSTAMP_NORMAL || tstype == BPF_TSTAMP_FAST) {
+					if ( (BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK && sysclock_active==SYSCLOCK_FBCK)
+						|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK, d->bd_tstamp & BPF_T_MONOTONIC, 0);
+					else
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD, d->bd_tstamp & BPF_T_MONOTONIC, 1);
 				}
 #ifdef MAC
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
@@ -2236,8 +2234,8 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 	struct bintime bt;
 	struct sysclock_snap cs;
 	struct bpf_d *d;
-	u_int clockflags, pktlen, slen;
-	int tstype, whichclock;
+	u_int pktlen, slen;
+	int tstype;
 #ifdef BPF_JITTER
 	bpf_jit_filter *bf;
 #endif
@@ -2283,21 +2281,21 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 
 			d->bd_fcount++;
 #ifdef FFCLOCK
+			printf(" ** in bpf_mtap **\n");
 			if (BPF_T_FORMAT(d->bd_tstamp) == BPF_T_FFCOUNTER)
 				bcopy(&cs.ffcount, &bt, sizeof(ffcounter));
 			else
 #endif
-				if (tstype == BPF_TSTAMP_NORMAL ||
-				    tstype == BPF_TSTAMP_FAST) {
-					whichclock = -1;
-					SET_CLOCKCFG_FLAGS(d->bd_tstamp,
-					    cs.sysclock_active, whichclock,
-					    clockflags);
-					KASSERT(whichclock >= 0, ("Bogus BPF tstamp "
-					    "configuration: 0x%04x", d->bd_tstamp));
-					sysclock_snap2bintime(&cs, &bt, whichclock,
-					    clockflags);
-			}
+				if (tstype == BPF_TSTAMP_NORMAL || tstype == BPF_TSTAMP_FAST) {
+				    //whichclock = -1;
+				    //SET_CLOCKCFG_FLAGS(d->bd_tstamp, cs.sysclock_active, whichclock, clockflags);
+				    //KASSERT(whichclock >= 0, ("Bogus BPF tstamp ""configuration: 0x%04x", d->bd_tstamp));
+					if ( (BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK && sysclock_active==SYSCLOCK_FBCK)
+						|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK, d->bd_tstamp & BPF_T_MONOTONIC, 0);
+					else
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD, d->bd_tstamp & BPF_T_MONOTONIC, 1);
+				}
 #ifdef MAC
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
 #endif
@@ -2325,8 +2323,8 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 	struct sysclock_snap cs;
 	struct mbuf mb;
 	struct bpf_d *d;
-	u_int clockflags, pktlen, slen;
-	int tstype, whichclock;
+	u_int pktlen, slen;
+	int tstype;
 
 	/* Skip outgoing duplicate packets. */
 	if ((m->m_flags & M_PROMISC) != 0 && m->m_pkthdr.rcvif == NULL) {
@@ -2371,20 +2369,17 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 
 			d->bd_fcount++;
 #ifdef FFCLOCK
+			printf(" ** in bpf_mtap2 **\n");
 			if (BPF_T_FORMAT(d->bd_tstamp) == BPF_T_FFCOUNTER)
 				bcopy(&cs.ffcount, &bt, sizeof(ffcounter));
 			else
 #endif
-				if (tstype == BPF_TSTAMP_NORMAL ||
-				    tstype == BPF_TSTAMP_FAST) {
-					whichclock = -1;
-					SET_CLOCKCFG_FLAGS(d->bd_tstamp,
-					    cs.sysclock_active, whichclock,
-					    clockflags);
-					KASSERT(whichclock >= 0, ("Bogus BPF tstamp "
-					    "configuration: 0x%04x", d->bd_tstamp));
-					sysclock_snap2bintime(&cs, &bt, whichclock,
-					    clockflags);
+				if (tstype == BPF_TSTAMP_NORMAL || tstype == BPF_TSTAMP_FAST) {
+					if ( (BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK && sysclock_active==SYSCLOCK_FBCK)
+						|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK, d->bd_tstamp & BPF_T_MONOTONIC, 0);
+					else
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD, d->bd_tstamp & BPF_T_MONOTONIC, 1);
 				}
 #ifdef MAC
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
@@ -2435,16 +2430,16 @@ bpf_hdrlen(struct bpf_d *d)
 static void
 bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)
 {
-	struct bintime bt2, boottimebin;
+//	struct bintime bt2, boottimebin;
 	struct timeval tsm;
 	struct timespec tsn;
 
-	if ((tstype & BPF_T_MONOTONIC) == 0) {
-		bt2 = *bt;
-		getboottimebin(&boottimebin);
-		bintime_add(&bt2, &boottimebin);
-		bt = &bt2;
-	}
+//	if ((tstype & BPF_T_MONOTONIC) == 0) {
+//		bt2 = *bt;
+//		getboottimebin(&boottimebin);
+//		bintime_add(&bt2, &boottimebin);
+//		bt = &bt2;
+//	}
 	switch (BPF_T_FORMAT(tstype)) {
 	case BPF_T_MICROTIME:
 		bintime2timeval(bt, &tsm);

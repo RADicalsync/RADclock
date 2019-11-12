@@ -692,9 +692,11 @@ printout_FFtick(struct fftimehands *ffth)
 /*
  * Update the fftimehands. The updated tick state is based on the previous tick if
  * there has been no actionable update in the FFclock parameters during the current
- * tick (ffclock_updated == 0), otherwise it is based off the updated parameters and
- * the time of the update, and the linear interpolation parameters of the monotonic
- * version of the FFclock {tick_time,period}_lerp are recomputed.
+ * tick (ffclock_updated <= 0), and both the native and monotonic FFclocks advance
+ * linearly. Otherwise it is based off the updated parameters and
+ * the time of the update. The native FFclock will then jump, the monotonic clock will
+ * not (except under special conditions).  The linear interpolation parameters of the
+ * monotonic FFclock ({tick_time,period}_lerp) are recomputed for the new tick.
  *
  * The instant defining the start of the new tick is the  delta=tc_delta call
  *	from tc_windup. This is simply mirrored here in the FF counter `read'.
@@ -770,7 +772,7 @@ ffclock_windup(unsigned int delta)
 				ffdelta = cest->next_expected - cest->update_ffcount;
 				ffclock_convert_delta(ffdelta, cest->period, &bt);
 				secs_to_nextupdate = (u_int)bt.sec;	// expected time to next update
-				if (secs_to_nextupdate==0) secs_to_nextupdate = 1;  //  = max(.,1)
+				if (secs_to_nextupdate==0) secs_to_nextupdate = 1;
 			}
 			ffdelta = ffth->tick_ffcount - cest->update_ffcount;
 			ffclock_convert_delta(ffdelta, cest->period, &bt); // time since update
@@ -784,12 +786,12 @@ ffclock_windup(unsigned int delta)
 	if (ffclock_estimate.update_ffcount > ffth->tick_ffcount) {
 		printf("ffclock_windup: at vcount = %llu, ffclock update slipped into "
 		       "next tick, will process on next call. \n",
-		(unsigned long long)ffth->tick_ffcount);
+				(unsigned long long)ffth->tick_ffcount);
 		if (!watch) watch = 1;	// activate verbosity watching
 	}
 	
 	/* An update in FFclock parameters is available in this tick.
-	 * Generate the new tick state based on this, projected forward to `now'
+	 * Generate the new tick state based on this, projected from the update time.
 	 */
 	if (ffclock_updated > 0 &&     // if an update occurred in current tick
 	    ffclock_estimate.update_ffcount < ffth->tick_ffcount) {
@@ -846,8 +848,8 @@ ffclock_windup(unsigned int delta)
 			else
 				bintime_sub(&ffclock_boottime, &gap_lerp);
 			ffth->tick_time_lerp = ffth->tick_time;
-			bintime_clear(&gap_lerp);
-			printf(" %u ** ffwindup:  Jumping monotonic FFclock\n", ccc );
+			bintime_clear(&gap_lerp); // signal to period_lerp algo that nothing to do
+			printf("** ffwindup:  Jumping monotonic FFclock\n" );
 			if (!watch) watch = 1;	// activate verbosity watching
 		}
 
@@ -861,7 +863,7 @@ ffclock_windup(unsigned int delta)
 		 */
 		ffth->period_lerp = cest->period;   // re-initialize
 
-		/* Keep default if no gap or no daemon updates yet */
+		/* Keep default if no (or negligible) gap or no daemon updates yet */
 		if (bintime_isset(&gap_lerp) && cest->next_expected > 0) {
 
 			/* Calculate cap */
@@ -1255,12 +1257,11 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 	clock_snap->sysclock_active = sysclock_active;
 
 	/* Record feedback clock status and error. */
-	clock_snap->fb_info.status = time_status;
+	fbi->status = time_status;
 	/* XXX: Very crude estimate of feedback clock error. */
-	bt.sec = time_esterror / 1000000;	// time_esterror in mus
-	//bt.frac = ((time_esterror - bt.sec) * 1000000)*(uint64_t)18446744073709ULL;
-	bt.frac = (time_esterror - bt.sec * 1000000) * MUS_IN_BINFRAC;  // check
-	clock_snap->fb_info.error = bt;
+	bt.sec = time_esterror / 1000000;			// time_esterror is in mus
+	bt.frac = (time_esterror - bt.sec * 1000000) * MUS_IN_BINFRAC;
+	fbi->error = bt;
 
 #ifdef FFCLOCK
 	if (!fast)
@@ -1274,12 +1275,12 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 		ffi->leapsec_adjustment += cest.leapsec_next;
 
 	/* Record feed-forward clock status and error. */
-	clock_snap->ff_info.status = cest.status;
-	clock_snap->ff_info.error = ffth->tick_error;
+	ffi->status = cest.status;
+	ffi->error = ffth->tick_error;
 	if (!fast) {
-		ffclock_convert_delta(delta, cest.period, &bt);
+		ffclock_convert_delta((ffcounter)delta, cest.period, &bt);
 		bintime_mul(&bt, cest.errb_rate * PS_IN_BINFRAC);	// errb_rate in [ps/s]
-		bintime_add(&clock_snap->ff_info.error, &bt);
+		bintime_add(&ffi->error, &bt);
 	}
 #endif
 }
@@ -1287,10 +1288,11 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 /*
  * Convert a sysclock snapshot into a struct bintime based on the specified
  * clock source and flags.
+ * Note:  Leap and Uptime flags should never be used together.
  */
 int
 sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, uint32_t flags)
+    int whichclock, int wantUptime, int fflerp)
 {
 	struct bintime boottimebin_x;
 #ifdef FFCLOCK
@@ -1306,14 +1308,15 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 		if (cs->delta > 0)
 			bintime_addx(bt, cs->fb_info.th_scale * cs->delta);
 
-		if ((flags & FBCLOCK_UPTIME) == 0) {
+		/* Native FBclock is Uptime, need to adjust if want UTC */
+		if (!wantUptime) {
 			getboottimebin(&boottimebin_x);
 			bintime_add(bt, &boottimebin_x);
 		}
 		break;
 #ifdef FFCLOCK
 	case SYSCLOCK_FFWD:
-		if (flags & FFCLOCK_LERP) {
+		if (fflerp) {
 			*bt = cs->ff_info.tick_time_lerp;
 			period = cs->ff_info.period_lerp;
 		} else {
@@ -1323,17 +1326,16 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 
 		/* If snapshot was created with !fast, delta will be >0. */
 		if (cs->delta > 0) {
-			ffclock_convert_delta(cs->delta, period, &bt2);
+			ffclock_convert_delta((ffcounter)cs->delta, period, &bt2);
 			bintime_add(bt, &bt2);
 		}
 
-		/* Leap second adjustment. */
-		if (flags & FFCLOCK_LEAPSEC)
+		/* Add appropriate constant to create Uptime or UTC flavor */
+		if (wantUptime) // Uptime
+			bintime_sub(bt, &ffclock_boottime);
+		else				 // UTC
 			bt->sec -= cs->ff_info.leapsec_adjustment;
 
-		/* Boot time adjustment, for uptime/monotonic clocks. */
-		if (flags & FFCLOCK_UPTIME)
-			bintime_sub(bt, &ffclock_boottime);
 		break;
 #endif
 	default:
@@ -1636,8 +1638,12 @@ tc_windup(struct bintime *new_boottimebin)
 #ifdef FFCLOCK
 		break;
 	case SYSCLOCK_FFWD:
-		time_second = fftimehands->tick_time_lerp.sec;
-		time_uptime = fftimehands->tick_time_lerp.sec - ffclock_boottime.sec;
+		ffclock_getbintime(&bt);
+		time_second = bt.sec;
+		//time_second = fftimehands->tick_time_lerp.sec;   // wrong, leaps not added!
+		ffclock_getbinuptime(&bt);
+		time_uptime = bt.sec;
+		//time_uptime = fftimehands->tick_time_lerp.sec - ffclock_boottime.sec;
 		break;
 	}
 #endif
