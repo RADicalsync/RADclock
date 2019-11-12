@@ -630,9 +630,9 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	
 	err = sysctlbyname("kern.sysclock.ffclock.version", &inttopass, &si, NULL, 0);
 	verbose(LOG_NOTICE, "\t FF Kernel version: %d", inttopass);
-	//inttopass=99;
-	//err = sysctlbyname("kern.sysclock.ffcounter_bypass", &inttopass, &si, NULL, 0);
-	//verbose(LOG_NOTICE, "  FFcounter bypass state: %d", inttopass);
+	inttopass=99;
+	err = sysctlbyname("kern.sysclock.ffcounter_bypass", &inttopass, &si, NULL, 0);
+	verbose(LOG_NOTICE, "  FFcounter bypass state: %d", inttopass);
 	
 	sn = sizeof(nameavail);	// reset, as each call with a PROC handler modifies sn
 	err = sysctlbyname("kern.sysclock.available", &nameavail[0], &sn, NULL, 0);
@@ -667,7 +667,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	/* Get the value of the interface's timestamp default setting */
 	// TODO: drop this once clear that if-level ts types won't be reappearing
 	//       Only works on BSD anyway, will break under Linux
-	if (handle->clock.kernel_version == 2) {
+	if (clock->kernel_version == 2) {
 		sn = sizeof(nameavail);
 		err = sysctlbyname("net.bpf.tscfg.default", &nameavail[0], &sn, NULL, 0);
 		verbose(LOG_NOTICE, "\t Timestamp default configuration for interfaces: %s", nameavail);

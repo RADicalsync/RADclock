@@ -573,7 +573,7 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	// TODO: drop this once clear that if-level ts types won't be reappearing
 	//       Only works on BSD anyway, will break under Linux
 	/* Check global timestamp configuration on interface */
-	if (handle->clock.kernel_version == 2)
+	if (handle->clock->kernel_version == 2) {
 		char str[80] = "net.bpf.tscfg.";	strcat(str, handle->conf->network_device);
 		char nameavail[32];
 		size_t sn;

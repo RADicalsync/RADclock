@@ -19,9 +19,6 @@ Glossary:
  Cd = Difference FF clock
 
 
-Main TODOs for basic compilation
-  - new version of bpf.c ,  catchpackets, drivers
-
 
 Works in Progress:
   - LERP:  the current algorithm, use of poll_period estimator, and the question of
@@ -38,7 +35,6 @@ Works in Progress:
   - PPS:  does that code work??  what does it really do on the FF side ?? we dont have
     an S1 algo..  so how does FB handle S1 useing timehands?  that is the qn.
   - bypass versus passthrough, connection?  can the kernel use bypass??
-  - proper behaviour for KV=3
   - correct reaction to a tc change
 
 ==============================================================
@@ -1255,9 +1251,9 @@ sysctl settings [To be removed, or moved to OS-dependent code].
 
 For completeness, the tree components specific to the rest of the timecounter interface are
 _kern
-  - boottime  	"System boottime"
+  - boottime [PROC] 	"System boottime"
   -> _kern_timecounter
-	   - stepwarnings		  		"Log time steps"
+	   - stepwarnings	[INT]	  	"Log time steps"
 	   - hardware   [PROC] 		"Timecounter hardware selected"
 	   - choice		 [PROC] 		"Timecounter hardware detected"
 	   - alloweddeviation [PROC] "Allowed time interval deviation in percents"  new in 11.2
@@ -1287,6 +1283,7 @@ which also holds bpf_if .
 		- resolve bypass/passthrough confusion and complete code on kernel side
 		- rename macros to  SYSCLOCK_{FF,FB}
 		- verbosity and fixes?   to  sysctl_kern_sysclock_active
+		- remove old KV2 if-level stuff (or flag as KV2)
 */
 
 

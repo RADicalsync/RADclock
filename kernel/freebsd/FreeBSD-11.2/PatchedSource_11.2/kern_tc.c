@@ -1292,7 +1292,7 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
  */
 int
 sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, int wantUptime, int fflerp)
+    int whichclock, int wantFast, int wantUptime, int wantFFlerp)
 {
 	struct bintime boottimebin_x;
 #ifdef FFCLOCK
@@ -1305,7 +1305,7 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 		*bt = cs->fb_info.tick_time;
 
 		/* If snapshot was created with !fast, delta will be >0. */
-		if (cs->delta > 0)
+		if (!wantFast && cs->delta > 0)
 			bintime_addx(bt, cs->fb_info.th_scale * cs->delta);
 
 		/* Native FBclock is Uptime, need to adjust if want UTC */
@@ -1316,7 +1316,7 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 		break;
 #ifdef FFCLOCK
 	case SYSCLOCK_FFWD:
-		if (fflerp) {
+		if (wantFFlerp) {
 			*bt = cs->ff_info.tick_time_lerp;
 			period = cs->ff_info.period_lerp;
 		} else {
@@ -1325,7 +1325,7 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 		}
 
 		/* If snapshot was created with !fast, delta will be >0. */
-		if (cs->delta > 0) {
+		if (!wantFast && cs->delta > 0) {
 			ffclock_convert_delta((ffcounter)cs->delta, period, &bt2);
 			bintime_add(bt, &bt2);
 		}

@@ -69,13 +69,13 @@ must have necessary RADclock or FFclock aware components, and the daemon must be
 RADclock requires several kinds of IPC capabilities :
 	FFcounter reading  [ typically from kernel, but can be direct if TSC (passthrough mode) ]
 		- daemon:			needed by TRIGGER, NTP_SERV, MAIN (spy timestamping), and verbose()
-		- libprocesses:   	to timestamp arbitrary events
+		- libprocesses:   to timestamp arbitrary events
    Access to radclock parameters [owned by the daemon process]
 	   - libprocesses:   		via a SHM segment (written to by daemon, read by libprocess)
 		- kernel FFclock data:	pushed to kernel by daemon
    Access to kernel FFclock data
 		- daemon:			pulled to initialize radclock parameters (clock_init_live, KV>1)
-	   - libprocesses:   	to get radclock parameters when SHM segment not available
+	   - libprocesses:   to get radclock parameters when SHM segment not available
    Access to raw packet timestamps make in kernel, via RAD/FFclock modified pcap
 		- daemon:			to get raw timestamps and pkt data of NTP pkts for stamp creation
 		- libprocesses:	to get raw timestamps and pkt data of monitored pkts

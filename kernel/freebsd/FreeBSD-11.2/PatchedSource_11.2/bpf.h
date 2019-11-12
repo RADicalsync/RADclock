@@ -165,50 +165,48 @@ enum bpf_direction {
 };
 
 /* Time stamping flags */
-// FORMAT flags
-#define	BPF_T_MICROTIME		0x0000
+// FORMAT flags 	[ mutually exclusive, not to be ORed ]
+#define	BPF_T_MICROTIME	0x0000
 #define	BPF_T_NANOTIME		0x0001
 #define	BPF_T_BINTIME		0x0002
-#define	BPF_T_NONE		0x0003
-#define	BPF_T_FFCOUNTER		0x0004
-#define	BPF_T_FORMAT_MAX	0x0004
-#define	BPF_T_FORMAT_MASK	0x0007
-#define	BPF_T_NORMAL		0x0000
-// MONO flag (ie uptime clock)
-#define	BPF_T_MONOTONIC		0x0100
-#define	BPF_T_FLAG_MASK		0x0100
-// CLOCK flags (for universal sysclock)
-#define	BPF_T_SYSCLOCK		0x0000
-#define	BPF_T_FBCLOCK		0x1000
-#define	BPF_T_FFCLOCK		0x2000
-#define	BPF_T_CLOCK_MAX		0x2000
+#define	BPF_T_NONE			0x0003	// relates to ts only, FFRAW independent
+#define	BPF_T_FORMAT_MASK	0x0003
+// FFRAW flag
+#define	BPF_T_NOFFC			0x0000   // no FFcount
+#define	BPF_T_FFC			0x0010   // want FFcount
+#define	BPF_T_FFRAW_MASK	0x0010
+// FLAVOR flags   [ can view bits as ORable flags ]
+#define	BPF_T_NORMAL		0x0000	// UTC, !FAST
+#define	BPF_T_FAST			0x0100   // UTC,  FAST
+#define	BPF_T_MONOTONIC	0x0200	// UPTIME, !FAST
+#define	BPF_T_MONOTONIC_FAST	0x0300// UPTIME,  FAST
+#define	BPF_T_FLAVOR_MASK	0x0300
+// CLOCK flags   [ mutually exclusive, not to be ORed ]
+#define	BPF_T_SYSCLOCK		0x0000	// read current sysclock
+#define	BPF_T_FBCLOCK		0x1000   // read FB
+#define	BPF_T_FFCLOCK		0x2000   // read mono FF (standard reads are mono)
+#define	BPF_T_FFNATIVECLOCK	0x3000// read native FF
 #define	BPF_T_CLOCK_MASK	0x3000
-// Extract FORMAT, MONO, CLOCK  flag bits
-#define	BPF_T_FORMAT(t)		((t) & BPF_T_FORMAT_MASK)
-#define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
+
+// Extract FORMAT, FFRAW, FLAVOR, CLOCK  bits
+#define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
+#define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
+#define	BPF_T_FLAVOR(t)	((t) & BPF_T_FLAVOR_MASK)
 #define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
-#define	BPF_T_VALID(t)		\
-    ((t) == BPF_T_NONE || (t) == BPF_T_FFCOUNTER || \
-    (BPF_T_FORMAT(t) <= BPF_T_BINTIME && BPF_T_CLOCK(t) <= BPF_T_CLOCK_MAX && \
-    ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0))
 
-#define	BPF_T_MICROTIME_MONOTONIC	(BPF_T_MICROTIME | BPF_T_MONOTONIC)
-#define	BPF_T_NANOTIME_MONOTONIC	(BPF_T_NANOTIME | BPF_T_MONOTONIC)
-#define	BPF_T_BINTIME_MONOTONIC		(BPF_T_BINTIME | BPF_T_MONOTONIC)
-
-#define	BPF_T_FBCLOCK_MICROTIME_MONOTONIC	\
-    (BPF_T_MICROTIME_MONOTONIC | BPF_T_FBCLOCK)
-#define	BPF_T_FBCLOCK_NANOTIME_MONOTONIC	\
-    (BPF_T_NANOTIME_MONOTONIC | BPF_T_FBCLOCK)
-#define	BPF_T_FBCLOCK_BINTIME_MONOTONIC		\
-    (BPF_T_BINTIME_MONOTONIC | BPF_T_FBCLOCK)
-
-#define	BPF_T_FFCLOCK_MICROTIME_MONOTONIC	\
-    (BPF_T_MICROTIME_MONOTONIC | BPF_T_FFCLOCK)
-#define	BPF_T_FFCLOCK_NANOTIME_MONOTONIC	\
-    (BPF_T_NANOTIME_MONOTONIC | BPF_T_FFCLOCK)
-#define	BPF_T_FFCLOCK_BINTIME_MONOTONIC		\
-    (BPF_T_BINTIME_MONOTONIC | BPF_T_FFCLOCK)
+// Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl
+// In KV3, all components are independent, and either always meaningful, or
+// not acted on if not meaningful (eg if !FFCLOCK, or value of CLOCK if requesting
+// BPF_T_NONE   Hence checks reduce to ensuring no bits in undefined positions.
+// and not ask for a FF clock that doesnt exist.
+#ifdef FFCLOCK
+#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
+											  BPF_T_FLAVOR_MASK | BPF_T_CLOCK_MASK)) == 0 )
+#else
+#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
+											  BPF_T_FLAVOR_MASK | BPF_T_CLOCK_MASK)) == 0 \
+									&& BPF_T_FORMAT(t)<=BPF_T_FBCLOCK )
+#endif
 
 /*
  * Structure prepended to each packet.

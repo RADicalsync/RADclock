@@ -159,7 +159,7 @@ void sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast);
 
 /* Convert a timestamp from the selected system clock into bintime. */
 int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, int wantUptime, int fflerp);
+    int whichclock, int wantFast, int wantUptime, int fflerp);
 
 /* Resets feed-forward clock from RTC */
 void ffclock_setto_rtc(struct timespec *ts);
