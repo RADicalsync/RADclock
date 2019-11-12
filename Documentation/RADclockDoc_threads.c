@@ -382,7 +382,7 @@ effectively allows the two threads to interact (see RADclockDoc_stamps).
 Source File 			   	Function                     		Returns         Comment
 --------------------------------------------------------------------------------
 pthread_mgr.c 				  thread_data_processing 									 [ infinite loop ]
-pthread_dataproc.c     		process_stamp						rad_data			 [ calls algo ]
+pthread_dataproc.c     		process_stamp							rad_data			 [ calls algo ]
 stampinput.c   			    get_next_stamp						stamp           [ fn pointer ]
 stampinput-livepcap.c	     livepcapstamp_get_next			stamp           [ wrapper ]
 create_stamp.c 					get_network_stamp					stamp				 [ generic taking callback ]

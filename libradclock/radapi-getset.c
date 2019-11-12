@@ -95,7 +95,6 @@ radclock_get_last_changed(struct radclock *clock, vcounter_t *last_vcount)
 			*last_vcount = SHM_DATA(shm)->last_changed;
 		} while (generation != shm->gen || !shm->gen);
 	} else {
-
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
 		fill_radclock_data(&cest, &rad_data);
@@ -152,6 +151,7 @@ radclock_get_period(struct radclock *clock, double *period)
 			*period = SHM_DATA(shm)->phat;
 		} while (generation != shm->gen || !shm->gen);
 	} else {
+		logger(RADLOG_NOTICE, "radclock_get_period: shm down, using kernel copy");
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
 		fill_radclock_data(&cest, &rad_data);
@@ -376,7 +376,7 @@ printout_FFdata(struct ffclock_estimate *cest)
 		cest->next_expected - cest->update_ffcount);
 	logger(RADLOG_NOTICE, "\t errb_{abs,rate} = %lu  %lu",
 		cest->errb_abs, cest->errb_rate);
-	logger(RADLOG_NOTICE, "\t leapsec_{expected, total,next}:  %llu  %u  %u",
+	logger(RADLOG_NOTICE, "\t leapsec_{expected,total,next}:  %llu  %d  %d",
 		cest->leapsec_expected, cest->leapsec_total, cest->leapsec_next);
 	logger(RADLOG_NOTICE,"-------------------------------------------------------------");
 }
@@ -397,7 +397,7 @@ printout_raddata(struct radclock_data *rad_data)
 		rad_data->next_expected - rad_data->last_changed);
 	logger(RADLOG_NOTICE, "\t phat_err: %7.5le\t phat_local_err: %7.5lf",
 		rad_data->phat_err, rad_data->phat_local_err);
-	logger(RADLOG_NOTICE, "\t leapsec_{expected,total,next}:  %llu  %u  %u",
+	logger(RADLOG_NOTICE, "\t leapsec_{expected,total,next}:  %llu  %d  %d",
 		rad_data->leapsec_expected, rad_data->leapsec_total, rad_data->leapsec_next);
 
 	/* Translate raw timestamp fields to UTC for convenient checking */

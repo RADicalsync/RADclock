@@ -96,8 +96,13 @@ insert_rdb_in_list(struct raw_data_queue *rq, struct raw_data_bundle *rdb)
 
 
 /*
+ * Callback function for pcap_loop, which makes the pcap header and packet
+ * data available within a rdb structure, inserted into the rd queue.
+ *
  * Really, I have tried to make this as fast as possible
  * but if you have a better implementation, go for it.
+ * Returns void as  pcap_loop -> read_op -> pcap_read_bpf that finally calls
+ * the callback does not capture any return code.
  */
 void
 fill_rawdata_pcap(u_char *c_handle, const struct pcap_pkthdr *pcap_hdr,
@@ -105,7 +110,6 @@ fill_rawdata_pcap(u_char *c_handle, const struct pcap_pkthdr *pcap_hdr,
 {
 	struct radclock_handle *handle;
 	struct raw_data_bundle *rdb;
-	int err;
 
 	JDEBUG
 
@@ -123,8 +127,8 @@ fill_rawdata_pcap(u_char *c_handle, const struct pcap_pkthdr *pcap_hdr,
 	/* Copy data of interest into the raw data bundle */
 	RD_PKT(rdb)->vcount = 0;
 
-	// TODO: should process the error code correctly
-	err = extract_vcount_stamp(handle->clock, handle->clock->pcap_handle,
+	/* Return code discarded as can't be processed by pcap */
+	extract_vcount_stamp(handle->clock, handle->clock->pcap_handle,
 			pcap_hdr, packet_data, &(RD_PKT(rdb)->vcount));
 
 	memcpy(&(RD_PKT(rdb)->pcap_hdr), pcap_hdr, sizeof(struct pcap_pkthdr));
@@ -413,6 +417,8 @@ deliver_rawdata_spy(struct radclock_handle *handle, struct stamp_t *stamp)
 // maybe that should be in the corresponding file?  Quite complicated with
 // multiple sources, the chain list management is not re-entrant with multiple
 // sources!!
+// badly named, returns a thing called pkt which is really buffer with
+// the pcap head and pkt back to back, confusion !!
 int
 deliver_rawdata_pcap(struct radclock_handle *handle, struct radpcap_packet_t *pkt,
 		vcounter_t *vcount)
@@ -434,9 +440,12 @@ deliver_rawdata_pcap(struct radclock_handle *handle, struct radpcap_packet_t *pk
 		return (1);
 	}
 
-	/* Copy pcap header and packet payload back-to-back.
-	 * The buffer is defined to be way larger than what we need, so
-	 * should be safe to copy the captured payload.
+	/* Copy pcap header and packet payload back-to-back: buffer=[pcap_hdr][frame]
+	 * Thus mapping of pcap data from  rd_pcap  to  radpcap_packet_t  is
+	 * pcap_hdr --> header
+	 *	     buf --> payload
+	 * The buffer is defined (in get_network_stamp) to be way larger than needed,
+	 * so should be safe to copy the captured payload.
 	 */
 	memcpy(pkt->buffer, &(RD_PKT(rdb)->pcap_hdr), sizeof(struct pcap_pkthdr));
 	memcpy(pkt->buffer + sizeof(struct pcap_pkthdr), RD_PKT(rdb)->buf,

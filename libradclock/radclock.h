@@ -342,23 +342,33 @@ int radclock_get_bootoffset_error(struct radclock *clock, double *err_offset);
 int radclock_get_status(struct radclock *clock, unsigned int *status);
 
 
-
-/* Modes accepted by a kernel with RADclock support
- * The different modes allow returning different types of timestamps
- */
-enum radclock_tsmode {
-	/* Kernel modes are number from 1 to 3 */
-	RADCLOCK_TSMODE_NOMODE = 0,	
-	/* Return normal system clock time stamp and corresponding vcount value */
-	RADCLOCK_TSMODE_SYSCLOCK = 1, 
-	/* Return vcount value and timeval timestamp both using the RADclock */
-	RADCLOCK_TSMODE_RADCLOCK = 2,
-	/* Return vcount value and system clock timestamp taken at the same improved
-	 * location in the kernel */
-	RADCLOCK_TSMODE_FAIRCOMPARE = 3
+/* View these as presets for bpf's _T_ based timestamp type specification.
+ * Used for convenience by daemon and libprocesses to set all FORMAT, FFCOUNTER, FLAVOR, CLOCK
+ * dimensions of bpf tstype.  All set FLAVOR = NORMAL (UTC and !FAST) and FFCOUNTER = FFC.
+ * Descriptions below specify high level intent, whether fully possible given KV or not.
+ * Other bpf tstype dimensions are specified in KV dependent code.
+ * Main use cases:
+ *	  PKTCAP_TSMODE_FBCLOCK:  traditional daemon, to get needed raw + readily
+ *      available FB comparison ts, stored in raw output enable fair comparisons
+ *	  PKTCAP_TSMODE_FFCLOCK:  same as _FBclock but this time to compare against
+ *		  the kernel's monoFF clock
+ *   PKTCAP_TSMODE_FFNATIVECLOCK:  libprocesses, who just want to be able to
+ *      get RADclock timestamps for each pkt, but made already in the kernel
+ *   PKTCAP_TSMODE_RADCLOCK:  if dont trust the kernel timestamp, prefer to
+ *		  read RADclock (native abs clock) in userland, based off kernel raw ts.
+ *      Also useful in KV=2 when have no choice but to create a ts in the daemon.
+ **/
+enum pktcap_tsmode {
+	PKTCAP_TSMODE_NOMODE = 0,			// no FF support in pcap, or very early versions
+	PKTCAP_TSMODE_SYSCLOCK = 1,		// get raw, plus normal timestamp from sysclock
+	PKTCAP_TSMODE_FBCLOCK = 2,			//                "                    FBclock
+	PKTCAP_TSMODE_FFCLOCK = 3,			//                "                    FFclock (mono)
+	PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
+	PKTCAP_TSMODE_RADCLOCK = 5,		//    "   , plus RADclock timestamp (userland)
 };
 
-typedef enum radclock_tsmode radclock_tsmode_t ;
+
+typedef enum pktcap_tsmode pktcap_tsmode_t ;
 
 
 /**
@@ -372,8 +382,8 @@ int radclock_register_pcap(struct radclock *clock, pcap_t *pcap_handle);
  * This will only work on a live socket.
  * @return 0 on success, non-zero on failure
  */
-int radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
-		radclock_tsmode_t mode);
+int pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle,
+		pktcap_tsmode_t mode);
 
 
 /**
@@ -381,8 +391,8 @@ int radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
  * This will only work on a live socket.
  * @return 0 on success, non-zero on failure
  */
-int radclock_get_tsmode(struct radclock *clock, pcap_t *p_handle,
-		radclock_tsmode_t *mode);
+int pktcap_get_tsmode(struct radclock *clock, pcap_t *p_handle,
+		pktcap_tsmode_t *mode);
 
 
 /**

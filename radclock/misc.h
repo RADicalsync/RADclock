@@ -37,7 +37,7 @@
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
 /*
- * NTP timestamp fields in NTP timescale+format, need UTC <--> NTP conversions.
+ * NTP timestamp fields in NTP timescale&format, need UTC <--> NTP conversions.
  *   epoch:		  (NTP,UTC) = Jan 1 (1900,1970)        NTP = UTC + JAN_1970
  *   frac format:(NTP,tvalUTC) = (#(2^-32)s, #mus)    NTP = UTC*1e-6 *2^32
  */

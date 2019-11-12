@@ -93,7 +93,7 @@ found_ffwd_kernel_version (void)
 		
 		if (ret < 0) {
 			/* The old way we used before explicit versioning. */
-			ret = sysctlbyname("net.bpf.bpf_radclock_tsmode", &version, &size_ctl, NULL, 0);
+			ret = sysctlbyname("net.bpf.bpf_pktcap_tsmode", &version, &size_ctl, NULL, 0);
 
 			if (ret == 0)
 				version = 0;

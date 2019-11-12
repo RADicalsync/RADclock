@@ -571,7 +571,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	 * This is common to the radclock sync algo and any 3rd party application.
 	 * This feature has been introduced in kernel version 2.
 	 */
-// TODO is that really specific to kernel version >2 and which arch?
+// TODO is that really specific to kernel version >2 and which arch ?
 	err = 0;
 	if (clock->kernel_version >= 2)
 		err = get_kernel_ffclock(clock, &cest);
@@ -605,7 +605,11 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 		return (1);
 	verbose(LOG_NOTICE, "Kernel clock support initialised");
 
-	/* Get information about FF status from kernel [need to move to kern dep code] */
+
+
+	/* Get information about FF status from kernel
+	 * This is a hack, need to move to kern dep code, or just ultimately remove
+	 */
 	#define	MAX_SYSCLOCK_NAME_LEN 16
 	int inttopass;
 	char nametopass[32];
@@ -630,7 +634,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	//err = sysctlbyname("kern.sysclock.ffcounter_bypass", &inttopass, &si, NULL, 0);
 	//verbose(LOG_NOTICE, "  FFcounter bypass state: %d", inttopass);
 	
-	sn = sizeof(nameavail);	// reset, as each call with a proc modifies sn
+	sn = sizeof(nameavail);	// reset, as each call with a PROC handler modifies sn
 	err = sysctlbyname("kern.sysclock.available", &nameavail[0], &sn, NULL, 0);
 	verbose(LOG_NOTICE, "\t Available sysclocks: %s", nameavail);
 	
@@ -658,6 +662,24 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	nametopass[0] = '\0';
 	err = sysctlbyname("kern.sysclock.active", &nametopass[0], &sn, NULL, 0);
 	verbose(LOG_NOTICE, "\t Active sysclock: %s", nametopass);
+
+
+	/* Get the value of the interface's timestamp default setting */
+	// TODO: drop this once clear that if-level ts types won't be reappearing
+	//       Only works on BSD anyway, will break under Linux
+	if (handle->clock.kernel_version == 2) {
+		sn = sizeof(nameavail);
+		err = sysctlbyname("net.bpf.tscfg.default", &nameavail[0], &sn, NULL, 0);
+		verbose(LOG_NOTICE, "\t Timestamp default configuration for interfaces: %s", nameavail);
+	}
+	
+	/* Get the value of our interface's timestamp setting */
+//	sn = sizeof(nameavail);
+//	err = sysctlbyname("net.bpf.tscfg.em0", &nameavail[0], &sn, NULL, 0);
+//	verbose(LOG_NOTICE, "\t em0's current configuration: %s",
+//				clock_handle->conf->network_device, nameavail);	// using global handle!
+	
+	/* End sysctl verbosity hack */
 
 	return (0);
 }

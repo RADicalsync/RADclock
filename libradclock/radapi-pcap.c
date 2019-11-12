@@ -39,9 +39,11 @@
 #include "logger.h"
 
 
+/* The value of mode passed here can be overridden by descriptor_set_tsmode
+ * before being recorded in clock.
+ */
 int
-radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
-		radclock_tsmode_t mode)
+pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode)
 {
 	if (clock == NULL) {
 		logger(RADLOG_ERR, "Clock handle is null, can't set mode");
@@ -53,8 +55,29 @@ radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
 		return (0);
 	}
 
-	/* Call to system specific method to set the mode */
-	if (descriptor_set_tsmode(clock, p_handle, &mode))
+	switch (mode) {
+		case PKTCAP_TSMODE_NOMODE:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_NOMODE");
+			break;
+		case PKTCAP_TSMODE_SYSCLOCK:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_SYSCLOCK");
+			break;
+		case PKTCAP_TSMODE_FBCLOCK:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_FBCLOCK");
+			break;
+		case PKTCAP_TSMODE_FFCLOCK:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_FFCLOCK");
+			break;
+		case PKTCAP_TSMODE_FFNATIVECLOCK:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_FFNATIVECLOCK");
+			break;
+		case PKTCAP_TSMODE_RADCLOCK:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_RADCLOCK");
+			break;
+	}
+	
+	/* Call to system specific method to set the bpf ts type */
+	if (descriptor_set_tsmode(clock, p_handle, (int *)&mode))
 		return (-1);
 
 	clock->tsmode = mode;
@@ -65,10 +88,9 @@ radclock_set_tsmode(struct radclock *clock, pcap_t *p_handle,
 
 
 int
-radclock_get_tsmode(struct radclock *clock, pcap_t *p_handle,
-		radclock_tsmode_t *mode)
+pktcap_get_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t *mode)
 {
-	int kmode;  // can remove this if descriptor_get_tsmode wont set if error
+	int inferredmode;  // can remove this if descriptor_get_tsmode wont set if error
 	
 	if (clock == NULL) {
 		logger(RADLOG_ERR, "Clock handle is null, can't set mode");
@@ -76,11 +98,31 @@ radclock_get_tsmode(struct radclock *clock, pcap_t *p_handle,
 	}
 	
 	/* Call to system specific method to get the mode */
-	kmode = 0;
-	if (descriptor_get_tsmode(clock, p_handle, &kmode))
+	inferredmode = 0;
+	if (descriptor_get_tsmode(clock, p_handle, &inferredmode))
 		return (-1);
 
-	*mode = kmode;		// only set if get safe value
+	*mode = inferredmode;		// only set if get safe value
+
+	switch(inferredmode) {
+	case PKTCAP_TSMODE_SYSCLOCK:
+		logger(RADLOG_NOTICE, "Capture mode consistent with SYSCLOCK");
+		break;
+	case PKTCAP_TSMODE_FBCLOCK:
+		logger(RADLOG_NOTICE, "Capture mode consistent with FBCLOCK");
+		break;
+	case PKTCAP_TSMODE_FFCLOCK:
+		logger(RADLOG_NOTICE, "Capture mode consistent with FFCLOCK");
+		break;
+	case PKTCAP_TSMODE_FFNATIVECLOCK:
+		logger(RADLOG_NOTICE, "Capture mode consistent with FFNATIVECLOCK");
+		break;
+	case PKTCAP_TSMODE_RADCLOCK:
+		logger(RADLOG_NOTICE, "Capture mode consistent with RADCLOCK");
+		break;
+	default:
+		logger(RADLOG_ERR, "Capture mode inference failed!");
+	}
 
 	return (0);
 }
@@ -140,7 +182,7 @@ int radclock_get_packet( struct radclock *clock,
 	err = pcap_loop(p_handle, 1 /*packet*/, kernelclock_routine, (u_char *) &data);
 	*packet = data.packet;
 
-	/* Error can be -1 (read error) or -2 (explicit loop break */
+	/* Error can be -1 (read error) or -2 (explicit loop break) */
 	if (err < 0) {
 		perror("pcap_loop:");
 		return (err);

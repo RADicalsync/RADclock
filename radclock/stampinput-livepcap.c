@@ -64,6 +64,8 @@
 #include "rawdata.h"
 #include "jdebug.h"
 
+#include <sys/sysctl.h>
+
 
 /* Defines required by the Linux SLL header */
 #define LINUX_SLL_HOST		0
@@ -244,11 +246,11 @@ set_vcount_in_sll(radpcap_packet_t *packet, vcounter_t vcount)
  */
 static int
 get_packet_livepcap(struct radclock_handle *handle, void *userdata,
-		radpcap_packet_t **packet_p)
+		radpcap_packet_t **radpkt_p)
 {
 	struct livepcap_data *data;
 	pcap_dumper_t *traceoutput;
-	radpcap_packet_t *packet;
+	radpcap_packet_t *radpkt;
 	struct pcap_pkthdr *pcap_hdr;
 	vcounter_t vcount;
 	vcounter_t vcount_debug;
@@ -261,54 +263,49 @@ get_packet_livepcap(struct radclock_handle *handle, void *userdata,
 	vcount_debug = 0;
 	data = (struct livepcap_data *) userdata;
 	traceoutput = data->trace_output;
-	packet = *packet_p;
+	radpkt = *radpkt_p;
 
-	/* Retrieve the next packet from the raw data buffer */
-	err = deliver_rawdata_pcap(handle, packet, &vcount);
+	/* Retrieve the next radcap-packet from the raw data buffer */
+	err = deliver_rawdata_pcap(handle, radpkt, &vcount);
 	if (err)		// Raw data buffer is empty, or wrong RD_TYPE
 		return (1);
 
 	/* Replace the link layer header by the Linux SLL header for generic
 	 * encapsulation of the IP payload */
-	if (insert_sll_header(packet)) {
+	if (insert_sll_header(radpkt)) {
 		verbose(LOG_ERR, "Could not insert Linux SLL header");
 	}
 
 	/* Store the vcount in the address field of the SLL header */
-	set_vcount_in_sll(packet, vcount);
-	assert(get_vcount(packet, &vcount_debug) == 0);
+	set_vcount_in_sll(radpkt, vcount);
+	assert(get_vcount(radpkt, &vcount_debug) == 0);	// get it back out
 	assert(vcount == vcount_debug);
 
-#ifdef WITH_FFKERNEL_FBSD
-	// TODO: messy stuff again, should actually test if the timestamp format is
-	// RAW_COUNTER, that would clean things up pretty well
-	// DV: I guess this is needed because in KV=2 there was no system TS initially
-	// so have to create one for the first time, and do so using RADclock.
-	// this is not a vcount issue, already have our hands on that !
-	if (handle->clock->kernel_version == 2) {
-		//verbose(LOG_ERR, "KV=2 issue: Create pcap timestamp from RADclock !! CHECK ME");
+	/* If prefer a radclock timestamp over kernel options, generate and
+	 * overwrite existing ts in pcap header
+	 */
+	if (handle->clock->tsmode == PKTCAP_TSMODE_RADCLOCK) {
 		read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
-		pcap_hdr = (struct pcap_pkthdr *)packet->header;
+		pcap_hdr = (struct pcap_pkthdr *)radpkt->header;
 		pcap_hdr->ts.tv_sec = (time_t) time;
 		pcap_hdr->ts.tv_usec = (suseconds_t)(1e6 * (time - (time_t)time));
-	}	
-#endif
+	}
 
 	/* Write out raw data if -w option active in main program */
 	if (traceoutput) {
-		pcap_dump((u_char *)traceoutput, (struct pcap_pkthdr *)packet->header,
-				(u_char *)packet->payload);
+		pcap_dump((u_char *)traceoutput, (struct pcap_pkthdr *)radpkt->header,
+				(u_char *)radpkt->payload);
 
 		if (pcap_dump_flush(traceoutput) < 0)
-			verbose(LOG_ERR, "Error dumping packet");
+			verbose(LOG_ERR, "Error dumping packet data");
 	}
 
-	/* Store interface address in packet */
-	packet->ss_if = data->ss_if;
+	/* Store interface address in radpkt */
+	radpkt->ss_if = data->ss_if;
 
-	*packet_p = packet;
+	*radpkt_p = radpkt;
 
-	/* Return with valid packet data */
+	/* Return with valid radpkt data */
 	return (0);
 }
 
@@ -570,9 +567,21 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	 * in any cases, favour the address from the interface to build the BPF
 	 * filter.
 	 */
-	verbose(LOG_NOTICE, "Using host name %s and address %s", conf->hostname,
-			addr_if);
+	verbose(LOG_NOTICE, "Using host name %s and address %s", conf->hostname, addr_if);
 	verbose(LOG_NOTICE, "Opening device %s", conf->network_device);
+	
+	// TODO: drop this once clear that if-level ts types won't be reappearing
+	//       Only works on BSD anyway, will break under Linux
+	/* Check global timestamp configuration on interface */
+	if (handle->clock.kernel_version == 2)
+		char str[80] = "net.bpf.tscfg.";	strcat(str, handle->conf->network_device);
+		char nameavail[32];
+		size_t sn;
+		nameavail[0] = '\0';	sn = sizeof(nameavail);
+		err = sysctlbyname(str, &nameavail[0], &sn, NULL, 0);
+		verbose(LOG_NOTICE, " %s's global timestamp configuration=%s  (cmd=%s)",
+					handle->conf->network_device, nameavail, str);
+	}
 
 	/* Build the BPF filter string */
 	strcpy(fltstr, "");
@@ -627,7 +636,7 @@ livepcapstamp_init(struct radclock_handle *handle, struct stampsource *source)
 	 * being able to support any link layer type thanks to the LINUX_SLL
 	 * encapsulation of the link layer.
 	 */
-	radclock_tsmode_t capture_mode;
+	pktcap_tsmode_t capture_mode;
 	pcap_t *p_handle_traceout;
 	struct radclock_config *conf;
 	int err;
@@ -668,30 +677,23 @@ livepcapstamp_init(struct radclock_handle *handle, struct stampsource *source)
 	// TODO that could be written in a more simpler way once we clean the sources
 	handle->clock->pcap_handle = LIVEPCAP_DATA(source)->live_input;
 
-	/* Set the capture mode to match the daemon requirements */
-	err = radclock_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
-			RADCLOCK_TSMODE_SYSCLOCK);   // will rename RADCLOCK_TSMODE_DAEMON
+	/* Set the packet capture mode to suit daemon requirements.
+	 * Strictly speaking the daemon only needs the raw counter read, but it must
+	 * also manipulate returned kernel timestamps, for example as part of the
+	 * raw data saving. We select an option that nominally supports, in addition,
+	 * a fair comparison against the FBclock. Other modes may be preferable.
+	 * The requested mode can potentially be overridden by pktcap_get_tsmode .
+	 * TODO:  set pktcap_tsmode up as conf param, if need to change ever arises.
+	 */
+	err = pktcap_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
+			PKTCAP_TSMODE_FFNATIVECLOCK);
 	if (err) {
-		verbose(LOG_WARNING, "Could not set needed RADclock timestamping mode");
+		verbose(LOG_WARNING, "Could not set requested pkt capture timestamping mode");
 		return (-1);
 	}
 
-	/* Let's check we did things right */
-	radclock_get_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input, &capture_mode);
-	switch(capture_mode) {
-	case RADCLOCK_TSMODE_SYSCLOCK:
-		verbose(LOG_NOTICE, "Capture mode is SYSCLOCK");
-		break;
-	case RADCLOCK_TSMODE_RADCLOCK:
-		verbose(LOG_NOTICE, "Capture mode is RADCLOCK");
-		break;
-	case RADCLOCK_TSMODE_FAIRCOMPARE:
-		verbose(LOG_NOTICE, "Capture mode is FAIRCOMPARE");
-		break;
-	default:
-		verbose(LOG_ERR, "Capture mode UNKNOWN");
-		break;
-	}
+	/* Verbosely check we did things right  (returned tsmode is not used) */
+	pktcap_get_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input, &capture_mode);
 
 	/* Test if previous file exists. Rename it if so */
 	if (strlen(conf->sync_out_pcap) > 0) {

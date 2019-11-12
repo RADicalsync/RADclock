@@ -222,7 +222,7 @@ kern_tc.c				[ the lower higher level FF code integrated with legacy tc code]
 The only other affected file which is not associated to packet capture is :
 subr_rtc.c			[ Real Time Clock processing ]
  Protected:
-   inittodr 											// simply calls ffclock_reset_clock
+   inittodr 											// simply calls ffclock_setto_rtc
 
 
 
@@ -237,7 +237,7 @@ bpf.h
 		New ffcounter members of  struct bpf_{x,}hdr
 
 bpf.c
- Partially rotected:
+ Partially protected:
  		catchpacket	(declaration and defn)	// copying ffcount into hdr, new parameter to fn
  Protected from:
 		bpfioctl  									// disable some checks on timestamp format
@@ -252,8 +252,8 @@ bpf.c
 
 =======================================================
 Drivers need modifications to ensure timestamping occurs in the right place.
-Here changes are not protected by a guard macro, but
-a "\\FFCLOCK"  comment flags them, but we describe them using the {Un}protected etc notation.
+Here changes are not protected by a guard macro, instead a "\\FFCLOCK"  comment
+flags them, but we describe them using the {Un}protected etc notation.
 
 dev/e1000/if_em.c		// changes built on 9.0.0, quite a few other changes in 9.2, 10
   Unprotected
@@ -313,9 +313,9 @@ The variable kern/subr_param.c:tick  is the nominal number 1000000/hz of mus per
 
 The tc code is based on maintaining state which is updated on a roughly
 periodic tc_tick grid.  The value of tc_tick is set in inittimecounter() to be ≥1,
-ensuring that tc-tick updates are at least as frequent as hardclock ticks.
-It is expressed in units of the number of hardclock ticks per ms.
-For convenience, henceforthe we use `tick` to refer to tc-ticks, and hardclock ticks
+ensuring that tc-tick updates are at least as?? frequent as hardclock ticks.
+It is expressed in units of the number of hardclock ticks per ms. (unclear)
+For convenience, henceforth we use `tick` to refer to tc-ticks, and hardclock ticks
 otherwise.
 
 Events asynchronous to a tick relevant to the state are processed at those times.
@@ -337,7 +337,7 @@ struct timehands {
 	uint64_t		th_scale;          	 // period estimate as a 64bit binary fraction
 	u_int	 		th_offset_count;   	 // counter value at tick-start (wraps)
 	struct bintime		th_offset;      // uptime timestamp at tick-start (no overflow)
-	struct bintime		th_bintime;		 // UTC timeval  version of th_offset		[ new in 11.2 ]
+	struct bintime		th_bintime;		 // UTC bintime  version of th_offset		[ new in 11.2 ]
 	struct timeval		th_microtime;   // UTC timeval  version of th_offset
 	struct timespec	th_nanotime;    // UTC timespec version of th_offset
 	struct bintime		th_boottime;	 // boottime value for this tick				[ new in 11.2 ]
@@ -398,7 +398,7 @@ a monotonic version must be provided.  The state for this is held in fftimehands
 	CaMono(t) = tick_time_lerp + period_lerp*∆(T)
 such that it is guaranteed to be monotonic, continuous at tick-start times, with bounded skew,
 and close to Ca(t) near the end of ticks.  The definition of CaMono is
-based on LinearinTERpolation, and is contained in ffclock_windup.
+based on LinearintERPolation, and is contained in ffclock_windup.
 
 In summary, fftimehands provides four things:
   i) a way to define an FF counter via tick based updates to tick_ffcount and the existing ∆(tc)
@@ -417,7 +417,7 @@ It is important to note that it will be updated on a poll_period timescale set b
 the daemon, whereas fftimehands will advance to fresh ticks independently of this,
 and 1000''s of times more frequently.   Each member of the cest is initialized to zero by
 ffclock_init(), including the update_ffcount variable, which remains zero unless
-ffclock_reset_clock() is called, or a true update pushed by the daemon.
+ffclock_setto_rtc() is called, or a true update pushed by the daemon.
 
 The timehands and fftimehands systems are separate, with separate generation variables,
 however they update on ticks in a synchronous manner, because the timehands update
@@ -426,7 +426,7 @@ function: tc_windup, calls that for fftimehands: ffclock_windup .
 
 /*
 TODO:
-  - consider a name change LERP -> MONOFF
+  - consider a name change LERP -> MONOFF  though could be confused with MONOTONIC, noJump
   -
 */
 
@@ -562,13 +562,13 @@ FF <-- algo
     This corresponds to using (1) on the daemon side, and (2) on the FF side.
 	 In this way, not only are K_p and thetahat combined on the FF side, but also phat.
 	 This is why there is no phat member, period corresponding to plocal instead.
-	 As the equations show, the two formulations are entirely equivalent, but the avantage
+	 As the equations show, the two formulations are entirely equivalent, but the advantage
 	 is that the FF side has fewer calculations to perform, fewer parameters to worry about,
 	 and the format fits perfectly the per-tick (ff)timehands paradigm needed to
 	 synthesize the FF counter by adopting the method used in timehands.
 
 FF --> algo
-	 ca = update_time - plocal*last_changed  (up to format conversion)
+	 ca = update_time - plocal*last_changed  (up to format conversion)  // hang on not plocal*(now-last_changed?) ?
 	 This should be update_time - phat*last_changed  but phat is not available.
 	 Since this is used in circumstances where the daemon is dead, using plocal is natural,
 	 effectively it means that pbar = outofdate plocal going forward - close to optimal anyway
@@ -599,17 +599,19 @@ Initialization to 0 of all members of fftimehands, and hence all members of ffti
 for each timehand, is first performed in kern_tc:SYSINIT-->inittimecounter-->ffclock_init .
 After this a cest in a current tick can be modified in one of three ways:
   - push `update` from the daemon
-  - ffclock_reset (called by ?? --> subr_rtc.c:inittodr), perhaps several times during boot
+  - ffclock_setto_rtc (called by ?? --> subr_rtc.c:inittodr), perhaps several times during boot
     sets  {update_{time,ffcount},period,status} only
+    sets  global ffclock_updated = INT8_MAX;
   - by ffclock_change_tc (call by tc_windup() if needed)
     sets {period,status} only
+    sets  global ffclock_updated--;  to effectively ignore next update
 
 A common scenario after boot is:
 	ffclock_init;
 	ffclock_change_tc  on the first invocation of  tc_windup->windup_ffclock
 		{period,status} = {nominal,FFCLOCK_STA_UNSYNC}
 	no change for 100s of invocations of windup_ffclock
-	ffclock_reset
+	ffclock_setto_rtc
 		{update_{time,ffcount},period,status} = {passed ts,now,nominal,FFCLOCK_STA_UNSYNC}
 	no change for 1000s of invocations of windup_ffclock
 	daemon launched,  pulls current kernel value of cest
@@ -650,11 +652,11 @@ static struct timehands *volatile timehands = &th0;      // points to data from 
                                                          // is advanced by tc_windup
 struct timecounter *timecounter = &dummy_timecounter; 	// hardware tc currently used
 static struct timecounter *timecounters = &dummy_timecounter;  // points to last tc created
-int tc_min_ticktock_freq = 1;		// slowest rate of windup calls to avoid th_offset_count wrappping
+int tc_min_ticktock_freq = 1;	// slowest rate of windup calls to avoid th_offset_count wrappping
 
-time_t time_second = 1;				// quick access to the current UTC    second updated by tc_windup
-time_t time_uptime = 1;				// quick access to the current uptime second updated by tc_windup
-struct bintime boottimebin;		// UTC time of boot, bintime format
+time_t time_second = 1;			// quick access to the current UTC    second updated by tc_windup
+time_t time_uptime = 1;			// quick access to the current uptime second updated by tc_windup
+struct bintime boottimebin;		// UTC time of boot, in prevailing UTC at boot, bintime format
 struct timeval boottime;			// UTC time of boot, timeval format
 
 
@@ -663,9 +665,9 @@ The complete set supporting the FFtimecounter extension is
 
 struct ffclock_estimate ffclock_estimate;	// FF clock state variable
 struct bintime ffclock_boottime;	/* Feed-forward boot time estimate. */
-int8_t ffclock_updated;			/* New estimates are available. */
-uint32_t ffclock_status;		/* Feed-forward clock status. Values used: {0,1,INT8_MAX} */
-struct mtx ffclock_mtx;			/* Mutex on ffclock_estimate. */
+int8_t ffclock_updated;			/* New estimates are available. Note this is signed! special values: {..,-1,0,1,INT8_MAX} */
+uint32_t ffclock_status;		/* Feed-forward clock status */
+struct mtx ffclock_mtx;			/* Mutex on ffclock_estimate */
 
 static struct fftimehands ffth[10];
 static struct fftimehands *volatile fftimehands = ffth;  // pointer to fftimehands array
@@ -719,7 +721,7 @@ is preparing ("th") to zero, so that any calculation in-train pointing to that t
 will be aware it cannot be safely used. At the end of tc_windup the generation will
 become valid, and those calculations can complete (using the latest tick data).
 
-For the same of brevity, the following code summaries play fast and lose with
+For the same of brevity, the following code summaries play fast and loose with
 pointers versus *pointers, and other inconsistencies.
 
  tc_windup: simplified code:
@@ -728,7 +730,7 @@ pointers versus *pointers, and other inconsistencies.
 	th = tho->th_next	..						// initialize next tick "th" to current tick values
 
 	// raw timestamping
-	delta = tc_delta(tho)					// take raw FB timestamp using tc of this tick
+	delta = tc_delta(tho)					// take raw FB delta using tc of this tick
 	ncount = timecounter->tc_get_timecount(timecounter);  // take one using globally current tc
 	ffclock_windup(delta)					// fftimehands tick update including FFcounter read
 	th_offset_count += delta				// add-in new delta, in wrap-safe manner
@@ -754,7 +756,7 @@ pointers versus *pointers, and other inconsistencies.
 	scale = (1 + th_adjustment)/th_counter->tc_frequency // rely on NTPd to adapt scale to new tc
 																		  // code uses binary approximations
 
-   th_generation = ++ogen					// announce this tick has valid data (avoid special 0 value)
+   th_generation = ++ogen					// announce this tick has (the newest) valid data (avoid special 0 value)
 	
 	// fill global convenience variables  (used in kern_ntptime.c)
 	time_second									// universal update (switches on sysclock_active)
@@ -770,8 +772,8 @@ function: tc_windup, calls that for fftimehands: ffclock_windup, which we now de
 
 In the following, the pointer to the current tick is frequently omitted for brevity, hence
 tick_ffcount instead of fftimehands->tick_ffcount etc .  Use is made of the globals
-int8_t ffclock_updated;			/* New estimates are available. */
-uint32_t ffclock_status;		/* Feed-forward clock status. Values used: {0,1,INT8_MAX} */
+int8_t ffclock_updated;			/* New estimates are available.  Values used: {..,-1,0,1,INT8_MAX} */
+uint32_t ffclock_status;		/* Feed-forward clock status Values used: {0,1} */
 
 ffclock_windup(delta): simplified code:
 ---------------------------------------
@@ -789,24 +791,23 @@ ffclock_windup(delta): simplified code:
 
 	// if no new FF data available, check this is ok
 	if (ffclock_updated == 0)
-  		 if cest->update too stale						// based on FFCLOCK_SKM_SCALE: needs changing
+  		 if cest->update too stale						//
 			ffclock_status |= FFCLOCK_STA_UNSYNC	//
 // else ffclock_status = cest->status; see below
 	
    ---------------------------------------------------
-	// adopt and process FF data update occuring during previous tick  (and maybe just before here)
-	if (ffclock_updated > 0) {
-		cest = ffclock_estimate			// update normally in last tick, but could be after delta taken
+	// adopt and process FF data update occuring during previous tick
+	if (ffclock_updated > 0) {       // the global ffclock_estimate has been updated
+		cest = ffclock_estimate
 		ffdelta = tick_ffcount - cest->update_ffcount;  // update to tick-start interval
-																		// assumed +ve, ie update before delta
 
 	 /* update Ca members */
 		tick_time = cest->update_time + ffdelta*period  // recalculate directly off last update
 	   tick_error = cest->errb_abs + cest->errb_rate*period*delta	// re-base from update:
 		 
 	 /* adjust CaMono continuity in extreme cases  */
-		// INT8_MAX means update set from ffclock_reset, not deamon, because of change to RTC
-		// sets tick_time to argument, other fields best effort,  cest.status=FFCLOCK_STA_UNSYNC
+		// INT8_MAX means update set from ffclock_setto_rtc, not deamon, because of change to RTC
+		// sets tick_time to argument, other fields best effort,  cest.status=FFCLOCK_STA_UNSYNC, ffclock_bootime
 		if (ffclock_updated == INT8_MAX)
 			tick_time_lerp = tick_time			// let the CaMono jump, since have reset radically
 	   
@@ -820,18 +821,18 @@ ffclock_windup(delta): simplified code:
 			tick_time_lerp = tick_time			// jump lerp to make gap=0
 		ffclock_status = cest->status;		// now kernel status acted on, override with update
 		
-	/* readjust CaMono period */
+ 	/* readjust CaMono period */
 	 	ffth->period_lerp = cest->period;	   // start afresh with this update, no past dynamics
 	   ffdelta = next_expected - thisupdateFF // counter diff between last and next updates
-		time_til_nextupdate = floor( ffdelta*period ) // corresponding #seconds [ estimated polling period ]
-		gap_lerp = min(gap_lerp,time_til_nextupdate*5000PPM) // cap rate of gap reduction to 5000PPM
+		secs_til_nextupdate = floor( ffdelta*period ) // corresponding #seconds [ estimated polling period ]
+		gap_lerp = min(gap_lerp,secs_til_nextupdate*5000PPM) // cap rate of gap reduction to 5000PPM
 	   period_lerp += gap_lerp/ffdelta        // adjust to reduce gap to zero over ffdelta cycles
 		
 	 	ffclock_updated = 0;						// update processed
 	}
    ---------------------------------------------------
 
-   ffth->gen = ++ogen						// this tick has has valid data (avoid special 0 value)
+   ffth->gen = ++ogen						// this tick has has (newest) valid data (avoid special 0 value)
 	fftimehands = ffth;						// advance to the new tick
  ---------------------------
 
@@ -842,9 +843,7 @@ guards the entire windup procedure.
 
 
 /* TODO
-	- v-unlikely but possible that ffdelta is `negative` if update occurs after delta read
-	  fix by checking for either sign (more complex but get update earlier), or discarding if negative (simpler and technically correct) and not resetting ffclock_updated
-   - should fftimehands = ffth   be delay to align with timehands = th,  thereby 
+   - should fftimehands = ffth   be delayed to align with timehands = th,  thereby
 	  allowing a tc change to be managed without an extra FF tick advance?
 */
 
@@ -933,7 +932,7 @@ though this was already done!
 The current tc is accessible via
 sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)   // see if tc there or changed
 and is recorded in the global  clock.hw_counter[32] , initialized in radclock_init_vcounter.
-It is acted on in pthread_rawdata.c:process_rawdata  just before the pushing of
+It is acted on in pthread_dataproc.c:process_stamp  just before the pushing of
 a fresh parameter update to the kernel. If a change is seen, the update is skipped
 (hence ffclock_windup had earlier just advanced a standard tick)
 and the algo reinitialized (however it is not clear if this is done properly).
@@ -1011,14 +1010,14 @@ From low to high:
   - format conversion:				{binary,timespec,timeval} FF wrapper functions
   - FF/FB clock hiding: 			generic wrappers
 
-Because of the risk of asynchronous updates, generation check is used when clock data is accessed
+Because of the risk of asynchronous updates, generation checking is used when clock data is accessed
   from fftimehands:   use fftimehands->gen   (even if want FFdata, is finer grained)
   from FFdata:			 use FFdata->update_ffcount
   
   
 The actual functions are:
 
-/*   Purpose               function                              					defined in  */
+/*   Purpose               	function                            	  					defined in  */
 	  ---------------------------------------------------------------------------------------
 	  counter reading       ffclock_read_counter			  		    					kern_tc.c
 	  counter conversion 	ffclock_convert_delta				    					kern_tc.c
@@ -1037,13 +1036,13 @@ The actual functions are:
 /* Difference clock */
 The hierarchy of calls is:
 
-	ffclock_{bin,nano,micro}time(∆T, ∆t)   	// system clock functions
+	ffclock_{bin,nano,micro}difftime(∆T, ∆t)  // system clock functions
 		ffclock_difftime(∆T, ∆t, eb)				// semi-generic FF difference clock
 			ffclock_convert_diff(∆T, ∆t)			// low level difference clock
 				ffclock_convert_delta(∆T, p, ∆t) // simple multiplication
 
 The ∆t ≥ 0 requirement is needed at each stage. In that sense these calls are not a
-true generic difference clock. Constrast this to the RADclock library calls
+true generic difference clock. Contrast this to the RADclock library calls
 radclock_{elapsed,duration} which each return long doubles and can be negative.
 
 ffclock_convert_delta(∆T, p, ∆t)
@@ -1061,7 +1060,7 @@ ffclock_difftime(∆T, ∆t, eb)						// general FF Cd function independent of f
 	  - get from FFdata, protection:  FFdata.update_ffcount
 
 ffclock_{bin,nano,micro}difftime(∆T, ∆t)
-	- calls ffclock_difftime(∆T, ∆t, NULL)		// no error bounded activated !
+	- calls ffclock_difftime(∆T, ∆t, NULL)		// no error bound activated !
 	- converts to {native binary,timespec,timeval}
 	- thus ffclock_bindifftime(∆T, ∆t) == ffclock_convert_diff(∆T,∆t)
 
@@ -1084,25 +1083,32 @@ ffclock_convert_abs(T, t, flags)			// reads basic FFclock, in native or LERP for
 	- protection:  fftimehands->gen for entire calculation
 
 ffclock_abstime(T, t, eb, flags)			// general FF Ca function independent of fftimehands
-   - universal function supporting all possible FF clock variants based on flags
+   - general function supporting all possible FF clock variants based on flags
 		- FAST:  	use  ffclock_last_tick, else ffclock_convert_abs(ffclock_read_counter)
 		- LERP:  	pass flags through for  ffclock_{last_tick,convert_abs}  to handle
-		- LEAPSEC:  add in effect of leaps since boot into basic clock to form UTC
+		- LEAPSEC:  add in effect of leaps since boot into basic native clock to form UTC native
 		- UPTIME:   subtract ffclock_boottime  to make times relative to boot
    - note LEAPSEC and UPTIME should not be used together
 	- protection:   FFdata->update_ffcount  for update_ffcount retrieval only
    - add error information if requested by non-null eb [no gen-checking unlike ffclock_difftime]
-	- native Ca(t) == ffclock_convert_abs(ffclock_read_counter(), t,0) // no leap, just FFclock params
-	- UTC     Ca(t) == ffclock_abstime(NULL, t, NULL, FFCLOCK_LEAPSEC ) // native with leap added
+	- algo native Ca(t) == ffclock_convert_abs(ffclock_read_counter(), t,0) // no LERP, no leap
+	- UTC  native Ca(t) == ffclock_abstime(NULL, t, NULL, FFCLOCK_LEAPSEC ) // no LERP, leap added
+	- FORMAT dimension hardwired to bintime
 
 ffclock_[get]{bin,nano,micro}[up]time(t)
 	- flags established based on function name and intention:
 		- ALLways include LERP (top level functions, all need monotonicity)
 	   - if get in name include FAST,   else not
-		- if up  in name include UPTIME, else  LEAPSEC
+		- if up  in name include UPTIME, else LEAPSEC
 	- calls ffclock_abstime(NULL, t, NULL, flags)		// no error bounded activated !
 	- converts to {native binary,timespec,timeval} as before
-	- thus None of these functions allow the native Ca clock to be read
+	- thus None of these functions allow the algo''s leap-free Ca clock to be read
+	- designed to match existing  [get]{bin,nano,micro}[up]time  functionality:
+		- explicit naming of  2x3x2 = 12 functions over {FAST,FORMAT,UPTIME} dimensions
+		- native/LERP dimension not covered, LERP hardwired
+		- no return of ffcounter
+
+
 
 
 /* System Clock */
@@ -1114,6 +1120,9 @@ are now defined to switch between the FF and FB functions depending on the chose
 system clock paradigm, and the original names are wrappers for these.
 In short, the original names will now use FF or FB under the hood.
 Difference clocks only exist under FF, and there are no traditional names to map to.
+
+
+
 
 
 /* TODO:
@@ -1235,18 +1244,22 @@ int     sysctlbyname(const char *, void *, size_t *, const void *, size_t);
 
 
 Those sysctl calls used by the daemon are accessed via sysctlbyname() and are
-summarised in a section of RADclockDoc_library.  Only three calls are used:
+summarised in a section of RADclockDoc_library.  Only three calls are normally used:
 sysctlbyname("kern.sysclock.ffclock.version",&version,&size_ctl,NULL,0)) // detect,store, report KV
-sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)   		  // see if tc there or changed
+sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)   // on EACH stamp: see if tc there or changed
 sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&passthrough_counter,..) // incomplete
+
+Additional calls are made at startup within clock_init_live() as a test of the
+sysctl settings [To be removed, or moved to OS-dependent code].
+
 
 For completeness, the tree components specific to the rest of the timecounter interface are
 _kern
   - boottime  	"System boottime"
   -> _kern_timecounter
-	   - stepwarnings		  "Log time steps"
-	   - hardware   [PROC] "Timecounter hardware selected"
-	   - choice		 [PROC] "Timecounter hardware detected"
+	   - stepwarnings		  		"Log time steps"
+	   - hardware   [PROC] 		"Timecounter hardware selected"
+	   - choice		 [PROC] 		"Timecounter hardware detected"
 	   - alloweddeviation [PROC] "Allowed time interval deviation in percents"  new in 11.2
 	   -> _kern_timecounter_tc
 			-> _kern_timecounter_tc_"tc_name"?  "timecounter description"
@@ -1260,12 +1273,15 @@ _net
   -> _net_bpf		"bpf sysctl"
       - maxinsns 			"Maximum bpf program instructions"
   		- zerocopy_enable	"Enable new zero-copy BPF buffer sessions"
-		-> _net_bpf_stats					"bpf statistics portal"
+  		- optimize_writers"Do not send packets until BPF program is set"
+		-> _net_bpf_stats				"bpf statistics portal"
 		-> _net_bpf_tscfg [static] 	"Per-interface timestamp configuration"
-	       bpf_tscfg_sysctl_handler	[PROC]	"Per-interface system wide default timestamp configuration"
-			   children: bpf_if.tscfgoid 			"Interface BPF timestamp configuration"
+	       - default		  	[PROC]	"Per-interface system wide default timestamp configuration"
+			 - ifp->if_xname 	[PROC]	"Interface BPF timestamp configuration"
 		
-
+where ifp->if_xname is created dynamically on a per-interface basis, and ifp
+is the struct ifnet for the interface, defined in sys/net/if_var.h,
+which also holds bpf_if .
 
 /* TODO:
 		- resolve bypass/passthrough confusion and complete code on kernel side
@@ -1281,11 +1297,11 @@ Universal (FF/FB) System Clock Support
 The traditional system clock support, and timehands architecture, is FB oriented.
 With FF implemented, the system now has a choice of paradigm.
 The `FF code` includes an initial attempt to adopt a more general view, whereby
-both FF and FB choices are always available (ie present, compiled, initialized
-and ready for use), and which is actually used to drive the system clock is (dynamically)
-selectable.
-Of course, each clock requires its own active daemon, otherwise the corresponding kernel
-clock will be in an unsynchronized state.
+both FF and FB choices are always available (ie present, compiled, initialized,
+continually updated, processing updates from a deamon, and ready for use),
+and which is actually used to drive the system clock is (dynamically) selectable.
+Of course, each clock requires its own active daemon, otherwise the corresponding
+kernel clock will be in an unsynchronized state.
 
 The clock paradigm in service is recorded by the global variable
 int sysclock_active = SYSCLOCK_{FBCK,FFWD} = {0,1}
@@ -1332,25 +1348,25 @@ Splitting raw and final timestamping enables the following capabilities:
 Including both FB and FF simultaneously in the split enables:
 	- the flexibility of clock choice when timestamping:  FF, FB, active sysclock,
 	  in addition to other flavour choices
-	- enables fair selection of FF/FB clocks, as the raw timestamps are taken
+	- fair selection of FF/FB clocks, as the raw timestamps are taken
 	  together as `tick-safe` pairs.  In particular this supports a perfectly fair comparison
 	  methodology of rival FF/FB deamons, based on truly back-to-back timestamping.
-and is efficient in that to read the FF counter, the underlying FB counter must be read anyway.
-There is however some overhead in always storing both states per-tick.
+	- counter reading efficiency in that to read the FF counter, the underlying FB counter must be read anyway.
+	  There is however some overhead in always storing both states per-tick.
 
 
-The snapshot is based on the current tick data, and so the FF parameters will be out of date by a
-fraction of a tick for ticks where parameter updates occur. If needed, this can be
+The snapshot is based on the current tick data, and so the FF parameters will be out of date
+(ie from the previous daemon update) for ticks within which updates occur. If needed, this can be
 overcome in userland by just using the captured FFcounter values, in conjunction with
 the radclock API, or even better, if the daemon is storing its own database
-and this is available, then the exactly corrected parameters can be obtained independently of
-processing delays.
+and this is available, then the exactly corrected parameters can be obtained irrespective of
+any processing delays.
 
 Although the above benefits are generic, they are particularly suited for use within
 packet timestamping in the case where multiple processes may be filtering for the same
 packets, but have different requirements.  The benefits are:
   - the time consuming raw timestamping is done once only  [or not all if using FAST]
-  - all tapping processes get the same raw data reqardless of how they are scheduled,
+  - all tapping processes get the same raw data regardless of how they are scheduled,
     and derived timestamps are immune to any latency between raw and final timestamping
   - tapping processes have full freedom of timestamp flavour, with the exception of FAST
 See the bpf section.
@@ -1372,7 +1388,7 @@ struct fbclock_info {
 	struct bintime		error;			// from external time_esterror
 	struct bintime		tick_time;		// tick-start time according to FB
 	uint64_t		th_scale;				// counter period   (th_scale from current timehands)
-	int			status;					// from external time_status
+	int		status;							// from external time_status
 };
 struct ffclock_info {
 	struct bintime		error;			// estimate error at this counter read
@@ -1380,29 +1396,31 @@ struct ffclock_info {
 	struct bintime		tick_time_lerp;// tick-start time according to FF (mono version)
 	uint64_t		period;					// counter period	(from current fftimehands)
 	uint64_t		period_lerp;			// counter period (mono version)
-	int			leapsec_adjustment;	// total leap adjustment at this counter value
-	int			status;					// current status
+	int		leapsec_adjustment;			// total leap adjustment at this counter value
+	int		status;							// current status
 };
 contain all those fields from timehands and fftimehands respectively that are essential
 for clock reading within a tick at a fixed counter value.
 
-The 4-byte flags used in flag processing in sysclock_snap2bintime are:
-#define	FBCLOCK_{FAST,UPTIME,MASK}					  // lower 2 bytes, MASK = 0x0000ffff
-#define	FFCLOCK_{FAST,UPTIME,MASK,LERP,LEAPSEC}  // upper 2 bytes, MASK = 0xffff0000
-
+The 4-byte flags used for flag processing in the {fb,ff}clock_[get]{bin,nano,micro}[up]time
+hierarchy are also used in sysclock_snap2bintime:
+#define	FBCLOCK_{FAST,UPTIME,MASK}					// lower 2 bytes, MASK = 0x0000ffff
+#define	FFCLOCK_{FAST,UPTIME,MASK,LERP,LEAPSEC}	// upper 2 bytes, MASK = 0xffff0000
+These are defined in timeffc.h and are available to bpf.
 
 As noted earlier, if FFCLOCK is not defined the FF components of the sysclock framework
 are removed, but the framework remains, with correspondingly reduced functionality.
-In that case sysclock_active = SYSCLOCK_FBCK , and cannot be altered as sysctl_kern_sysclock_active
-does not even exist.
+In that case sysclock_active = SYSCLOCK_FBCK , and cannot be altered as
+sysctl_kern_sysclock_active  does not even exist.
 
 
 /*
 TODO:
   - _state, or _tickstate would be better than _info
-  - changed the th_offset name to tick_time to match ff language, so should do the same for
+  - I changed the th_offset name to tick_time to match ff language, so should do the same for
     th_scale -> period, then all info (should call it state) fields match, except ff has lerp versions 
 	 as well + leapsec_adjustment
+	 OR  revert to th_offset to keep FB unchanged, but can't keep this halfway house
   - align the constants SYSCLOCK_{FBCK,FFWD}  with the sysclocks strings more formally
   - check to see if a generic timestamp call can be used to avoid repeating code across
     here and  tc_windup
@@ -1425,7 +1443,7 @@ are legal under KV≥2, no more hidding raw timestamps in padding!
 Further, the meaning of the timestamp control flags is set in the kernel and understood by the
 daemon, pcap only passes information along between them.
 
-The key structure at the attached hardware interface (if) level is (bpf.h) :
+The key structure at the attached hardware interface (if) level is (bpf.h) :  // this is 9.0, now different
 struct bpf_if {
 	LIST_ENTRY(bpf_if)	bif_next;	/* list of all interfaces */
 	LIST_HEAD(, bpf_d)	bif_dlist;	/* descriptor list */
@@ -1466,10 +1484,10 @@ and timestamp control is mediated though the _T_ flags :
 // FORMAT flags
 #define	BPF_T_{MICRO,NANO,BIN}TIME 0x000{0,1,2}  // standard formats
 #define	BPF_T_NONE			0x0003
-#define	BPF_T_FFCOUNTER	0x0004   // [ new ]  I want raw FF timestamp
-#define	BPF_T_FORMAT_MAX	0x0004	  // largest format value
+#define	BPF_T_FFCOUNTER		0x0004   // [ new ]  I want raw FF timestamp
+#define	BPF_T_FORMAT_MAX		0x0004	  // largest format value
 #define	BPF_T_FORMAT_MASK	0x0007   // 0000 0000 0000 0111
-#define	BPF_T_NORMAL		0x0000   // = current SYSCLOCK, UTC with MICRO
+#define	BPF_T_NORMAL			0x0000   // = current SYSCLOCK, UTC with MICRO
 // MONO flag  [ old ]
 #define	BPF_T_MONOTONIC	0x0100	  // if want uptime clock [ translates to {FB,FF}CLOCK_UPTIME ]
 #define	BPF_T_FLAG_MASK	0x0100   // 0000 0001 0000 0000
@@ -1477,8 +1495,8 @@ and timestamp control is mediated though the _T_ flags :
 #define	BPF_T_SYSCLOCK		0x0000	  // read current sysclock
 #define	BPF_T_FBCLOCK		0x1000   // read FB
 #define	BPF_T_FFCLOCK		0x2000   // read FF
-#define	BPF_T_CLOCK_MAX	0x2000   // largest clock value
-#define	BPF_T_CLOCK_MASK	0x3000	  // 0011 0000 0000 0000
+#define	BPF_T_CLOCK_MAX		0x2000   // largest clock value
+#define	BPF_T_CLOCK_MASK		0x3000	  // 0011 0000 0000 0000
 
 // Extract FORMAT, MONO, CLOCK  flag bits
 #define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
@@ -1495,10 +1513,10 @@ and timestamp control is mediated though the _T_ flags :
 The top level function bpf_tap (bpf_mtap{2} are analogous) processes the
 if-level using the _TSTAMP_ flags, then loops over all attached descriptors {d}.
 For each d, if the pkt passes d''s filter, the _T_ level flags (except FORMAT)
-are processing in order to take the appropriate timestamp(s), which are then passed
+are processed in order to take the appropriate timestamp(s), which are then passed
 as arguments bt and ffcount to catchpacket().
 
-For efficiency and flexbility reasons, the timestamping is performed using the
+For efficiency and flexibility reasons, the timestamping is performed using the
 raw/final split described above. Thus sysclock_getsnapshot is called before the d-loop
 to obtain the state once-only needed for all possible timestamp requests, whereas
 sysclock_snap2bintime is called separately for each d.
@@ -1509,13 +1527,15 @@ the counter must be read and its cost incurred for all.
 The input to timestamp generation is d->bd_stamp, which carries the desired
 BPF_T_{FORMAT,MONO,CLOCK} flags given to pcap from the calling program.
 In the radclock daemon,  d->bd_stamp  is get/set in pcap-fbsd.c:descriptor_{get,set}_tsmode
-using   ioctl(pcap_fileno(p_handle), BIOC{G,S}TSTAMP, (caddr_t)(&bd_tstamp))
+using   ioctl(pcap_fileno(p_handle), BIOC{G,S}TSTAMP, (caddr_t)(&bd_tstamp)).
+Note that these ioctl commands are handled by bpf.c:bpfiotl(*dev, cmd, *data,.)
+not by pcap as such.
 
 The role of catchpacket is to store the packet and timestamps into a buffer structure for that d.
 It first completes the flag processing by performing the FORMAT conversion specified in
 d->bd_stamp, using the function
 	bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)  ,
-which returns the bt-inspired timestamp structure
+which returns the bt-inspired timestamp structure:
 
 struct bpf_ts {
 	bpf_int64	bt_sec;		/* seconds */
@@ -1541,14 +1561,14 @@ Some of the main issues are:
 	- BPF_T_VALID is incompatible with the KV=3 goals
 	- bpf.c should deal with the CLOCK flag but this is ignored
    - issue on daemon side:  the bpf_xhdr is used when d->bd_stamp = BPF_T_FFCOUNTER
-	  (set when mode = RADCLOCK_TSMODE_RADCLOCK in descriptor_set_tsmode)
+	  (set when mode = PKTCAP_TSMODE_FFNATIVECLOCK in descriptor_set_tsmode)
 	  but struct bpf_hdr_hack_v3  used in  pcap-fbsd.c is based on bpf_hdr .
 	  Is this because pcap binaries didnt understand bpf_xhdr back then?  should now.
 	  Is this why the daemon sets  bd_tstamp = BPF_T_MICROTIME, to ensure the bpf_hdr branch in
 	  catchpackets is followed ?
 	- sysclock_getsnapshot  deals with UPTIME issues (via BPF_T_MONOTONIC) neatly in bpf_tap,
 	  but in catchpackets  bpf_bintime2ts  also takes care of this [ makes sense if !FFCLOCK],
-	  but if not, fails.  Could fix by, in FFLOCK case, calling bpf_bintime2ts
+	  but if not, fails.  Could fix by, in FFCLOCK case, calling bpf_bintime2ts
 	  with   tstype & !BPF_T_MONOTONIC   so it wont act on the flag .
    - another reason why the processing in bpf_bintime2ts is somewhat superfluous:
 	  It would be efficient if sysclock_getsnapshot handled FORMAT as well, particularly since
@@ -1556,29 +1576,46 @@ Some of the main issues are:
 	  timehands.
 	    If the key goal of catchpacket is mainly storage, why not do all conversion in _tap, but
 		 need to deal with compatibility issues with old header, which impacts storage issues...
-	  
-			
+
+Cant use  [{fb,ff}clock_][get]{bin,nano,micro}[up]time   hierarchy, as for bpf
+need to separate along lines of
+    FAST
+		UPTIME, LERP, and include FFcounter    or   UPTIME, LERP, FFcounter, FORMAT
+		   FORMAT
+
+dimensions for efficiency.
 
 
 On the daemon side, the timestamp mode is set as :
 pcap-fbsd.c:descriptor_set_tsmode
-  RADCLOCK_TSMODE_{SYSCLOCK,FAIRCOMPARE}   bd_tstamp = BPF_T_MICROTIME
-  RADCLOCK_TSMODE_RADCLOCK						 bd_tstamp = BPF_T_FFCOUNTER
+  PKTCAP_TSMODE_SYSCLOCK   bd_tstamp = BPF_T_MICROTIME
+  PKTCAP_TSMODE_FFNATIVECLOCK						 bd_tstamp = BPF_T_FFCOUNTER
   ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp) == -1)
 
 Actually want something like
-	RADCLOCK_TSMODE_DEAMON			bd_tstamp = BPF_T_FFCOUNTER | BPF_T_FBCLOCK | BPF_T_NANOTIME
+	PKTCAP_TSMODE_DEAMON			bd_tstamp = BPF_T_FFCOUNTER | BPF_T_FBCLOCK | BPF_T_NANOTIME
 	  - daemon wants the FFcounter, and the FB as well to enable external comparisons
-	  - timeval is old, timespec is better
-	RADCLOCK_TSMODE_READFF			bd_tstamp = BPF_T_FFCOUNTER | BPF_T_FFCLOCK | BPF_T_NANOTIME
+		  - or, could say that deamon doesnt use it so doesnt care, ask for FAST to reduce kernel load
+	  - timeval is old, timespec is better  [ bintime less convenient for floating pt ]
+	PKTCAP_TSMODE_READFF			bd_tstamp = BPF_T_FFCOUNTER | BPF_T_FFCLOCK | BPF_T_NANOTIME
 	  - libprocess may want the raw timestamp, or the convenience of an immediate conversion to Ca(t)
-	  - how to get FFCLOCK_{LEAPSEC,LEAP} preferences into  BPF_T_ language
-	    At least bpf.c does include timeff.c  which includes these macros
+	  - how to get FFCLOCK_{LEAPSEC,LERP} preferences into  BPF_T_ language
+	    At least bpf.c does include timeff.h  which includes these macros
 		 - currently wouldnt want LERP, but would want LEAP
 		 - could expand BPF_T_FFCLOCK  with BPF_T_FFLERPCLOCK, natural, it is a kind of clock
-	    - leap is somewhat wierd, the native Ca is leap free for the algo, but what is this?
+			otherwise BPF_T_FFCLOCK is ambiguous and would have to be LERP for safety for generic applications
+		 - what about FAST?  it requires knowledge of kernel internals, rationale
+		   is lower system load if hz res sufficient
+	    - leap is somewhat wierd, the native Ca is leap free for the algo, but what is it really?
 		   it is neither UTC, nor uptime, the kernel shouldnt know about this..  it is really
 		   a daemon concept, but should just return with LEAP by default.
+			Confusion:
+			  daemon:   native means algo version without new leaps
+							but Ca taken to be UTC (rely on read fns to include leaps)
+			  kernel:   native means Ca UTC but with update induced jumps
+			            BUT:  data structure still hold leap stuff separately, again rely on read fns for UTC
+							LERP or `mono FF` means Ca UTC smoothed out
+
 			Libprocesses can use the API if they want native Ca.
 
 /*
@@ -1735,10 +1772,13 @@ Plan of attack:
    - currently there
 	- in those final Julien patches he `hid` from me
 
-- Find proper references to learn about some of the satellite timing elements to avoid confusion/ignorance/trying to do it all the hard way:
+- Find proper references to learn about some of the satellite timing elements to
+  avoid confusion/ignorance/trying to do it all the hard way:
  	- hardware clock
 	- time of day stuff
 	- other timing facilities?
 	- separating POSIX and ISO C compliance from other stuff, summarize
 	- timecounter documentation!!  man pages at least
+	- and bpf interfaces and descriptors !!
 	- start with ALL references to `time` in UNIX book
+	

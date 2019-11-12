@@ -132,7 +132,7 @@ Again we focus on the main case of bidir NTP packets.
 The packets themselves are captured by pcap via an infinite-loop call to
 pcap_loop  within capture_raw_data().
 Fundamentally, pcap provides a pcap header: "pcap_hdr", and the packet: "packet_data",
-It gives these to the callback fn fill_rawdata_pcap, which maps these as well
+It gives these to the callback fn fill_rawdata_pcap, which copies these as well
 as the vcounter value into a rd_pcap_pkt structure within a raw data bundle (rdb)
 structure, given below.
 
@@ -148,7 +148,7 @@ based unidir).
 struct rd_pcap_pkt {           // defined in rawdata.h
 	vcounter_t vcount;				/* Raw vcount */
 	struct pcap_pkthdr pcap_hdr;	/* PCAP header */
-	void* buf;							/* Points to packet_data */
+	void* buf;							/* Points to packet_data, ie the frame */
 };
 
 The idea of the rdb is to allow this raw data to be chained in a queue, and
@@ -184,22 +184,23 @@ Insertions (at head) and deletions (at tail) of an rdb into the list performed b
 	struct raw_data_bundle* free_and_cherrypick(struct raw_data_queue *rq)
 To avoid certain problems free_and_cherrypick will never remove the last rdb,
 which means it must handle the case when an rdb has already been read but not yet
-removed (hence the read member of the structure above), and be prepared to remove
-it later. Hence although insertion is simple and classic, deletion is not in this list.
+removed, and be prepared to remove it later. Hence although insertion is simple
+and classic, deletion is not in this list.
 
 The callback fill_rawdata_pcap puts the filled rbd into a list using insert_rdb_in_list.
 The call to free_and_cherrypick occurs within deliver_rawdata_pcap, which uses
-the rdb to populate and return a radpcap_packet_t structure (fills all fields
-except ss_if), as well as the vcount separately.
+the rdb to populate and return a radpcap_packet_t structure (create_stamp.h),
+filling all fields except ss_if, as well as the vcount separately.
+In this structure a `buffer` holds the pcap header and packet data in a single
+concatenated form:  [pcap_hdr][frame/buf/packet].
 
-// These are defined in create_stamp.h
 // Note that the member names are misleading and should be changed !
 #define RADPCAP_PACKET_BUFSIZE 65535	  // max this out, you never know
 typedef struct radpcap_packet_t {
     void *header;		// header=buffer, hence points to pcap_hdr
     void *payload;	// points to frame (start of linklayer header, not NTP payload!)
-    void *buffer;		// everything that was in the rdb:  [pcap_hdr; frame/buf ]
-    size_t size;		// size of everything, ie of [pcap_hdr; frame/buf ]
+    void *buffer;		// ptr to concatenated pcap data  [pcap_hdr][frame]
+    size_t size;		// size of buffer
     u_int32_t type;	/* rt protocol type, set by pcap_datalink */
     struct sockaddr_storage ss_if;	/* Capture interface IP address */
 } radpcap_packet_t;
@@ -207,7 +208,8 @@ typedef struct radpcap_packet_t {
 This structure keeps everything that was in the rdb, but restructures it and
 adds some networking metadata.  It represents the passage from rd processing to
 stamp creation, however the rational for the extra complexity is not entirely clear.
-How it is used is covered under stamp creation below.
+How it is used is covered under stamp creation below. Note that it does not contain
+the buffer, only a pointer to the storage allocated in get_network_stamp .
 
 Note that the vcount was already extracted and held separately within the rd
 structure, and so is not held explicitly here, though it is still there
@@ -215,10 +217,10 @@ implicitly within the pcap data.  The vcount is recovered again from a
 radpcap_packet_t packet as follows (see create_stamp.c) :
 
 get_network_stamp
-	get_packet(handle,userdata, packet)  ( becomes get_packet_livepcap when called)
+	get_packet(handle,userdata, &radpkt)  (becomes get_packet_livepcap when called)
 		extract vcount and puts it in standard header (see below)
-	update_stamp_queue(peer->q, packet, stats)
-		get_vcount(packet, &vcount))    // extract from standard header
+	update_stamp_queue(peer->q, radpkt, stats)
+		get_vcount(radpkt, &vcount))    // extract from standard header
 		push_{server,client}_halfstamp(q, ntp, &vcount, ...);  // vcount now safe in queue
 
 The reason why vcount is extracted, then thrown away and need to extract again, is because
@@ -226,7 +228,6 @@ the source may be different.  If it is live then you have it already, but if dea
 be extracted from the SLL header, so a generic means is needed to store and then extract it
 regardless of source.  This is the SLL header trick, used not just for raw storage but also
 as a source-independent format.
-
 
 
 
@@ -276,16 +277,18 @@ to avoid any red flags from pcap.
 It is convenient to do this at the workhorse stamp creation level.
 The functions involved are all in stampinput_livepcap.c. The simplified calls are:
 	get_packet_livepcap(,,,)
-    	deliver_rawdata_pcap(handle, packet, &vcount); // get the pre-extracted data
-        insert_sll_header(packet)            	// replace original frame header
-        set_vcount_in_sll(packet, vcount)    	// put the vcount into fake header
-		pcap_dump(traceoutput, pcap_hdr, packet) // param names changed for clarity
+    	deliver_rawdata_pcap(handle, radpkt, &vcount); // get the pre-extracted data
+        insert_sll_header(radpkt)            	// replace original frame header
+        set_vcount_in_sll(radpkt, vcount)    	// put the vcount into fake header
+		pcap_dump(traceoutput, pcap_hdr, radpkt)  // param names changed for clarity
 
 Raw files are used when RADclock is invoked using a "running dead from pcap" source,
 also known as reading from a tracefile.  In this case the pcap data is read
 using a call to pcap_next_ex within stampinput_tracefile.c:get_packet_tracefile .
 Clearly, since the original frame header has been discarded, the original link
 layer details cannot be recovered by running RADclock with such raw input.
+Also, the KV version is not recorded in saved files, but this is not needed
+when running dead, as the vcount has already been extracted and stored.
 
 The rd level is before stamp creation. Both the higher level raw writing
 (get_packet_livepcap) and raw reading functions (get_packet_tracefile) are
@@ -391,13 +394,13 @@ A summary of all this minus the detail, in the case of livepcap, is:
 Source File 			   	Function                     		Returns         Comment
 --------------------------------------------------------------------------------
 pthread_mgr.c 				  thread_data_processing 									 [ infinite loop ]
-pthread_dataproc.c     		process_stamp						rad_data			 [ calls algo ]
+pthread_dataproc.c     		process_stamp							rad_data			 [ calls algo ]
 stampinput.c   			    get_next_stamp						stamp           [ fn pointer ]
 stampinput-livepcap.c	     livepcapstamp_get_next			stamp           [ wrapper ]
 create_stamp.c 					get_network_stamp					stamp				 [ generic taking callback]
 											update_stamp_queue
 											get_fullstamp_from_queue_andclean stamp_t
-stampinput-livepcap.c		  		get_packet_livepcap			radpcap_packet_t [writes to .raw]
+stampinput-livepcap.c		  		get_packet_livepcap			radpcap_packet_t [callback, writes to .raw]
 rawdata.c									deliver_rawdata_pcap		radpcap_packet_t, vcount
 rawdata.c										free_and_cherrypick  rdb
 
@@ -406,6 +409,7 @@ Consume data from rd queue ^  	[DATA_PROC thread]
 Produce live data to rd queue v	[MAIN thread]
 
 rawdata.c										insert_rdb_in_list	rdb
+rawdata.c										extract_vcount_stamp	vcount
 rawdata.c									fill_rawdata_pcap			rdb				[ pcap_loop callback ]
 rawdata.c 								pcap_loop 						pcap_hdr, pkt  [ infinite loop ]
 rawdata.c							capture_raw_data
