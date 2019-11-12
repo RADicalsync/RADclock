@@ -358,7 +358,7 @@ inittodr(time_t base)
 	if (ts.tv_sec >= 0) {
 		tc_setclock(&ts);
 #ifdef FFCLOCK
-		ffclock_reset_clock(&ts);
+		ffclock_setto_rtc(&ts);
 #endif
 	}
 }

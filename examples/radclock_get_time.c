@@ -41,7 +41,9 @@
 
 /* Needed for accessing the RADclock API */
 #include <radclock.h>
-
+/* needed to access types for printout_{rad,FF}data */
+#include "radclock-private.h"		// needed for struct radclock_data 		defn
+#include "kclock.h"              //            struct ffclock_estimate
 
 
 
@@ -50,7 +52,7 @@ int
 main (int argc, char *argv[])
 {
 	/* RADclock */
-	struct radclock *clock_handle;
+	struct radclock *clock;
 
 	/* Clock parameters */
 	unsigned int status;
@@ -71,13 +73,13 @@ main (int argc, char *argv[])
 
 
 	/* Initialize the clock handle */
-	clock_handle = radclock_create();
-	if (!clock_handle) {
+	clock = radclock_create();
+	if (!clock) {
 		fprintf(stderr, "Could not create clock handle");
 		return (-1);
 	}
 	printf("----------------------------------------------------------------\n");
-	radclock_init(clock_handle);	// initializes shm in here
+	radclock_init(clock);	// initializes shm in here
 
 
 	/* radclock_get_*
@@ -85,13 +87,13 @@ main (int argc, char *argv[])
 	 * Functions to get   some information regarding the radclock itself
 	 */
 	printf("----------------------------------------------------------------\n");
-	err += radclock_get_status(clock_handle, &status);
-	err += radclock_get_last_changed(clock_handle, &vcount1);
-	err += radclock_get_next_expected(clock_handle, &vcount3);
-	err += radclock_get_period(clock_handle, &period);
-	err += radclock_get_bootoffset(clock_handle, &offset);
-	err += radclock_get_period_error(clock_handle, &period_error);
-	err += radclock_get_bootoffset_error(clock_handle, &offset_error);
+	err += radclock_get_status(clock, &status);
+	err += radclock_get_last_changed(clock, &vcount1);
+	err += radclock_get_next_expected(clock, &vcount3);
+	err += radclock_get_period(clock, &period);
+	err += radclock_get_bootoffset(clock, &offset);
+	err += radclock_get_period_error(clock, &period_error);
+	err += radclock_get_bootoffset_error(clock, &offset_error);
 
 	if ( err != 0 ) {
 		printf ("At least one of the calls to the radclock failed. Giving up.\n");
@@ -110,16 +112,37 @@ main (int argc, char *argv[])
 
 	printf("----------------------------------------------------------------\n");
 
+
+//	struct radclock_data rad_data;
+	struct ffclock_estimate cest;
+	struct radclock_shm *shm;
+
+	if (clock->ipc_shm) {
+		shm = (struct radclock_shm *) clock->ipc_shm;
+		printout_raddata(SHM_DATA(shm));
+	} else
+		printf("SHM is down, can''t print daemon''s raddata\n\n");
+	
+	if (get_kernel_ffclock(clock, &cest))
+		printf("kernel FFdata unreachable, can''t print it\n\n");
+	else {
+		// fill_radclock_data(&cest, &rad_data);
+		printout_FFdata(&cest);
+		printf("\n\n");
+	}
+	
+	
+
 	/* radclock_get_vcounter
 	 *
 	 * Quick test to check the routine can access the RAW vcounter
 	 */
-	err = radclock_get_vcounter(clock_handle, &vcount1);
-	printf(" Initial vcounter reading is %llu   error = %d\n", (long long unsigned)vcount1, err);
+	err = radclock_get_vcounter(clock, &vcount1);
+	printf("Initial vcounter reading is %llu   error = %d\n", (long long unsigned)vcount1, err);
 	
 	for ( j=0; j<3; j++ ) {
-		err = radclock_get_vcounter(clock_handle, &vcount2);
-		radclock_duration(clock_handle, &vcount1, &vcount2, &currtime);
+		err = radclock_get_vcounter(clock, &vcount2);
+		radclock_duration(clock, &vcount1, &vcount2, &currtime);
 		printf(" Delta(vcount) from previous vcount = %llu (%9.4Lg [ms]) error=%d\n",
 				(long long unsigned)(vcount2 - vcount1), currtime * 1e3, err);
 		vcount1 = vcount2;
@@ -136,7 +159,7 @@ main (int argc, char *argv[])
 	printf("----------------------------------------------------------------\n");
 	printf("Calling the RADclock equivalent to gettimeofday with possibly "
 			"higher resolution'\n");
-	err = radclock_gettime(clock_handle, &currtime);
+	err = radclock_gettime(clock, &currtime);
 	currtime_t = (time_t) currtime;
 	printf(" - radclock_gettimeofday now: %s   (UNIX time: %12.20Lf)\n",
 			ctime(&currtime_t), currtime);
@@ -150,10 +173,10 @@ main (int argc, char *argv[])
 	 * should be done within that interval.
 	 */
 	printf("----------------------------------------------------------------\n");
-	err = radclock_get_vcounter(clock_handle, &vcount1);
+	err = radclock_get_vcounter(clock, &vcount1);
 	printf("Reading a vcount value now: %llu\n", (long long unsigned)vcount1);
 
-	err = radclock_vcount_to_abstime(clock_handle, &vcount1, &currtime);
+	err = radclock_vcount_to_abstime(clock, &vcount1, &currtime);
 	currtime_t = (time_t) currtime;
 	printf("   converted to long double: %s   (UNIX time: %12.20Lf)\n",
 			ctime(&currtime_t), currtime);
@@ -166,11 +189,11 @@ main (int argc, char *argv[])
 	 * between a past event and now.
 	 */
 	printf("----------------------------------------------------------------\n");
-	err = radclock_get_vcounter(clock_handle, &vcount1);
+	err = radclock_get_vcounter(clock, &vcount1);
 	printf("Reading a vcount value now: %llu ", (long long unsigned)vcount1);
 	printf(" - have a little rest for .2 seconds...\n");
 	sleep(.2);
-	err = radclock_elapsed(clock_handle, &vcount1, &currtime);
+	err = radclock_elapsed(clock, &vcount1, &currtime);
 	printf("   radclock_elapsed says we have been sleeping for %12.20Lf [ms]\n", 1000*currtime);
 
 
@@ -181,13 +204,13 @@ main (int argc, char *argv[])
 	 * between two events.
 	 */
 	printf("----------------------------------------------------------------\n");
-	err = radclock_get_vcounter(clock_handle, &vcount1);
+	err = radclock_get_vcounter(clock, &vcount1);
 	printf("Reading a vcount value now:  %llu ", (long long unsigned)vcount1);
 	printf(" - have a little rest for .2 seconds...\n");
 	sleep(.2);
-	err = radclock_get_vcounter(clock_handle, &vcount2);
+	err = radclock_get_vcounter(clock, &vcount2);
 	printf("Reading a second vcount now: %llu \n", (long long unsigned)vcount2);
-	err = radclock_duration(clock_handle, &vcount1, &vcount2, &currtime);
+	err = radclock_duration(clock, &vcount1, &vcount2, &currtime);
 	printf(" - radclock_duration says we have been sleeping for %12.20Lf [ms]\n", 1000*currtime);
 
 	return (0);

@@ -168,15 +168,7 @@ main (int argc, char *argv[])
 
 	radclock_register_pcap(clock_handle, pcap_handle);
 
-
-	/* Set the capture mode
-	 * 2 timestamps are always returned for each packet, a tivemal and a RAW
-	 * vcount, options are:
-	 * RADCLOCK_TSMODE_SYSCLOCK: system clock timeval, optimised raw vcount
-	 * RADCLOCK_TSMODE_RADCLOCK: RADclock timeval, optimised raw vcount
-	 * RADCLOCK_TSMODE_FAIRCOMPARE: system clock timeval, fair vcount
-	 */
-	radclock_set_tsmode(clock_handle, pcap_handle, RADCLOCK_TSMODE_FAIRCOMPARE);
+	pktcap_set_tsmode(clock_handle, pcap_handle, PKTCAP_TSMODE_FFNATIVECLOCK);
 
 
 	/* Open output file to store output */
@@ -222,7 +214,7 @@ main (int argc, char *argv[])
 				(long long unsigned)vcount, currtime);
 		fflush(output_fd);
 
-			/* in verbose mode also to stdout */
+		/* in verbose mode also to stdout */
 		if (verbose_flag) {
 			fprintf(stdout, "%ld.%.6d %llu %.9Lf\n", tv.tv_sec, (int)tv.tv_usec,
 					(long long unsigned) vcount, currtime);

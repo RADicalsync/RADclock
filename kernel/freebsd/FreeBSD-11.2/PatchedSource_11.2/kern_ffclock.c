@@ -199,11 +199,18 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 {
 	char newclock[MAX_SYSCLOCK_NAME_LEN];
 	int error;
-	int clk;
+	int clk=0;
+	struct bintime bt;
+	ffcounter ffcount;
+	static int ccc = 0;
 
 	/* Return the name of the current active sysclock. */
 	strlcpy(newclock, sysclocks[sysclock_active], sizeof(newclock));
 	error = sysctl_handle_string(oidp, newclock, sizeof(newclock), req);
+	
+	ffclock_last_tick(&ffcount, &bt, 0);
+	printf(" %d\t Callback sys_active start  %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
+   	ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
 
 	/* Check for error or no change */
 	if (error != 0 || req->newptr == NULL)
@@ -213,13 +220,22 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 	error = EINVAL;
 	for (clk = 0; clk < NUM_SYSCLOCKS; clk++) {
 		if (strncmp(newclock, sysclocks[clk], MAX_SYSCLOCK_NAME_LEN - 1)) {
+			ffclock_last_tick(&ffcount, &bt, 0);
+			printf(" %d\t                    inloop %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
+   			ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
 			continue;
 		}
 		sysclock_active = clk;
 		error = 0;
+		ffclock_last_tick(&ffcount, &bt, 0);
+		printf(" %d\t                    afloop %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
+   		ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
 		break;
 	}
-
+	ffclock_last_tick(&ffcount, &bt, 0);
+	printf(" %d\t                    atend  %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
+   	ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
+	
 	return (error);
 }
 
@@ -238,7 +254,6 @@ SYSCTL_INT(_kern_sysclock_ffclock, OID_AUTO, ffcounter_bypass, CTLFLAG_RW,
 void
 ffclock_bintime(struct bintime *bt)
 {
-
 	ffclock_abstime(NULL, bt, NULL, FFCLOCK_LERP | FFCLOCK_LEAPSEC);
 }
 
@@ -263,7 +278,6 @@ ffclock_microtime(struct timeval *tvp)
 void
 ffclock_getbintime(struct bintime *bt)
 {
-
 	ffclock_abstime(NULL, bt, NULL,
 	    FFCLOCK_LERP | FFCLOCK_LEAPSEC | FFCLOCK_FAST);
 }
@@ -421,8 +435,12 @@ sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
 
 	mtx_lock(&ffclock_mtx);
 	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
-	ffclock_updated++;
+	if (ffclock_updated == INT8_MAX)	// reset not yet processed by ffclock_windup
+		ffclock_updated = 1;
+	else
+		ffclock_updated++;
 	mtx_unlock(&ffclock_mtx);
+	
 	return (error);
 }
 
@@ -455,21 +473,18 @@ sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
 int
 sys_ffclock_getcounter(struct thread *td, struct ffclock_getcounter_args *uap)
 {
-
 	return (ENOSYS);
 }
 
 int
 sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
 {
-
 	return (ENOSYS);
 }
 
 int
 sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
 {
-
 	return (ENOSYS);
 }
 

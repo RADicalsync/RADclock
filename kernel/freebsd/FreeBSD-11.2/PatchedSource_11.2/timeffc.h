@@ -161,7 +161,7 @@ int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
     int whichclock, uint32_t flags);
 
 /* Resets feed-forward clock from RTC */
-void ffclock_reset_clock(struct timespec *ts);
+void ffclock_setto_rtc(struct timespec *ts);
 
 /*
  * Return the current value of the feed-forward clock counter. Essential to
