@@ -2,8 +2,8 @@
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
  *
- * This software was developed by Julien Ridoux at the University of Melbourne
- * under sponsorship from the FreeBSD Foundation.
+ * This software was developed by Julien Ridoux and Darryl Veitch at the 
+ * University of Melbourne under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,7 +28,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/11.2/sys/kern/kern_ffclock.c 298310 2016-04-19 23:48:27Z pfg $");
+__FBSDID("$FreeBSD$");
 
 #include "opt_ffclock.h"
 
@@ -90,13 +90,13 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 
 	/*
 	 * Leap second adjustment. Total as seen by synchronisation algorithm
-	 * since it started. cest.leapsec_next is the ffcounter prediction of
+	 * since it started. cest.leapsec_expected is the ffcounter prediction of
 	 * when the next leapsecond occurs.
 	 */
 	if ((flags & FFCLOCK_LEAPSEC) == FFCLOCK_LEAPSEC) {
-		bt->sec -= cest.leapsec_total;
-		if (ffc > cest.leapsec_next)
-			bt->sec -= cest.leapsec;
+		bt->sec -= cest.leapsec_total;	// subtracting means including leaps
+		if (cest.leapsec_expected != 0 && ffc > cest.leapsec_expected)
+			bt->sec -= cest.leapsec_next;
 	}
 
 	/* Boot time adjustment, for uptime/monotonic clocks. */
@@ -108,12 +108,8 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 	if (error_bound) {
 		ffdelta_error = ffc - cest.update_ffcount;
 		ffclock_convert_diff(ffdelta_error, error_bound);
-		/* 18446744073709 = int(2^64/1e12), err_bound_rate in [ps/s] */
-		bintime_mul(error_bound, cest.errb_rate *
-		    (uint64_t)18446744073709LL);
-		/* 18446744073 = int(2^64 / 1e9), since err_abs in [ns] */
-		bintime_addx(error_bound, cest.errb_abs *
-		    (uint64_t)18446744073LL);
+		bintime_mul(error_bound, cest.errb_rate * PS_IN_BINFRAC);	// errb_rate ps/s
+		bintime_addx(error_bound, cest.errb_abs * NS_IN_BINFRAC);	// errb_abs [ns]
 	}
 
 	if (ffcount)
@@ -142,8 +138,7 @@ ffclock_difftime(ffcounter ffdelta, struct bintime *bt,
 		} while (update_ffcount != ffclock_estimate.update_ffcount);
 
 		ffclock_convert_diff(ffdelta, error_bound);
-		/* 18446744073709 = int(2^64/1e12), err_bound_rate in [ps/s] */
-		bintime_mul(error_bound, err_rate * (uint64_t)18446744073709LL);
+		bintime_mul(error_bound, err_rate * PS_IN_BINFRAC);	// err_rate in [ps/s]
 	}
 }
 
@@ -212,20 +207,19 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 
 	/* Check for error or no change */
 	if (error != 0 || req->newptr == NULL)
-		goto done;
+		return (error);
 
-	/* Change the active sysclock to the user specified one: */
+	/* Change the active sysclock to the user specified one */
 	error = EINVAL;
 	for (clk = 0; clk < NUM_SYSCLOCKS; clk++) {
-		if (strncmp(newclock, sysclocks[clk],
-		    MAX_SYSCLOCK_NAME_LEN - 1)) {
+		if (strncmp(newclock, sysclocks[clk], MAX_SYSCLOCK_NAME_LEN - 1)) {
 			continue;
 		}
 		sysclock_active = clk;
 		error = 0;
 		break;
 	}
-done:
+
 	return (error);
 }
 

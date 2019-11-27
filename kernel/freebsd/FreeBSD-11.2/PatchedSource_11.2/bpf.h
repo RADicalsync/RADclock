@@ -7,6 +7,9 @@
  * to Berkeley by Steven McCanne and Van Jacobson both of Lawrence
  * Berkeley Laboratory.
  *
+ * Portions of this software were developed by Julien Ridoux and Darryl Veitch
+ * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -39,6 +42,8 @@
 
 #ifndef _NET_BPF_H_
 #define _NET_BPF_H_
+
+#include <sys/_ffcounter.h>
 
 /* BSD style release date */
 #define	BPF_RELEASE 199606
@@ -159,32 +164,51 @@ enum bpf_direction {
 	BPF_D_OUT	/* See outgoing packets */
 };
 
-/* Time stamping functions */
+/* Time stamping flags */
+// FORMAT flags
 #define	BPF_T_MICROTIME		0x0000
 #define	BPF_T_NANOTIME		0x0001
 #define	BPF_T_BINTIME		0x0002
 #define	BPF_T_NONE		0x0003
-#define	BPF_T_FORMAT_MASK	0x0003
+#define	BPF_T_FFCOUNTER		0x0004
+#define	BPF_T_FORMAT_MAX	0x0004
+#define	BPF_T_FORMAT_MASK	0x0007
 #define	BPF_T_NORMAL		0x0000
-#define	BPF_T_FAST		0x0100
-#define	BPF_T_MONOTONIC		0x0200
-#define	BPF_T_MONOTONIC_FAST	(BPF_T_FAST | BPF_T_MONOTONIC)
-#define	BPF_T_FLAG_MASK		0x0300
+// MONO flag (ie uptime clock)
+#define	BPF_T_MONOTONIC		0x0100
+#define	BPF_T_FLAG_MASK		0x0100
+// CLOCK flags (for universal sysclock)
+#define	BPF_T_SYSCLOCK		0x0000
+#define	BPF_T_FBCLOCK		0x1000
+#define	BPF_T_FFCLOCK		0x2000
+#define	BPF_T_CLOCK_MAX		0x2000
+#define	BPF_T_CLOCK_MASK	0x3000
+// Extract FORMAT, MONO, CLOCK  flag bits
 #define	BPF_T_FORMAT(t)		((t) & BPF_T_FORMAT_MASK)
 #define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
-#define	BPF_T_VALID(t)						\
-    ((t) == BPF_T_NONE || (BPF_T_FORMAT(t) != BPF_T_NONE &&	\
-    ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FLAG_MASK)) == 0))
+#define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
+#define	BPF_T_VALID(t)		\
+    ((t) == BPF_T_NONE || (t) == BPF_T_FFCOUNTER || \
+    (BPF_T_FORMAT(t) <= BPF_T_BINTIME && BPF_T_CLOCK(t) <= BPF_T_CLOCK_MAX && \
+    ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0))
 
-#define	BPF_T_MICROTIME_FAST		(BPF_T_MICROTIME | BPF_T_FAST)
-#define	BPF_T_NANOTIME_FAST		(BPF_T_NANOTIME | BPF_T_FAST)
-#define	BPF_T_BINTIME_FAST		(BPF_T_BINTIME | BPF_T_FAST)
 #define	BPF_T_MICROTIME_MONOTONIC	(BPF_T_MICROTIME | BPF_T_MONOTONIC)
 #define	BPF_T_NANOTIME_MONOTONIC	(BPF_T_NANOTIME | BPF_T_MONOTONIC)
 #define	BPF_T_BINTIME_MONOTONIC		(BPF_T_BINTIME | BPF_T_MONOTONIC)
-#define	BPF_T_MICROTIME_MONOTONIC_FAST	(BPF_T_MICROTIME | BPF_T_MONOTONIC_FAST)
-#define	BPF_T_NANOTIME_MONOTONIC_FAST	(BPF_T_NANOTIME | BPF_T_MONOTONIC_FAST)
-#define	BPF_T_BINTIME_MONOTONIC_FAST	(BPF_T_BINTIME | BPF_T_MONOTONIC_FAST)
+
+#define	BPF_T_FBCLOCK_MICROTIME_MONOTONIC	\
+    (BPF_T_MICROTIME_MONOTONIC | BPF_T_FBCLOCK)
+#define	BPF_T_FBCLOCK_NANOTIME_MONOTONIC	\
+    (BPF_T_NANOTIME_MONOTONIC | BPF_T_FBCLOCK)
+#define	BPF_T_FBCLOCK_BINTIME_MONOTONIC		\
+    (BPF_T_BINTIME_MONOTONIC | BPF_T_FBCLOCK)
+
+#define	BPF_T_FFCLOCK_MICROTIME_MONOTONIC	\
+    (BPF_T_MICROTIME_MONOTONIC | BPF_T_FFCLOCK)
+#define	BPF_T_FFCLOCK_NANOTIME_MONOTONIC	\
+    (BPF_T_NANOTIME_MONOTONIC | BPF_T_FFCLOCK)
+#define	BPF_T_FFCLOCK_BINTIME_MONOTONIC		\
+    (BPF_T_BINTIME_MONOTONIC | BPF_T_FFCLOCK)
 
 /*
  * Structure prepended to each packet.
@@ -195,6 +219,7 @@ struct bpf_ts {
 };
 struct bpf_xhdr {
 	struct bpf_ts	bh_tstamp;	/* time stamp */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 	bpf_u_int32	bh_caplen;	/* length of captured portion */
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
@@ -203,6 +228,7 @@ struct bpf_xhdr {
 /* Obsolete */
 struct bpf_hdr {
 	struct timeval	bh_tstamp;	/* time stamp */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 	bpf_u_int32	bh_caplen;	/* length of captured portion */
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
@@ -211,6 +237,13 @@ struct bpf_hdr {
 #ifdef _KERNEL
 #define	MTAG_BPF		0x627066
 #define	MTAG_BPF_TIMESTAMP	0
+#endif
+
+#ifdef FFCLOCK
+/*
+ * Feed-forward counter accessor.
+ */
+#define	BP
 #endif
 
 /*

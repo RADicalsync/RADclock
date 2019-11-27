@@ -2,8 +2,8 @@
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
  *
- * This software was developed by Julien Ridoux at the University of Melbourne
- * under sponsorship from the FreeBSD Foundation.
+ * This software was developed by Julien Ridoux and Darryl Veitch at the 
+ * University of Melbourne under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +26,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD: releng/11.2/sys/sys/timeffc.h 331722 2018-03-29 02:50:57Z eadler $
+ * $FreeBSD$
  */
 
 #ifndef _SYS_TIMEFF_H_
@@ -40,17 +40,26 @@
  * timecounter period and offset estimate passed by the synchronization daemon.
  * Provides time of last daemon update, clock status and bound on error.
  */
-struct ffclock_estimate {
-	struct bintime	update_time;	/* Time of last estimates update. */
+struct ffclock_estimate
+{
+	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast). */
 	ffcounter	update_ffcount;	/* Counter value at last update. */
-	ffcounter	leapsec_next;	/* Counter value of next leap second. */
-	uint64_t	period;		/* Estimate of counter period. */
-	uint32_t	errb_abs;	/* Bound on absolute clock error [ns]. */
-	uint32_t	errb_rate;	/* Bound on counter rate error [ps/s]. */
-	uint32_t	status;		/* Clock status. */
-	int16_t		leapsec_total;	/* All leap seconds seen so far. */
-	int8_t		leapsec;	/* Next leap second (in {-1,0,1}). */
+	ffcounter	next_expected;		/* Estimated time of next update [counter] */
+	ffcounter	leapsec_expected;	/* Estimated time of next leap second [counter]. */
+	uint64_t	period;					/* Estimate of current counter period  [2^-64 s] */
+	uint32_t	errb_abs;				/* Bound on absolute clock error [ns]. */
+	uint32_t	errb_rate;				/* Bound on relative counter period error [ps/s] */
+	uint32_t	status;					/* Clock status. */
+	int16_t		leapsec_total;		/* Sum of leap seconds seen since clock start. */
+	int8_t		leapsec_next;		/* Next leap second (in {-1,0,1}). */
 };
+
+/* Constants to hold errors and error rates in 64bit binary fraction fields */
+#define	MS_IN_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
+#define	MUS_IN_BINFRAC	(uint64_t)18446744073709ULL		// floor(2^64/1e6)
+#define	NS_IN_BINFRAC	(uint64_t)18446744073ULL			// floor(2^64/1e9)
+#define	PS_IN_BINFRAC	(uint64_t)18446744ULL				// floor(2^64/1e12)
+
 
 #if __BSD_VISIBLE
 #ifdef _KERNEL

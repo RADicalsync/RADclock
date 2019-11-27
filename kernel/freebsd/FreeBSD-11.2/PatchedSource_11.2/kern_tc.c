@@ -9,8 +9,8 @@
  * Copyright (c) 2011, 2015, 2016 The FreeBSD Foundation
  * All rights reserved.
  *
- * Portions of this software were developed by Julien Ridoux at the University
- * of Melbourne under sponsorship from the FreeBSD Foundation.
+ * Portions of this software were developed by Julien Ridoux and Darryl Veitch
+ * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
  *
  * Portions of this software were developed by Konstantin Belousov
  * under sponsorship from the FreeBSD Foundation.
@@ -544,6 +544,7 @@ struct fftimehands {
 	struct ffclock_estimate	cest;
 	struct bintime		tick_time;
 	struct bintime		tick_time_lerp;
+	struct bintime		tick_error;
 	ffcounter		tick_ffcount;
 	uint64_t		period_lerp;
 	volatile uint8_t	gen;
@@ -592,13 +593,14 @@ ffclock_reset_clock(struct timespec *ts)
 	timespec2bintime(ts, &ffclock_boottime);
 	timespec2bintime(ts, &(cest.update_time));
 	ffclock_read_counter(&cest.update_ffcount);
-	cest.leapsec_next = 0;
+	cest.next_expected = 0;
 	cest.period = ((1ULL << 63) / tc->tc_frequency) << 1;
 	cest.errb_abs = 0;
 	cest.errb_rate = 0;
 	cest.status = FFCLOCK_STA_UNSYNC;
+	cest.leapsec_expected = 0;
 	cest.leapsec_total = 0;
-	cest.leapsec = 0;
+	cest.leapsec_next = 0;
 
 	mtx_lock(&ffclock_mtx);
 	bcopy(&cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
@@ -654,7 +656,7 @@ ffclock_windup(unsigned int delta)
 	struct bintime bt, gap_lerp;
 	ffcounter ffdelta;
 	uint64_t frac;
-	unsigned int polling;
+	unsigned int secs_to_nextupdate;
 	uint8_t forward_jump, ogen;
 
 	/*
@@ -680,17 +682,31 @@ ffclock_windup(unsigned int delta)
 
 	ffth->tick_ffcount = fftimehands->tick_ffcount + ffdelta;
 
+	ffclock_convert_delta(ffdelta, cest->period, &bt);
+	bintime_mul(&bt, cest->errb_rate * PS_IN_BINFRAC);	// errb_rate in [ps/s]
+	bintime_add(&ffth->tick_error, &bt);
+
+
+	ffdelta = cest->next_expected - cest->update_ffcount;
+	ffclock_convert_delta(ffdelta, cest->period, &bt);
+	secs_to_nextupdate = bt.sec;
+
 	/*
-	 * Assess the status of the clock, if the last update is too old, it is
-	 * likely the synchronisation daemon is dead and the clock is free
-	 * running.
+	 * Assess the status of the clock. If the actual time since the last update 
+	 * is large enough for drift to become noticeable, and this is indeed the 
+	 * result of updates not coming in as expected, then stop trusting the
+	 * daemon (it is likely starved of valid stamps or is dead).
+	 * Override the daemon's last opinion of clock status and declare the FFclock
+	 * unsynchronized.
 	 */
 	if (ffclock_updated == 0) {
 		ffdelta = ffth->tick_ffcount - cest->update_ffcount;
-		ffclock_convert_delta(ffdelta, cest->period, &bt);
-		if (bt.sec > 2 * FFCLOCK_SKM_SCALE)
+		ffclock_convert_delta(ffdelta, cest->period, &bt); // time since update
+		//if (bt.sec > 2 * FFCLOCK_SKM_SCALE)
+		if (bt.sec > 3 * FFCLOCK_SKM_SCALE && bt.sec > 2 * secs_to_nextupdate)
 			ffclock_status |= FFCLOCK_STA_UNSYNC;
 	}
+
 
 	/*
 	 * If available, grab updated clock estimates and make them current.
@@ -707,6 +723,12 @@ ffclock_windup(unsigned int delta)
 		ffth->tick_time = cest->update_time;
 		ffclock_convert_delta(ffdelta, cest->period, &bt);
 		bintime_add(&ffth->tick_time, &bt);
+
+		/* Update estimate of clock error for this tick. */
+		ffclock_convert_delta(ffdelta, cest->period, &bt);
+		bintime_mul(&bt, cest->errb_rate * PS_IN_BINFRAC);	// errb_rate in [ps/s]
+		bintime_addx(&bt, cest->errb_abs * NS_IN_BINFRAC);	// errb_abs in [ns]
+		ffth->tick_error = bt;
 
 		/* ffclock_reset sets ffclock_updated to INT8_MAX */
 		if (ffclock_updated == INT8_MAX)
@@ -756,13 +778,17 @@ ffclock_windup(unsigned int delta)
 		 * (5ms/s).
 		 */
 		if (bintime_isset(&gap_lerp)) {
-			ffdelta = cest->update_ffcount;
-			ffdelta -= fftimehands->cest.update_ffcount;
-			ffclock_convert_delta(ffdelta, cest->period, &bt);
-			polling = bt.sec;
+			//ffdelta = cest->update_ffcount;
+			//ffdelta -= fftimehands->cest.update_ffcount;
+			//ffdelta = cest->next_expected - cest->update_ffcount;
+			//ffclock_convert_delta(ffdelta, cest->period, &bt);
+			//polling = bt.sec;
+			//secs_to_nextupdate = bt.sec;
+			
 			bt.sec = 0;
-			bt.frac = 5000000 * (uint64_t)18446744073LL;
-			bintime_mul(&bt, polling);
+			//bt.frac = 5000000 * (uint64_t)18446744073LL;
+			bt.frac = 5000000 * NS_IN_BINFRAC;
+			bintime_mul(&bt, secs_to_nextupdate);
 			if (bintime_cmp(&gap_lerp, &bt, >))
 				gap_lerp = bt;
 
@@ -1071,7 +1097,6 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 	struct bintime bt;
 	unsigned int delta, gen;
 #ifdef FFCLOCK
-	ffcounter ffcount;
 	struct fftimehands *ffth;
 	struct ffclock_info *ffi;
 	struct ffclock_estimate cest;
@@ -1107,29 +1132,30 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 	/* Record feedback clock status and error. */
 	clock_snap->fb_info.status = time_status;
 	/* XXX: Very crude estimate of feedback clock error. */
-	bt.sec = time_esterror / 1000000;
-	bt.frac = ((time_esterror - bt.sec) * 1000000) *
-	    (uint64_t)18446744073709ULL;
+	bt.sec = time_esterror / 1000000;	// time_esterror in mus
+	//bt.frac = ((time_esterror - bt.sec) * 1000000)*(uint64_t)18446744073709ULL;
+	bt.frac = (time_esterror - bt.sec * 1000000) * MUS_IN_BINFRAC;  // check
 	clock_snap->fb_info.error = bt;
 
 #ifdef FFCLOCK
 	if (!fast)
 		clock_snap->ffcount += delta;
 
-	/* Record feed-forward clock leap second adjustment. */
+	/* Precalculate total leap second adjustment appropriate to this ffcount.
+	 * Includes total leaps so far and impending leap ffcount may have surpassed.
+	 */
 	ffi->leapsec_adjustment = cest.leapsec_total;
-	if (clock_snap->ffcount > cest.leapsec_next)
-		ffi->leapsec_adjustment -= cest.leapsec;
+	if (cest.leapsec_expected != 0 && clock_snap->ffcount > cest.leapsec_expected)
+		ffi->leapsec_adjustment += cest.leapsec_next;
 
 	/* Record feed-forward clock status and error. */
 	clock_snap->ff_info.status = cest.status;
-	ffcount = clock_snap->ffcount - cest.update_ffcount;
-	ffclock_convert_delta(ffcount, cest.period, &bt);
-	/* 18446744073709 = int(2^64/1e12), err_bound_rate in [ps/s]. */
-	bintime_mul(&bt, cest.errb_rate * (uint64_t)18446744073709ULL);
-	/* 18446744073 = int(2^64 / 1e9), since err_abs in [ns]. */
-	bintime_addx(&bt, cest.errb_abs * (uint64_t)18446744073ULL);
-	clock_snap->ff_info.error = bt;
+	clock_snap->ff_info.error = ffth->tick_error;
+	if (!fast) {
+		ffclock_convert_delta(delta, cest.period, &bt);
+		bintime_mul(&bt, cest.errb_rate * PS_IN_BINFRAC);	// errb_rate in [ps/s]
+		bintime_add(&clock_snap->ff_info.error, &bt);
+	}
 #endif
 }
 
