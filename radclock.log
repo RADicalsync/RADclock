@@ -1,0 +1,57 @@
+-RADclock Init-: Info:      RADclock - configuration summary
+-RADclock Init-: Info:      radclock version     : v0.4.x-298-g2726181
+-RADclock Init-: Info:      Configuration file   : radclock.conf
+-RADclock Init-: Info:      Log file             : 
+-RADclock Init-: Info:      Verbose level        : normal
+-RADclock Init-: Info:      Client sync          : ntp
+-RADclock Init-: Info:      Server IPC           : on
+-RADclock Init-: Info:      Server NTP           : on
+-RADclock Init-: Info:      Server VM_UDP        : off
+-RADclock Init-: Info:      Server XEN           : off
+-RADclock Init-: Info:      Server VMWARE        : off
+-RADclock Init-: Info:      Upstream NTP port    : 123
+-RADclock Init-: Info:      Downstream NTP port  : 123
+-RADclock Init-: Info:      Adjust system clock  : on
+-RADclock Init-: Info:      Polling period       : 16
+-RADclock Init-: Info:      TSLIMIT              : 0.000015000
+-RADclock Init-: Info:      SKM_SCALE            : 1024.000000000
+-RADclock Init-: Info:      RateErrBound         : 0.000000500
+-RADclock Init-: Info:      BestSKMrate          : 0.000000200
+-RADclock Init-: Info:      offset_ratio         : 6
+-RADclock Init-: Info:      plocal_quality       : 0.000000800
+-RADclock Init-: Info:      Initial phat         : 1e-09
+-RADclock Init-: Info:      Host asymmetry       : 0.000000
+-RADclock Init-: Info:      Network asymmetry    : 0.000000
+-RADclock Init-: Info:      Host name            : 
+-RADclock Init-: Info:      Time server          : 
+-RADclock Init-: Info:      Interface            : 
+-RADclock Init-: Info:      pcap sync input      : 
+-RADclock Init-: Info:      ascii sync input     : 
+-RADclock Init-: Info:      pcap sync output     : 
+-RADclock Init-: Info:      ascii sync output    : 
+-RADclock Init-: Info:      ascii clock output   : 
+-RADclock Init-: Info:      Feed-Forward kernel detected (version: 3)
+-RADclock Init-: Info:      Timecounter used is HPET
+-RADclock Init-: Info:      Initialising radclock_get_vcounter with syscall.
+-RADclock Init-: Info:      Kernel clock support initialised
+Mar 05 11:54:01: Info:      IPC Shared Memory exists with 3 processes attached
+Mar 05 11:54:01: Info:      IPC Shared Memory ready
+Mar 05 11:54:01: Info:      Creating live input source
+Mar 05 11:54:01: Info:      Attempt to discover hostname
+Mar 05 11:54:01: Info:      Found hostname platypus
+Mar 05 11:54:01: Info:      Found address 10.0.3.15
+Mar 05 11:54:01: Info:      Matched IP address 10.0.3.15 to interface em0
+Mar 05 11:54:01: Info:      Using host name platypus and address 10.0.3.15
+Mar 05 11:54:01: Info:      Opening device em0
+Mar 05 11:54:01: Warning:   No NTP server specified, the BPF filter is not tight enough !!!
+Mar 05 11:54:01: Info:      Packet filter: (src host 10.0.3.15 and dst port 123 ) or ( dst host 10.0.3.15 and src port 123)
+Mar 05 11:54:01: Info:      Reading from live interface em0, linktype: EN10MB
+Mar 05 11:54:01: ERROR:     PCAP capture format is MICROTIME
+Mar 05 11:54:01: ERROR:     Capture clock is SYSCLOCK
+Mar 05 11:54:01: Info:      Capture mode is SYSCLOCK
+Mar 05 11:54:01: ERROR:     No time server specified on command line or configuration file, attempting suicide.
+Mar 05 11:54:01: Info:      0 NTP packets captured
+Mar 05 11:54:01: Info:      0 missed NTP packets
+Mar 05 11:54:01: Info:      0 valid timestamp tuples extracted
+Mar 05 11:54:01: Info:      Last estimate of the clock source period: 6.984181121e-08
+Mar 05 11:54:01: Info:      RADclock stopped

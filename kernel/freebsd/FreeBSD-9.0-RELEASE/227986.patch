@@ -1,0 +1,41 @@
+------------------------------------------------------------------------
+r227986 | lstewart | 2011-11-26 12:44:37 +1100 (Sat, 26 Nov 2011) | 6 lines
+
+Export the "ffclock" feature for kernels compiled with feed-forward clock
+support.
+
+Suggested by:	netchild
+Reviewed by:	netchild
+
+------------------------------------------------------------------------
+---
+ sys/kern/kern_ffclock.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+Index: 9.0.0/sys/kern/kern_ffclock.c
+===================================================================
+--- 9.0.0.orig/sys/kern/kern_ffclock.c	2012-03-15 02:47:31.000000000 +1100
++++ 9.0.0/sys/kern/kern_ffclock.c	2012-03-15 02:47:33.000000000 +1100
+@@ -42,20 +42,22 @@ __FBSDID("$FreeBSD$");
+ #include <sys/proc.h>
+ #include <sys/sbuf.h>
+ #include <sys/sysent.h>
+ #include <sys/sysproto.h>
+ #include <sys/sysctl.h>
+ #include <sys/systm.h>
+ #include <sys/timeffc.h>
+ 
+ #ifdef FFCLOCK
+ 
++FEATURE(ffclock, "Feed-forward clock support");
++
+ extern struct ffclock_estimate ffclock_estimate;
+ extern struct bintime ffclock_boottime;
+ extern int8_t ffclock_updated;
+ extern struct mtx ffclock_mtx;
+ 
+ /*
+  * Feed-forward clock absolute time. This should be the preferred way to read
+  * the feed-forward clock for "wall-clock" type time. The flags allow to compose
+  * various flavours of absolute time (e.g. with or without leap seconds taken
+  * into account). If valid pointers are provided, the ffcounter value and an

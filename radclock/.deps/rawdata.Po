@@ -1,0 +1,126 @@
+rawdata.o rawdata.o: rawdata.c ../config.h /usr/include/arpa/inet.h \
+  /usr/include/sys/cdefs.h /usr/include/sys/_types.h \
+  /usr/include/machine/_types.h /usr/include/machine/endian.h \
+  /usr/include/assert.h /usr/include/errno.h /usr/include/pthread.h \
+  /usr/include/sys/_pthreadtypes.h /usr/include/machine/_limits.h \
+  /usr/include/sys/_sigset.h /usr/include/sched.h /usr/include/time.h \
+  /usr/include/sys/_null.h /usr/include/sys/timespec.h \
+  /usr/include/sys/_timespec.h /usr/include/stdlib.h \
+  /usr/include/string.h /usr/include/strings.h /usr/include/syslog.h \
+  /usr/include/signal.h /usr/include/sys/signal.h \
+  /usr/include/machine/signal.h /usr/include/machine/trap.h \
+  /usr/include/unistd.h /usr/include/sys/types.h \
+  /usr/include/sys/_stdint.h /usr/include/sys/select.h \
+  /usr/include/sys/_timeval.h /usr/include/sys/unistd.h \
+  ../libradclock/radclock.h /usr/include/sys/time.h /usr/include/stdint.h \
+  /usr/include/machine/_stdint.h /usr/include/pcap.h \
+  /usr/include/pcap/pcap.h /usr/include/net/bpf.h \
+  /usr/include/sys/_ffcounter.h /usr/include/stdio.h \
+  ../libradclock/radclock-private.h /usr/include/netinet/in.h \
+  /usr/include/sys/_sockaddr_storage.h /usr/include/netinet6/in6.h \
+  radclock_daemon.h sync_history.h sync_algo.h config_mgr.h \
+  create_stamp.h verbose.h rawdata.h jdebug.h
+
+../config.h:
+
+/usr/include/arpa/inet.h:
+
+/usr/include/sys/cdefs.h:
+
+/usr/include/sys/_types.h:
+
+/usr/include/machine/_types.h:
+
+/usr/include/machine/endian.h:
+
+/usr/include/assert.h:
+
+/usr/include/errno.h:
+
+/usr/include/pthread.h:
+
+/usr/include/sys/_pthreadtypes.h:
+
+/usr/include/machine/_limits.h:
+
+/usr/include/sys/_sigset.h:
+
+/usr/include/sched.h:
+
+/usr/include/time.h:
+
+/usr/include/sys/_null.h:
+
+/usr/include/sys/timespec.h:
+
+/usr/include/sys/_timespec.h:
+
+/usr/include/stdlib.h:
+
+/usr/include/string.h:
+
+/usr/include/strings.h:
+
+/usr/include/syslog.h:
+
+/usr/include/signal.h:
+
+/usr/include/sys/signal.h:
+
+/usr/include/machine/signal.h:
+
+/usr/include/machine/trap.h:
+
+/usr/include/unistd.h:
+
+/usr/include/sys/types.h:
+
+/usr/include/sys/_stdint.h:
+
+/usr/include/sys/select.h:
+
+/usr/include/sys/_timeval.h:
+
+/usr/include/sys/unistd.h:
+
+../libradclock/radclock.h:
+
+/usr/include/sys/time.h:
+
+/usr/include/stdint.h:
+
+/usr/include/machine/_stdint.h:
+
+/usr/include/pcap.h:
+
+/usr/include/pcap/pcap.h:
+
+/usr/include/net/bpf.h:
+
+/usr/include/sys/_ffcounter.h:
+
+/usr/include/stdio.h:
+
+../libradclock/radclock-private.h:
+
+/usr/include/netinet/in.h:
+
+/usr/include/sys/_sockaddr_storage.h:
+
+/usr/include/netinet6/in6.h:
+
+radclock_daemon.h:
+
+sync_history.h:
+
+sync_algo.h:
+
+config_mgr.h:
+
+create_stamp.h:
+
+verbose.h:
+
+rawdata.h:
+
+jdebug.h:

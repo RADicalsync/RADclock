@@ -1,0 +1,129 @@
+pthread_rawdata.o pthread_rawdata.o: pthread_rawdata.c \
+  /usr/include/arpa/inet.h /usr/include/sys/cdefs.h \
+  /usr/include/sys/_types.h /usr/include/machine/_types.h \
+  /usr/include/machine/endian.h /usr/include/string.h \
+  /usr/include/sys/_null.h /usr/include/strings.h /usr/include/math.h \
+  /usr/include/machine/_limits.h /usr/include/syslog.h \
+  /usr/include/time.h /usr/include/sys/timespec.h \
+  /usr/include/sys/_timespec.h ../config.h ../libradclock/radclock.h \
+  /usr/include/sys/time.h /usr/include/sys/_timeval.h \
+  /usr/include/sys/types.h /usr/include/sys/_pthreadtypes.h \
+  /usr/include/sys/_stdint.h /usr/include/sys/select.h \
+  /usr/include/sys/_sigset.h /usr/include/stdint.h \
+  /usr/include/machine/_stdint.h /usr/include/pcap.h \
+  /usr/include/pcap/pcap.h /usr/include/net/bpf.h \
+  /usr/include/sys/_ffcounter.h /usr/include/stdio.h \
+  ../libradclock/radclock-private.h /usr/include/netinet/in.h \
+  /usr/include/sys/_sockaddr_storage.h /usr/include/netinet6/in6.h \
+  ../libradclock/kclock.h ../libradclock/../config.h \
+  /usr/include/sys/timeffc.h radclock_daemon.h sync_history.h sync_algo.h \
+  fixedpoint.h misc.h verbose.h proto_ntp.h stampinput.h stampoutput.h \
+  config_mgr.h pthread_mgr.h jdebug.h /usr/include/sys/sysctl.h \
+  /usr/include/sys/queue.h /usr/include/sys/timex.h \
+  /usr/include/sys/syscall.h
+
+/usr/include/arpa/inet.h:
+
+/usr/include/sys/cdefs.h:
+
+/usr/include/sys/_types.h:
+
+/usr/include/machine/_types.h:
+
+/usr/include/machine/endian.h:
+
+/usr/include/string.h:
+
+/usr/include/sys/_null.h:
+
+/usr/include/strings.h:
+
+/usr/include/math.h:
+
+/usr/include/machine/_limits.h:
+
+/usr/include/syslog.h:
+
+/usr/include/time.h:
+
+/usr/include/sys/timespec.h:
+
+/usr/include/sys/_timespec.h:
+
+../config.h:
+
+../libradclock/radclock.h:
+
+/usr/include/sys/time.h:
+
+/usr/include/sys/_timeval.h:
+
+/usr/include/sys/types.h:
+
+/usr/include/sys/_pthreadtypes.h:
+
+/usr/include/sys/_stdint.h:
+
+/usr/include/sys/select.h:
+
+/usr/include/sys/_sigset.h:
+
+/usr/include/stdint.h:
+
+/usr/include/machine/_stdint.h:
+
+/usr/include/pcap.h:
+
+/usr/include/pcap/pcap.h:
+
+/usr/include/net/bpf.h:
+
+/usr/include/sys/_ffcounter.h:
+
+/usr/include/stdio.h:
+
+../libradclock/radclock-private.h:
+
+/usr/include/netinet/in.h:
+
+/usr/include/sys/_sockaddr_storage.h:
+
+/usr/include/netinet6/in6.h:
+
+../libradclock/kclock.h:
+
+../libradclock/../config.h:
+
+/usr/include/sys/timeffc.h:
+
+radclock_daemon.h:
+
+sync_history.h:
+
+sync_algo.h:
+
+fixedpoint.h:
+
+misc.h:
+
+verbose.h:
+
+proto_ntp.h:
+
+stampinput.h:
+
+stampoutput.h:
+
+config_mgr.h:
+
+pthread_mgr.h:
+
+jdebug.h:
+
+/usr/include/sys/sysctl.h:
+
+/usr/include/sys/queue.h:
+
+/usr/include/sys/timex.h:
+
+/usr/include/sys/syscall.h:

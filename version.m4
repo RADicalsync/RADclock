@@ -1,0 +1,1 @@
+m4_define([RADCLOCK_VERSION_NUMBER], [v0.4.x-298-g2726181])
