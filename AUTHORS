@@ -4,18 +4,23 @@
 # Ordered in somewhat chronological order
 
 
+Conception and Algorithm design
+
+Darryl Veitch         <darryl.veitch@uts.edu.au>
+
 
 Core contributors to the RADclock software:
 
-Julien Ridoux         <julien@synclab.org>
-Matt Davis            <matt@synclab.org>
-Timothy Broomhead     <t.broomhead@ugrad.unimelb.edu.au>
-Benjamin Villain      <benjamin.villain@gmail.com>
-
+Darryl Veitch         <darryl.veitch@uts.edu.au>
 
 
 Past contributors to the RADclock software:
 
+Yi Cao                <yc833@uowmail.edu.au>
+Julien Ridoux         <julien@synclab.org>
+Matt Davis            <matt@synclab.org>
+Timothy Broomhead     <t.broomhead@ugrad.unimelb.edu.au>
+Benjamin Villain      <benjamin.villain@gmail.com>
 Laurence Cremean      <l.cremean@ugrad.unimelb.edu.au>
 Cameron Chambers      <camchambers@gmail.com>
 Thomas Young          <tfyoung@gmail.com>
@@ -27,6 +32,5 @@ Michael Dwyer
 
 Contributors to ideas and design:
 
-Darryl Veitch         <dveitch@unimelb.edu.au>
 Bartek Wydrowski
 Tao Ye

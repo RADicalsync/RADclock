@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2006-2011 Julien Ridoux <julien@synclab.org>
+ * Copyright (C) 2006-2011 Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  *
  * This file is part of the radclock program.
  * 
@@ -54,7 +55,7 @@ read_raddata(struct radclock_data *data)
 	fprintf(stdout, "  ca_err: %.6g\n", data->ca_err);
 	fprintf(stdout, "  status: %u\n", data->status);
 	fprintf(stdout, "  last_changed: %llu\n", (long long unsigned)data->last_changed);
-	fprintf(stdout, "  valid_till: %llu\n", (long long unsigned)data->valid_till);
+	//fprintf(stdout, "  valid_till: %llu\n", (long long unsigned)data->valid_till);
 
 	return (0);
 }
@@ -89,7 +90,8 @@ int
 main(int argc, char *argv[])
 {
 	struct radclock *clock;
-	struct timeval tv;
+	//struct timeval tv;
+	long double currtime;
 	int err;
 
 	clock = radclock_create();
@@ -97,10 +99,9 @@ main(int argc, char *argv[])
 
 	read_shm(clock);
 
-	err = radclock_gettimeofday(clock, &tv);
-	fprintf(stdout, "UNIX time: %d.%d with error code: %d\n",
-			tv.tv_sec, tv.tv_usec, err);
-
+	err = radclock_gettime(clock, &currtime);
+	//fprintf(stdout, "UNIX time: %lld.%ld with error code: %d\n",tv.tv_sec, tv.tv_usec, err);
+	fprintf(stdout, "UNIX time: %Lf with error code: %d\n", currtime, err);
 	radclock_destroy(clock);
 
 	return (0);

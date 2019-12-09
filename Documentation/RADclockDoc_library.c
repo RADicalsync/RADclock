@@ -1,5 +1,9 @@
-RADclock V0.4 documentation.
-Written by Darryl Veitch, 2017/18
+/*
+* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+*/
+
+RADclock documentation.
+Written by Darryl Veitch
 ================================
 
 Convention to point within code:

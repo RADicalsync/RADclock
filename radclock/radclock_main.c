@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux <julien@synclab.org>
+ * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -123,7 +124,7 @@ static void usage(void) {
 		"\t-D <port_number> NTP downstream port\n"
 		"\t-v -vv verbose\n"
 		"\t-V print version\n"
-		"\t-h this help mesage\n"
+		"\t-h this help message\n"
 		);
 	exit(EXIT_SUCCESS);
 }
@@ -1107,6 +1108,7 @@ main(int argc, char *argv[])
 			break;
 		case 'V':
 			fprintf(stdout, "%s version %s\n", PACKAGE_NAME, PACKAGE_VERSION);
+			break;
 		case 'h':
 		case '?':
 		default:

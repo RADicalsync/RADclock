@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2006-2012, Julien Ridoux <julien@synclab.org>
+# Copyright (C) 2006-2012, Julien Ridoux
+# Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -24,6 +25,8 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+# Tell aclocal where local autoconf macros are  (following advice from manual)
+ACLOCAL_AMFLAGS = -I m4
 
 DIST_SUBDIRS = libradclock radclock examples man
 
@@ -53,15 +56,15 @@ cscope-clean:
 
 if MK_UPSTREAM
 dist-hook:
-	@echo "Copying the python module and wall clock into the tarball"
-	cp $(srcdir)/python-gui/tscclock_wallclock.py $(distdir)/python-module/
-	cp -R $(srcdir)/python-gui/img $(distdir)/python-module/
+#	@echo "Copying the python module and wall clock into the tarball"
+#	cp $(srcdir)/python-gui/tscclock_wallclock.py $(distdir)/python-module/
+#	cp -R $(srcdir)/python-gui/img $(distdir)/python-module/
 	@echo "Copying kernel patches into the tarball"
 	mkdir $(distdir)/kernel-patches
 	mkdir $(distdir)/kernel-patches/freebsd
 	for d in `ls $(srcdir)/kernel/freebsd`; do \
 		mkdir $(distdir)/kernel-patches/freebsd/$$d; \
-		cp $(srcdir)/kernel/freebsd/$$d/* $(distdir)/kernel-patches/freebsd/$$d/ ; \
+		cp -r $(srcdir)/kernel/freebsd/$$d/* $(distdir)/kernel-patches/freebsd/$$d/ ; \
 	done
 	mkdir $(distdir)/kernel-patches/linux
 	for d in `ls $(srcdir)/kernel/linux`; do \

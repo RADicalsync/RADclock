@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2006-2011 Julien Ridoux <julien@synclab.org>
+ * Copyright (C) 2006-2011 Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  *
  * This file is part of the radclock program.
  * 
@@ -39,7 +40,7 @@ main(int argc, char **argv)
 {
 	struct radclock *clock;
 	struct bpf_program fp;	/* The compiled filter expression */
-	radclock_tsmode_t tsmode, tsmode2;
+	pktcap_tsmode_t tsmode, tsmode2;
 	pcap_t *phandle;
 	char fltstr[120];
 	char errbuf[PCAP_ERRBUF_SIZE];	/* Error string */
@@ -81,35 +82,35 @@ main(int argc, char **argv)
 		return (1);
 	}
 
-	tsmode = RADCLOCK_TSMODE_SYSCLOCK;
-	err = radclock_set_tsmode(clock, phandle, tsmode);
+	tsmode = PKTCAP_TSMODE_SYSCLOCK;
+	err = pktcap_set_tsmode(clock, phandle, tsmode);
 	if (err == -1 ) {
-		fprintf(stderr, "FAILED: radclock_set_tsmode SYSCLOCK\n");
+		fprintf(stderr, "FAILED: pktcap_set_tsmode SYSCLOCK\n");
 		return (1);
 	} else
-		fprintf(stderr, "SUCCESS: radclock_set_tsmode SYSCLOCK\n");
+		fprintf(stderr, "SUCCESS: pktcap_set_tsmode SYSCLOCK\n");
 
 
 
-	tsmode = RADCLOCK_TSMODE_RADCLOCK;
-	err = radclock_set_tsmode(clock, phandle, tsmode);
+	tsmode = PKTCAP_TSMODE_RADCLOCK;
+	err = pktcap_set_tsmode(clock, phandle, tsmode);
 	if (err == -1 ) {
-		fprintf(stderr, "FAILED: radclock_set_tsmode RADCLOCK\n");
+		fprintf(stderr, "FAILED: pktcap_set_tsmode RADCLOCK\n");
 		return (1);
 	}
-		fprintf(stderr, "SUCCESS: radclock_set_tsmode RADCLOCK\n");
+		fprintf(stderr, "SUCCESS: pktcap_set_tsmode RADCLOCK\n");
 
-	tsmode = RADCLOCK_TSMODE_FAIRCOMPARE;
-	err = radclock_set_tsmode(clock, phandle, tsmode);
+	tsmode = PKTCAP_TSMODE_FFNATIVECLOCK;
+	err = pktcap_set_tsmode(clock, phandle, tsmode);
 	if (err == -1 ) {
-		fprintf(stderr, "FAILED: radclock_set_tsmode FAIRCOMPARE\n");
+		fprintf(stderr, "FAILED: pktcap_set_tsmode FFNATIVECLOCK\n");
 		return (1);
 	}
-		fprintf(stderr, "SUCCESS: radclock_set_tsmode FAIRCOMPARE\n");
+		fprintf(stderr, "SUCCESS: pktcap_set_tsmode FFNATIVECLOCK\n");
 
-	err = radclock_get_tsmode(clock, phandle, &tsmode);
+	err = pktcap_get_tsmode(clock, phandle, &tsmode);
 	if (err == -1 ) {
-		fprintf(stderr, "radclock_get_tsmode failed\n");
+		fprintf(stderr, "pktcap_get_tsmode failed\n");
 		return (1);
 	}
 

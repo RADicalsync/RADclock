@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2006-2012 Julien Ridoux <julien@synclab.org>
+# Copyright (C) 2006-2012, Julien Ridoux
+# Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
 #
 # This file is part of the radclock program.
 #
@@ -24,7 +25,9 @@ if MK__FFCOUNTER_H
 noinst_PROGRAMS += radclock_pps
 endif
 
-INCLUDES = -I$(top_srcdir)/radclock -I$(top_srcdir)/libradclock
+
+#INCLUDES = -I$(top_srcdir)/radclock -I$(top_srcdir)/libradclock
+AM_CPPFLAGS = -I$(top_srcdir)/radclock -I$(top_srcdir)/libradclock
 
 radclock_pps_SOURCES = radclock_pps.c
 radclock_pps_LDADD = -lm @LIBRADCLOCK_LIBS@

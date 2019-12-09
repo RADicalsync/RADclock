@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 Darryl Veitch <dveitch@unimelb.edu.au>
+ * Copyright (C) 2006-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

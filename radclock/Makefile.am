@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2006-2012, Julien Ridoux <julien@synclab.org>
+# Copyright (C) 2006-2012, Julien Ridoux
+# Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
 # All rights reserved.
 #
 # Redistribution and use in source and binary forms, with or without
@@ -25,7 +26,7 @@
 # POSSIBILITY OF SUCH DAMAGE.
 
 
-INCLUDES = -I$(top_srcdir)/libradclock/ -I$(ADD_INCLS)
+AM_CPPFLAGS = -I$(top_srcdir)/libradclock/ -I$(ADD_INCLS)
 
 noinst_HEADERS = \
 		config_mgr.h \

@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2006-2011 Julien Ridoux <julien@synclab.org>
+ * Copyright (C) 2006-2011 Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  *
  * This file is part of the radclock program.
  *

@@ -1,6 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux <julien@synclab.org>
- * Copyright (C) 2004- Darryl Veitch <dveitch@unimelb.edu.au>
+ * Copyright (C) 2004-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2006-2012, Julien Ridoux
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without

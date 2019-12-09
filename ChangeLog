@@ -3,6 +3,12 @@
 ## 
 
 
+- Version 0.5.0
+    * Dec 2019
+    * New release
+    * Support for FreeBSD 11.2 and FF kernel version 3
+
+
 - Version 0.3.3
 	* April 2011
 	* Maintenance release

@@ -1,5 +1,9 @@
-RADclock V0.4 documentation.
-Written by Darryl Veitch, 2017/18
+/*
+* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+*/
+
+RADclock documentation.
+Written by Darryl Veitch
 ===============================
 
 Convention to point within code:
@@ -54,7 +58,7 @@ void config_init(struct radclock_config *conf)
 	/* Runnning defaults */
 	strcpy(conf->conffile, "");									// not in keys[]
 	strcpy(conf->logfile, "");										// not in keys[]
-	strcpy(conf->radclock_version, PACKAGE_VERSION);
+	strcpy(conf->radclock_version, PACKAGE_VERSION);		// defined in config.h via configure
 	conf->server_ipc				= DEFAULT_SERVER_IPC;
 	conf->synchro_type			= DEFAULT_SYNCHRO_TYPE;
 	conf->server_ntp				= DEFAULT_SERVER_NTP;

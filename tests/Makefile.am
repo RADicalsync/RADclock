@@ -1,5 +1,6 @@
 #
-# Copyright (C) 2006-2012 Julien Ridoux <julien@synclab.org>
+# Copyright (C) 2006-2012 Julien Ridoux
+# Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
 #
 # This file is part of the radclock program.
 #
@@ -18,7 +19,7 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 # 02110-1301, USA.
 
-INCLUDES = -I$(top_srcdir)/libradclock/ -I$(top_srcdir)/radclock/
+AM_CPPFLAGS = -I$(top_srcdir)/libradclock/ -I$(top_srcdir)/radclock/
 
 check_PROGRAMS = test_timestamping test_shared_memory
 
