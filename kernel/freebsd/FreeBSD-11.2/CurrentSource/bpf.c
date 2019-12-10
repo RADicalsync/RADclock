@@ -2176,12 +2176,13 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 						|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
 					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
 						d->bd_tstamp & BPF_T_FAST,
-						d->bd_tstamp & BPF_T_MONOTONIC, 0);
+						d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
 				else
 					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
 						d->bd_tstamp & BPF_T_FAST,
 						d->bd_tstamp & BPF_T_MONOTONIC,
-						BPF_T_CLOCK(d->bd_tstamp)!= BPF_T_FFNATIVECLOCK );
+						BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
+						BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK );
 			}	else
 				bzero(&bt, sizeof(bt));
 
@@ -2269,12 +2270,13 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 							|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
 						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
 							d->bd_tstamp & BPF_T_FAST,
-							d->bd_tstamp & BPF_T_MONOTONIC, 0);
+							d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
 					else
 						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
 							d->bd_tstamp & BPF_T_FAST,
 							d->bd_tstamp & BPF_T_MONOTONIC,
-							BPF_T_CLOCK(d->bd_tstamp)!= BPF_T_FFNATIVECLOCK );
+							BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
+							BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK );
 			} else
 				bzero(&bt, sizeof(bt));
 				
@@ -2283,7 +2285,7 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 #endif
 #ifdef FFCLOCK
 				{
-					printf(" ** in bpf_mtap **\n");
+					//printf(" ** in bpf_mtap **\n");
 					ffcounter ffcount = 0;
 					if (BPF_T_FFRAW(d->bd_tstamp) == BPF_T_FFC)
 						catchpacket(d, (u_char *)m, pktlen, slen,
@@ -2358,12 +2360,13 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 							|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
 						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
 							d->bd_tstamp & BPF_T_FAST,
-							d->bd_tstamp & BPF_T_MONOTONIC, 0);
+							d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
 					else
 						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
 							d->bd_tstamp & BPF_T_FAST,
 							d->bd_tstamp & BPF_T_MONOTONIC,
-							BPF_T_CLOCK(d->bd_tstamp)!= BPF_T_FFNATIVECLOCK );
+							BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
+							BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK );
 			} else
 				bzero(&bt, sizeof(bt));
 #ifdef MAC

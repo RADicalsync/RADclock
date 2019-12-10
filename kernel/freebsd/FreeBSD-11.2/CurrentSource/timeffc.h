@@ -133,6 +133,7 @@ struct fbclock_info {
 struct ffclock_info {
 	struct bintime		error;
 	struct bintime		tick_time;
+	struct bintime		tick_time_diff;
 	struct bintime		tick_time_lerp;
 	uint64_t		period;
 	uint64_t		period_lerp;
@@ -159,7 +160,7 @@ void sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast);
 
 /* Convert a timestamp from the selected system clock into bintime. */
 int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, int wantFast, int wantUptime, int fflerp);
+    int whichclock, int wantFast, int wantUptime, int wantLerp, int wantDiff);
 
 /* Resets feed-forward clock from RTC */
 void ffclock_setto_rtc(struct timespec *ts);

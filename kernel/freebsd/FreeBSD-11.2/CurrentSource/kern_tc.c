@@ -544,6 +544,7 @@ struct fftimehands {
 	struct ffclock_estimate	cest;
 	struct bintime		tick_time;
 	struct bintime		tick_time_lerp;
+	struct bintime		tick_time_diff;
 	struct bintime		tick_error;
 	ffcounter		tick_ffcount;
 	uint64_t		period_lerp;
@@ -674,6 +675,9 @@ printout_FFtick(struct fftimehands *ffth)
 	printf("   tick_time_lerp: %llu.%llu [bintime]\n",
 		(unsigned long long)ffth->tick_time_lerp.sec,
 		(unsigned long long)ffth->tick_time_lerp.frac);
+	printf("   tick_time_diff: %llu.%llu [bintime]\n",
+		(unsigned long long)ffth->tick_time_diff.sec,
+		(unsigned long long)ffth->tick_time_diff.frac);
 	printf("   tick_error: %llu.%llu [bintime]\n",
 		(unsigned long long)ffth->tick_error.sec,
 		(unsigned long long)ffth->tick_error.frac);
@@ -692,10 +696,12 @@ printout_FFtick(struct fftimehands *ffth)
 /*
  * Update the fftimehands. The updated tick state is based on the previous tick if
  * there has been no actionable update in the FFclock parameters during the current
- * tick (ffclock_updated <= 0), and both the native and monotonic FFclocks advance
- * linearly. Otherwise it is based off the updated parameters and
+ * tick (ffclock_updated <= 0), and each of the native, monotonic, and difference
+ * FFclocks advance linearly. Otherwise it is based off the updated parameters and
  * the time of the update. The native FFclock will then jump, the monotonic clock will
- * not (except under special conditions).  The linear interpolation parameters of the
+ * not (except under special conditions).  The diff clock will never
+ * jump, to ensure its intended use as a difference clock, used to measure
+ * time differences. The linear interpolation parameters of the
  * monotonic FFclock ({tick_time,period}_lerp) are recomputed for the new tick.
  *
  * The instant defining the start of the new tick is the  delta=tc_delta call
@@ -735,13 +741,15 @@ ffclock_windup(unsigned int delta)
 	 */
 	if (ffclock_updated <= 0) {
 		
-		/* Update native FFclock members {cest, tick_time, tick_error} */
+		/* Update native FFclock members {cest, tick_time{_diff}, tick_error} */
 		bcopy(&fftimehands->cest, cest, sizeof(struct ffclock_estimate));
-		ffth->tick_time   = fftimehands->tick_time;
+		ffth->tick_time		= fftimehands->tick_time;
+		ffth->tick_time_diff = fftimehands->tick_time_diff;
 		ffclock_convert_delta(ffdelta, cest->period, &bt);
 		bttest.sec = bt.sec;
 		bttest.frac = bt.frac;
-		bintime_add(&ffth->tick_time, &bt);						// bt not changed, reuse
+		bintime_add(&ffth->tick_time, &bt);					// bt not changed, reuse
+		bintime_add(&ffth->tick_time_diff, &bt);			// bt not changed, reuse
 		if (!bintime_cmp(&bt,&bttest,=)) {
 			printf(" %d\t ffwindup  %llu:  bt found to have changed! \n",
    					ccc, (long long unsigned)fftimehands->tick_ffcount);
@@ -806,6 +814,11 @@ ffclock_windup(unsigned int delta)
 		bintime_addx(&bt, cest->errb_abs * NS_IN_BINFRAC);	// errb_abs in [ns]
 		ffth->tick_error = bt;
 
+		/* Update native FF difference clock member {tick_time_diff} */
+		ffth->tick_time_diff = fftimehands->tick_time_diff;
+		ffclock_convert_delta((ffcounter)delta, cest->period, &bt);
+		bintime_add(&ffth->tick_time_diff, &bt);
+			
 		/* Update mono FFclock member tick_time_lerp, standard case.
 		 *   ffclock_updated by ffclock_setto_rtc :  re-initialize
 		 *   ffclock_updated by daemon :             ensure continuity across ticks
@@ -966,6 +979,7 @@ ffclock_change_tc(struct timehands *th)
 
 	ffth->tick_ffcount = fftimehands->tick_ffcount;
 	ffth->tick_time_lerp = fftimehands->tick_time_lerp;
+	ffth->tick_time_diff = fftimehands->tick_time_diff;
 	ffth->tick_time = fftimehands->tick_time;
 	ffth->period_lerp = cest->period;
 
@@ -1242,6 +1256,7 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 #ifdef FFCLOCK
 		ffth = fftimehands;
 		ffi->tick_time = ffth->tick_time_lerp;
+		ffi->tick_time_diff = ffth->tick_time_diff;
 		ffi->tick_time_lerp = ffth->tick_time_lerp;
 		ffi->period = ffth->cest.period;
 		ffi->period_lerp = ffth->period_lerp;
@@ -1287,12 +1302,12 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 
 /*
  * Convert a sysclock snapshot into a struct bintime based on the specified
- * clock source and flags.
- * Note:  Leap and Uptime flags should never be used together.
+ * clock paradigm, and flags.
+ * wantUptime and wantLerp superceed wantDiff if (erroneously) used together
  */
 int
 sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, int wantFast, int wantUptime, int wantFFlerp)
+    int whichclock, int wantFast, int wantUptime, int wantLerp, int wantDiff)
 {
 	struct bintime boottimebin_x;
 #ifdef FFCLOCK
@@ -1316,12 +1331,15 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 		break;
 #ifdef FFCLOCK
 	case SYSCLOCK_FFWD:
-		if (wantFFlerp) {
-			*bt = cs->ff_info.tick_time_lerp;
+		if (wantLerp) {	// Lerp supercedes Diff
 			period = cs->ff_info.period_lerp;
+			*bt = cs->ff_info.tick_time_lerp;
 		} else {
-			*bt = cs->ff_info.tick_time;
 			period = cs->ff_info.period;
+			if (wantDiff)
+				*bt = cs->ff_info.tick_time_diff;
+			else
+				*bt = cs->ff_info.tick_time;
 		}
 
 		/* If snapshot was created with !fast, delta will be >0. */
@@ -1330,12 +1348,13 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 			bintime_add(bt, &bt2);
 		}
 
-		/* Add appropriate constant to create Uptime or UTC flavor */
-		if (wantUptime) // Uptime
+		/* Add appropriate constant to create Uptime, UTC, or Diff FF clock */
+		if (wantUptime) // Uptime superceded Diff
 			bintime_sub(bt, &ffclock_boottime);
-		else				 // UTC
-			bt->sec -= cs->ff_info.leapsec_adjustment;
-
+		else
+			if (!wantDiff)				 // UTC
+				bt->sec -= cs->ff_info.leapsec_adjustment;
+			// else Diff
 		break;
 #endif
 	default:

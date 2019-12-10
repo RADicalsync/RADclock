@@ -354,6 +354,9 @@ int radclock_get_status(struct radclock *clock, unsigned int *status);
  *		  the kernel's monoFF clock
  *   PKTCAP_TSMODE_FFNATIVECLOCK:  libprocesses, who just want to be able to
  *      get RADclock timestamps for each pkt, but made already in the kernel
+ *   PKTCAP_TSMODE_DIFFCLOCK:  libprocesses measuring small time intervales such
+ *      as RTTs, who want to use the RADclock difference clock, but need to do so
+ *      via an absolute clock read.  This clock is allowed to drift to achieve this.
  *   PKTCAP_TSMODE_RADCLOCK:  if dont trust the kernel timestamp, prefer to
  *		  read RADclock (native abs clock) in userland, based off kernel raw ts.
  *      Also useful in KV=2 when have no choice but to create a ts in the daemon.
@@ -364,7 +367,8 @@ enum pktcap_tsmode {
 	PKTCAP_TSMODE_FBCLOCK = 2,			//                "                    FBclock
 	PKTCAP_TSMODE_FFCLOCK = 3,			//                "                    FFclock (mono)
 	PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
-	PKTCAP_TSMODE_RADCLOCK = 5,		//    "   , plus RADclock timestamp (userland)
+	PKTCAP_TSMODE_FFDIFFCLOCK = 5,	//                "                    FF difference clock
+	PKTCAP_TSMODE_RADCLOCK = 6,		//    "   , plus RADclock timestamp (userland)
 };
 
 

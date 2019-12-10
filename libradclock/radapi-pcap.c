@@ -72,6 +72,9 @@ pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode
 		case PKTCAP_TSMODE_FFNATIVECLOCK:
 			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_FFNATIVECLOCK");
 			break;
+		case PKTCAP_TSMODE_FFDIFFCLOCK:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_FFDIFFCLOCK");
+			break;
 		case PKTCAP_TSMODE_RADCLOCK:
 			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_RADCLOCK");
 			break;
@@ -118,8 +121,11 @@ pktcap_get_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t *mod
 	case PKTCAP_TSMODE_FFNATIVECLOCK:
 		logger(RADLOG_NOTICE, "Capture mode consistent with FFNATIVECLOCK");
 		break;
+	case PKTCAP_TSMODE_FFDIFFCLOCK:
+		logger(RADLOG_NOTICE, "Capture mode consistent with FFDIFFCLOCK");
+		break;
 	case PKTCAP_TSMODE_RADCLOCK:
-		logger(RADLOG_NOTICE, "Capture mode consistent with RADCLOCK");
+		logger(RADLOG_NOTICE, "Capture mode consistent with PKTCAP_TSMODE_RADCLOCK");
 		break;
 	default:
 		logger(RADLOG_ERR, "Capture mode inference failed!");

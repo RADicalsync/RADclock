@@ -185,8 +185,9 @@ enum bpf_direction {
 #define	BPF_T_SYSCLOCK		0x0000	// read current sysclock
 #define	BPF_T_FBCLOCK		0x1000   // read FB
 #define	BPF_T_FFCLOCK		0x2000   // read mono FF (standard reads are mono)
-#define	BPF_T_FFNATIVECLOCK	0x3000// read native FF
-#define	BPF_T_CLOCK_MASK	0x3000
+#define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
+#define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
+#define	BPF_T_CLOCK_MASK	0x7000
 
 // Extract FORMAT, FFRAW, FLAVOR, CLOCK  bits
 #define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
@@ -197,15 +198,16 @@ enum bpf_direction {
 // Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl
 // In KV3, all components are independent, and either always meaningful, or
 // not acted on if not meaningful (eg if !FFCLOCK, or value of CLOCK if requesting
-// BPF_T_NONE   Hence checks reduce to ensuring no bits in undefined positions.
+// BPF_T_NONE   Hence checks reduce to ensuring no bits in undefined positions,
 // and not ask for a FF clock that doesnt exist.
 #ifdef FFCLOCK
 #define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
-											  BPF_T_FLAVOR_MASK | BPF_T_CLOCK_MASK)) == 0 )
+											  BPF_T_FLAVOR_MASK | BPF_T_CLOCK_MASK)) == 0 \
+									&& BPF_T_CLOCK(t)<=BPF_T_FFDIFFCLOCK )
 #else
 #define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
 											  BPF_T_FLAVOR_MASK | BPF_T_CLOCK_MASK)) == 0 \
-									&& BPF_T_FORMAT(t)<=BPF_T_FBCLOCK )
+									&& BPF_T_CLOCK(t)<=BPF_T_FBCLOCK )
 #endif
 
 /*

@@ -120,8 +120,10 @@
 #define	BPF_T_MONOTONIC_FAST	0x0300	// UPTIME,  FAST
 #define	BPF_T_FLAVOR_MASK		0x0300
 #define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
+#define	BPF_T_FFDIFFCLOCK		0x4000	// read FF difference clock
 #define	BPF_T_FFRAW(t)			((t) & BPF_T_FFRAW_MASK)
 #define	BPF_T_FLAVOR(t)		((t) & BPF_T_FLAVOR_MASK)
+#define	BPF_T_CLOCK_MASK		0x7000	// shouldnt be needed..
 #endif
 
 
@@ -178,8 +180,8 @@ decode_bpf_tsflags_KV2(u_int bd_tstamp)
 static void
 decode_bpf_tsflags_KV3(u_int bd_tstamp)
 {
-		logger(RADLOG_NOTICE, "Decoding bpf timestamp type _T_ flags (bd_tstamp = %u (0x%04x))",
-				 bd_tstamp, bd_tstamp);
+		logger(RADLOG_NOTICE, "Decoding bpf timestamp type _T_ flags (bd_tstamp = 0x%04x)",
+				 bd_tstamp);
 				 
 	 	switch (BPF_T_FORMAT(bd_tstamp)) {
 		case BPF_T_MICROTIME:
@@ -229,6 +231,9 @@ decode_bpf_tsflags_KV3(u_int bd_tstamp)
 			break;
 		case BPF_T_FFNATIVECLOCK:
 			logger(RADLOG_NOTICE, "     CLOCK = FFNATIVECLOCK");
+			break;
+		case BPF_T_FFDIFFCLOCK:
+			logger(RADLOG_NOTICE, "     CLOCK = FFDIFFCLOCK");
 		}
 }
 
@@ -254,6 +259,7 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 			case PKTCAP_TSMODE_FBCLOCK:
 			case PKTCAP_TSMODE_FFCLOCK:
 			case PKTCAP_TSMODE_FFNATIVECLOCK:
+			case PKTCAP_TSMODE_FFDIFFCLOCK:
 				logger(RADLOG_ERR, "Requested mode unsupported: "
 					"switching to PKTCAP_TSMODE_RADCLOCK (ts supplied by radclock)");
 				override_mode = PKTCAP_TSMODE_RADCLOCK;
@@ -289,6 +295,9 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 			case PKTCAP_TSMODE_RADCLOCK:	// should have kernel = radclock, enables comparison
 			case PKTCAP_TSMODE_FFNATIVECLOCK:
 				bd_tstamp |= BPF_T_FFNATIVECLOCK;
+				break;
+			case PKTCAP_TSMODE_FFDIFFCLOCK:
+				bd_tstamp |= BPF_T_FFDIFFCLOCK;
 				break;
 			default:
 				logger(RADLOG_ERR, "descriptor_set_tsmode: Unknown timestamping mode.");
@@ -368,6 +377,9 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 		case BPF_T_FFNATIVECLOCK:
 			*mode = PKTCAP_TSMODE_FFNATIVECLOCK;
 			break;
+		case BPF_T_FFDIFFCLOCK:
+			*mode = PKTCAP_TSMODE_FFDIFFCLOCK;
+		break;
 		}
 		break;
 
