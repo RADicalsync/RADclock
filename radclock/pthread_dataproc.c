@@ -679,7 +679,7 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	pthread_mutex_unlock(&handle->globaldata_mutex);
 	
 	if ( VERB_LEVEL>2 ) {
-		verbose(LOG_ERR, "In process_stamp");
+		verbose(LOG_DEBUG, "In process_stamp");
 		printout_raddata(RAD_DATA(handle));
 	}
 

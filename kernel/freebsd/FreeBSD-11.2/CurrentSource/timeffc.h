@@ -40,18 +40,17 @@
  * timecounter period and offset estimate passed by the synchronization daemon.
  * Provides time of last daemon update, clock status and bound on error.
  */
-struct ffclock_estimate
-{
-	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast). */
+struct ffclock_estimate {
+	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
 	ffcounter	update_ffcount;	/* Counter value at last update. */
-	ffcounter	next_expected;		/* Estimated time of next update [counter] */
-	ffcounter	leapsec_expected;	/* Estimated time of next leap second [counter]. */
-	uint64_t	period;				/* Estimate of current counter period  [2^-64 s] */
+	ffcounter	leapsec_expected;	/* Estimated counter value of next leap second. */
+	uint64_t	period;				/* Estimate of current counter period [2^-64 s] */
 	uint32_t	errb_abs;			/* Bound on absolute clock error [ns]. */
-	uint32_t	errb_rate;			/* Bound on relative counter period error [ps/s] */
+	uint32_t	errb_rate;			/* Bound on relative counter period err [ps/s] */
 	uint32_t	status;				/* Clock status. */
-	int16_t		leapsec_total;		/* Sum of leap seconds seen since clock start. */
-	int8_t		leapsec_next;		/* Next leap second (in {-1,0,1}). */
+	int16_t	leapsec_total;		/* Sum of leap seconds seen since clock start. */
+	int8_t	leapsec_next;		/* Next leap second (in {-1,0,1}). */
+	uint8_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
 };
 
 /* Constants to hold errors and error rates in 64bit binary fraction fields */

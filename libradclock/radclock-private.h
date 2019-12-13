@@ -33,8 +33,7 @@
 #include <pcap.h>
 
 
-/* Data related to the clock maintain out of the kernel but
- * specific to FreeBSD
+/* Data related to the clock maintain out of the kernel but specific to FreeBSD
  */
 struct radclock_impl_bsd
 {

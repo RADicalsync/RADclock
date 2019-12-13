@@ -270,7 +270,6 @@ radclock_destroy(struct radclock *clock)
 }
 
 
-
 int
 radclock_register_pcap(struct radclock *clock, pcap_t *pcap_handle)
 {
@@ -299,12 +298,15 @@ fill_ffclock_estimate(struct radclock_data *rad_data,
 
 		/* Direct mappings */
 		cest->update_ffcount = Tlast;
-		cest->next_expected = rad_data->next_expected;
 		cest->status = rad_data->status;
 		cest->leapsec_total		= rad_data->leapsec_total;
 		cest->leapsec_next 		= rad_data->leapsec_next;
 		cest->leapsec_expected	= rad_data->leapsec_expected;
 
+		/* Convert update time estimate from an event ts to wait duration */
+		cest->secs_to_nextupdate =     // poll_period, but can't access directly
+			(rad_data->next_expected - rad_data->last_changed) * rad_data->phat + 0.5;
+			
 		/* Would like:  cest->time.frac = (time - (time_t) time) * (1LLU << 64);
 		* but cannot push '1' by 64 bits, does not fit in LLU. So push 63 bits,
 		* multiply for best resolution and lose resolution of 1/2^64.

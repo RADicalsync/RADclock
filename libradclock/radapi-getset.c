@@ -372,9 +372,8 @@ printout_FFdata(struct ffclock_estimate *cest)
 	logger(RADLOG_NOTICE, "\t period %llu", cest->period);
 	logger(RADLOG_NOTICE, "\t update_time: %llu.%llu [bintime]\t\t status: 0x%04X",
 		cest->update_time.sec, cest->update_time.frac, cest->status);
-	logger(RADLOG_NOTICE, "\t update_ffcount: %llu  next_expected: %llu  (u_diff: %llu)",
-		cest->update_ffcount, cest->next_expected,
-		cest->next_expected - cest->update_ffcount);
+	logger(RADLOG_NOTICE, "\t update_ffcount: %llu  secs_to_nextupdate: %u",
+		cest->update_ffcount, cest->secs_to_nextupdate);
 	logger(RADLOG_NOTICE, "\t errb_{abs,rate} = %lu  %lu",
 		cest->errb_abs, cest->errb_rate);
 	logger(RADLOG_NOTICE, "\t leapsec_{expected,total,next}:  %llu  %d  %d",

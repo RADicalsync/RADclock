@@ -115,10 +115,6 @@ init_kernel_clock(struct radclock *clock)
 int
 get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 {
-	/*
-	 * This is the kernel definition of clock estimates. May be different from
-	 * the radclock_data structure
-	 */
 	int err;
 
 	/*
@@ -134,19 +130,17 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 	err = ffclock_getestimate(cest);
 	if (err < 0) {
 		logger(RADLOG_ERR, "Failed to recover FFdata from kernel");
-		//fprintf(stdout, "Failed to recover FFdata from kernel");
 		return (1);
 	}
 
 	/* Sanity check warnings when FFdata not fully set */
-	if (cest->next_expected == 0)
-		logger(RADLOG_WARNING, "FFdata from kernel never set by daemon");
-	
 	if ((cest->update_time.sec == 0) || (cest->period == 0)) {
 		logger(RADLOG_WARNING, "FFdata never set by kernel");
 		printout_FFdata(cest);
 	}
-		
+	if (cest->secs_to_nextupdate == 0)
+		logger(RADLOG_WARNING, "FFdata from kernel never set by daemon");
+
 	return (0);
 }
 #else

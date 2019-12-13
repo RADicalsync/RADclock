@@ -594,7 +594,7 @@ ffclock_setto_rtc(struct timespec *ts)
 	timespec2bintime(ts, &ffclock_boottime);
 	timespec2bintime(ts, &(cest.update_time));
 	ffclock_read_counter(&cest.update_ffcount);
-	cest.next_expected = 0;
+	cest.secs_to_nextupdate = 0;
 	cest.period = ((1ULL << 63) / tc->tc_frequency) << 1;
 	cest.errb_abs = 0;
 	cest.errb_rate = 0;
@@ -658,10 +658,8 @@ printout_FFtick(struct fftimehands *ffth)
 	printf("*    update_time: %llu.%llu [bintime]\t\t status: 0x%04X\n",
 		(unsigned long long)cest->update_time.sec,
 		(unsigned long long)cest->update_time.frac, cest->status);
-	printf("*    update_ffcount: %llu  next_expected: %llu      (u_diff: %llu)\n",
-		(unsigned long long)cest->update_ffcount,
-		(unsigned long long)cest->next_expected,
-		(unsigned long long)(cest->next_expected - cest->update_ffcount));
+	printf("*    update_ffcount: %llu  secs_to_nextupdate: %u \n",
+		(unsigned long long)cest->update_ffcount, cest->secs_to_nextupdate);
 	printf("*    errb_{abs,rate} = %lu  %lu\n",
 		(unsigned long)cest->errb_abs, (unsigned long)cest->errb_rate);
 	printf("*    leapsec_{expected,total,next}:  %llu  %d  %d\n",
@@ -715,7 +713,6 @@ ffclock_windup(unsigned int delta)
 	struct bintime bt, gap_lerp;
 	ffcounter ffdelta;
 	uint64_t frac;
-	u_int secs_to_nextupdate;
 	uint8_t forward_jump, ogen;
 
 	/* verbosity control */
@@ -769,22 +766,17 @@ ffclock_windup(unsigned int delta)
 		bintime_add(&ffth->tick_time_lerp, &bt);
 
 		/* Check if the clock status should be set to unsynchronized.
-		 * Assessment based on age of last/current update, and the daemon's estimate
-		 * of the wait to the next update, converted to an interval in seconds.
+		 * Assessment based on age of last/current update, and the daemon's
+		 * estimate of the wait to the next update.
 		 * If the daemon's UNSYNC status is deemed too stale, it is over-ridden.
 		 */
 		if (ffclock_updated == 0) {
-			if (cest->next_expected < cest->update_ffcount)	// no daemon updates yet
-				secs_to_nextupdate = 0;
-			else {
-				ffdelta = cest->next_expected - cest->update_ffcount;
-				ffclock_convert_delta(ffdelta, cest->period, &bt);
-				secs_to_nextupdate = (u_int)bt.sec;	// expected time to next update
-				if (secs_to_nextupdate==0) secs_to_nextupdate = 1;
-			}
-			ffdelta = ffth->tick_ffcount - cest->update_ffcount;
-			ffclock_convert_delta(ffdelta, cest->period, &bt); // time since update
-			if (bt.sec > 3 * FFCLOCK_SKM_SCALE && bt.sec > 3 * secs_to_nextupdate)
+//			ffdelta = ffth->tick_ffcount - cest->update_ffcount;
+//			ffclock_convert_delta(ffdelta, cest->period, &bt); // time since update
+			bt = ffth->tick_time;
+			bintime_sub(&bt, &cest->update_time);	// bt = now - timeoflastupdate
+			if (bt.sec > 3 * FFCLOCK_SKM_SCALE &&
+			    bt.sec > 3 * cest->secs_to_nextupdate)
 				ffclock_status |= FFCLOCK_STA_UNSYNC;
 		}
 		
@@ -877,16 +869,12 @@ ffclock_windup(unsigned int delta)
 		ffth->period_lerp = cest->period;   // re-initialize
 
 		/* Keep default if no (or negligible) gap or no daemon updates yet */
-		if (bintime_isset(&gap_lerp) && cest->next_expected > 0) {
+		if (bintime_isset(&gap_lerp) && cest->secs_to_nextupdate > 0) {
 
 			/* Calculate cap */
-			ffdelta = cest->next_expected - cest->update_ffcount;
-			ffclock_convert_delta(ffdelta, cest->period, &bt);
-			secs_to_nextupdate = (u_int)bt.sec;		// time to next update
-			if (secs_to_nextupdate==0) secs_to_nextupdate = 1;
 			bt.sec = 0;
 			bt.frac = 5000000 * NS_IN_BINFRAC;
-			bintime_mul(&bt, secs_to_nextupdate);
+			bintime_mul(&bt, cest->secs_to_nextupdate);
 			/* Determine the amount of gap to close over the next update interval */
 			if (bintime_cmp(&gap_lerp, &bt, >)) {
 				printf(" %u **  capping  gap_lerp  from %llu.%llu to %llu.%llu  [bintime]\n", ccc,
@@ -897,13 +885,19 @@ ffclock_windup(unsigned int delta)
 				gap_lerp = bt;		// gap_lerp = min(gap_lerp, bt)
 			}
 	
-			/* Approximate 1 sec by 1-(1/2^64) to ease arithmetic */
+			/* Convert secs_to_nextupdate to counter units */
 			frac = 0;
+			frac -= 1;		// approximate 2^64 with (2^64)-1 to ease arithmetic
+			ffdelta = (frac / cest->period) * cest->secs_to_nextupdate;
+	
+			/* Store the portion of gap per cycle in frac */
 			if (gap_lerp.sec > 0) {
 				frac -= 1;
 				frac /= ffdelta / gap_lerp.sec;
-			}
-			frac += gap_lerp.frac / ffdelta;		// portion of gap per cycle
+				//frac = (cest->period * gap_lerp.sec) / cest->secs_to_nextupdate;
+			} else
+				frac = 0;
+			frac += gap_lerp.frac / ffdelta;
 
 			if (forward_jump)
 				ffth->period_lerp += frac;
@@ -912,11 +906,18 @@ ffclock_windup(unsigned int delta)
 			
 //		   if (frac==0) {  // will be inactive if gap too small
 //				printf(" %u **  warning, is a gap yet period_lerp not changed\n", ccc);
-//				printf("    **  gap_lerp.frac %llu  ,  ffdelta = %llu  [bintime]\n",
-//					(long long unsigned)gap_lerp.frac,
-//					(long long unsigned)ffdelta );
+//				printf("    **  gap_lerp.frac %llu [%lu [ns]],  ffdelta = %llu\n",
+//						(long long unsigned)gap_lerp.frac,
+//						(long unsigned)(gap_lerp.frac / NS_IN_BINFRAC),
+//						(long long unsigned)ffdelta );
 //				if (!watch) watch = 1;	// activate verbosity watching
 //			}
+//			else
+//				printf("    **  gap_lerp.frac %llu [%lu [ns]],  ffdelta = %llu\n",
+//					(long long unsigned)gap_lerp.frac,
+//					(long unsigned)(gap_lerp.frac / NS_IN_BINFRAC),
+//					(long long unsigned)ffdelta );
+				
 		}
 
 		ffclock_status = cest->status;
@@ -968,7 +969,7 @@ ffclock_change_tc(struct timehands *th)
 
 	cest = &ffth->cest;
 	bcopy(&(fftimehands->cest), cest, sizeof(struct ffclock_estimate));
-	cest->next_expected = 0;
+	cest->secs_to_nextupdate = 0;
 	cest->period = ((1ULL << 63) / tc->tc_frequency ) << 1;
 	cest->errb_abs = 0;
 	cest->errb_rate = 0;
