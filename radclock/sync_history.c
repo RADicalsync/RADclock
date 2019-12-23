@@ -44,7 +44,7 @@ int history_init(history *hist, unsigned int buffer_sz, size_t item_sz)
 	hist->buffer = malloc(buffer_sz * item_sz);
 	JDEBUG_MEMORY(JDBG_MALLOC, hist->buffer);
 
-	if(hist->buffer == NULL)
+	if (hist->buffer == NULL)
 	{
 		verbose(LOG_ERR, "malloc failed allocating memory");
 		return 1;
@@ -52,7 +52,7 @@ int history_init(history *hist, unsigned int buffer_sz, size_t item_sz)
 
 	memset(hist->buffer, 0, buffer_sz * item_sz);
 
-	hist->buffer_end 	= hist->buffer + (buffer_sz-1) * item_sz;
+	hist->buffer_end 	= hist->buffer + (buffer_sz-1) * item_sz;	// ptr to last item
 	hist->buffer_sz 	= buffer_sz;
 	hist->item_count 	= 0;
 	hist->item_sz 		= item_sz;
@@ -281,37 +281,65 @@ index_t history_min_slide(history *hist, index_t index_curr,  index_t j, index_t
 /* Version that operates on values rather than indices
  * Must initialise properly, if the min is not in the window, may never be replaced!
  */
-vcounter_t history_min_slide_value(history *hist, index_t min_curr, index_t j, index_t i)
+vcounter_t history_min_slide_value(history *hist, vcounter_t min_curr, index_t j, index_t i)
 {
 	vcounter_t *tmp;
 	index_t tmp_i;
+//	static index_t catchmin_i;    // when a new min enters, record its index
+//	static long exittrap = 0;
+   
+	tmp = (vcounter_t *) history_find(hist, i+1);	// new value entering
 
 	if ( i < j ) {
 		verbose(LOG_ERR,"Error in min_slide_value, window width less than 1: %u %u %u", j,i,i-j+1);
-		return i+1;
+		return *tmp;
 	}
+	
 	/* window only 1 wide anyway, easy */
 	if (i == j)
-	{
-		tmp = history_find(hist, i+1);
-//		return x[(i+1)%lenx];
+		return *tmp;
+	
+	/* New one is the new min */
+//	if ( x[(i+1)%lenx] < min_curr)
+	if ( *tmp < min_curr ) {
+		//verbose(LOG_ERR,"new min case : %lu %lu mincurr =  %llu, newmin = %llu", j,i, min_curr, *tmp);
+		//catchmin_i = i+1;
+		//tmp = (vcounter_t *) history_find(hist, catchmin_i);
+		//verbose(LOG_ERR,"caughtnewmin:  index %llu   value:  %llu", catchmin_i, *tmp);
+		//exittrap=1;
 		return *tmp;
 	}
-	/* new one is new min */
-//	if ( x[(i+1)%lenx] < min_curr)
-	tmp = history_find(hist, i+1);
-	if ( *tmp < min_curr )
-		return *tmp; 
+	
+//	if ( exittrap > 0 ) {
+//		exittrap++;
+//		if (exittrap <10) {
+//				 tmp = (vcounter_t *) history_find(hist, catchmin_i);
+//				 verbose(LOG_ERR,"caughtmin:  index %llu   value:  %llu", catchmin_i, *tmp);
+//		}
+//	   if (exittrap > 1501 - 2) {
+//			tmp = (vcounter_t *) history_find(hist, catchmin_i);
+//			verbose(LOG_ERR,"caughtmin:  index %llu   value:  %llu", catchmin_i, *tmp);
+//			verbose(LOG_ERR,"  item  count %u  , buf_size  %u", hist->item_count, hist->buffer_sz );
+//			tmp = (vcounter_t *) history_find(hist, j);
+//			verbose(LOG_ERR,"context check near exit of last min: %lu %lu mincurr =  %llu, jmin = %llu", j,i, min_curr, *tmp);
+//			if (exittrap > 1501 + 2) exittrap=0;
+//		}
+//	}
+	
+
+	
 	/* one being dropped was min, must do work */
 //	if ( x[j%lenx] == min_curr )
-	tmp = history_find(hist, j);
-	if ( *tmp == min_curr )
-	{
+	tmp = (vcounter_t *) history_find(hist, j);	// value exiting
+	if ( *tmp == min_curr ) {
+		//verbose(LOG_ERR,"min_slide_value, do work case : %llu %llu %llu", j,i,i-j+1);
 //		return x[history_min(x,j+1,i,lenx)%lenx];
-		tmp_i = history_min(hist, j+1, i);
-		tmp = history_find(hist, tmp_i);
+		tmp_i = history_min(hist, j+1, i);	// exclude i+1, already know is not min
+		tmp = (vcounter_t *) history_find(hist, tmp_i);
 		return *tmp;
 	}
+	
+	//verbose(LOG_ERR,"min_slide_value, no change :  tmp_j = %llu  min_curr = %llu,  curr - j %llu",*tmp, min_curr, min_curr - *tmp);
 	/* min_curr inside window and still valid, easy */
 	return min_curr;
 }

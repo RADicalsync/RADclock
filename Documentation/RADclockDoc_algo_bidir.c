@@ -614,7 +614,7 @@ phat:
           - EXIT:   good j, and good phat for main algo, but no good perr
 
 plocal:
- Algo:    - do nothing is not active, else just set to phat
+ Algo:    - do nothing if not active, else just set to phat
 
 thetahat:
  Algo:    - calculate theta naive values for each pkt: [ phat*(TSCa + TSCf) + 2C - (Tb + Te) ] / 2
@@ -752,7 +752,7 @@ thetahat:
                   - set last reliable estimate to current
 
  Issues:  - `lockout' avoided by decoupling sanity and quality checking
-          - sanity checks relevant to age of last REliable estimate, and takes note of ANy gaps, to avoid lockout
+          - sanity checks relative to age of last REliable estimate, and takes note of ANy gaps, to avoid lockout
     
 
 

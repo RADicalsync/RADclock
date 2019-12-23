@@ -55,7 +55,7 @@ struct radclock_data {
 	double phat_local_err;  // estimated bound on the relative error of plocal [unitless]
 	long double ca;			// K_p - thetahat(t) - leapsectotal? [s]
 	double ca_err;				// estimated error (currently minET) in thetahat and ca [s]
-	unsigned int status;		// status word (contains 9 bit fields)
+	unsigned int status;		// status word (contains 10 bit fields)
 	vcounter_t last_changed;	// raw timestamp T(tf) of last stamp processed [counter]
 	vcounter_t next_expected;	// estimated T value of next stamp, and hence update [counter]
 	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none

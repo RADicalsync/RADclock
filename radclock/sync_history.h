@@ -52,7 +52,7 @@ void *history_find(history *hist, index_t index);
 int history_resize(history *hist, unsigned int buffer_sz, unsigned long int index);
 
 index_t history_min(history *hist, index_t j, index_t i);
-index_t history_min_slide(history *hist, index_t index_curr,  index_t j, index_t i);
-vcounter_t history_min_slide_value(history *hist, index_t min_curr,  index_t j, index_t i);
+index_t history_min_slide(history *hist,           index_t index_curr,  index_t j, index_t i);
+vcounter_t history_min_slide_value(history *hist, vcounter_t min_curr,  index_t j, index_t i);
 
 #endif   /* _SYNC_HISTORY_H */

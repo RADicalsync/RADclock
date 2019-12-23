@@ -62,13 +62,13 @@
 // [sec] maximum timescale of validity of the Simple Skew Model (SKM)
 #define SKM_SCALE_EXCEL			1024.0
 #define SKM_SCALE_GOOD			64.0
-#define SKM_SCALE_POOR			 512.0
+#define SKM_SCALE_POOR			512.0
 // bound on rate error regardless of time scale
 #define RATE_ERR_BOUND_EXCEL	0.0000001
-#define RATE_ERR_BOUND_GOOD		0.0000005
-#define RATE_ERR_BOUND_POOR		0.000001
+#define RATE_ERR_BOUND_GOOD	0.0000005
+#define RATE_ERR_BOUND_POOR	0.000001
 // limit of meaningful accuracy of SKM rate
-#define BEST_SKM_RATE_EXCEL		0.00000005
+#define BEST_SKM_RATE_EXCEL	0.00000005
 #define BEST_SKM_RATE_GOOD		0.0000002
 #define BEST_SKM_RATE_POOR		0.000001
 // Ratio defining offset based on TSLIMIT
@@ -77,8 +77,8 @@
 #define OFFSET_RATIO_POOR		6
 // plocal quality
 #define PLOCAL_QUALITY_EXCEL	0.0000008
-#define PLOCAL_QUALITY_GOOD		0.0000008
-#define PLOCAL_QUALITY_POOR		0.0000008
+#define PLOCAL_QUALITY_GOOD	0.0000008
+#define PLOCAL_QUALITY_POOR	0.000002
 
 
 /*

@@ -536,15 +536,18 @@ Each time the RADclock algo (process_bidir_stamp) processes a stamp, the radcloc
 data and error stuctures held in  clock_handle->rad_{data,error},  with format :
 
 struct radclock_data {
-	double phat;
-	double phat_err;
-	double phat_local;
-	double phat_local_err;
-	long double ca;
-	double ca_err;
-	unsigned int status;
-	vcounter_t last_changed;
-	vcounter_t next_expected;
+	double phat;				// very stable estimate of long term counter period [s]
+	double phat_err;			// estimated bound on the relative error of phat [unitless]
+	double phat_local;		//	stable estimate on shorter timescale period [s]
+	double phat_local_err;  // estimated bound on the relative error of plocal [unitless]
+	long double ca;			// K_p - thetahat(t) - leapsectotal? [s]
+	double ca_err;				// estimated error (currently minET) in thetahat and ca [s]
+	unsigned int status;		// status word (contains 9 bit fields)
+	vcounter_t last_changed;	// raw timestamp T(tf) of last stamp processed [counter]
+	vcounter_t next_expected;	// estimated T value of next stamp, and hence update [counter]
+	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none
+	int leapsec_total;				// sum of leap seconds seen since clock start
+	int leapsec_next;					// value of the expected next leap second {-1 0 1}
 };
 
 struct radclock_error
@@ -630,17 +633,16 @@ previous values (accessible by pointer members), plus additional information.
 In contrast, for FBSD KV>1 the kernel variable *cest (kclock.h) is defined as a structure :
 struct ffclock_estimate
 {
-	struct bintime	update_time;	/* Time of last estimates update. */
+	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast). */
 	vcounter_t	update_ffcount;	/* Counter value at last update. */
-	vcounter_t	next_expected		// Estimated T value of next stamp, and hence update [counter]
-	vcounter_t	leapsec_next;		/* Counter value of next leap second. */
-	uint64_t	period;					/* Estimate of counter period. */
+	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second. */
+	uint64_t	period;					/* Estimate of current counter period  [2^-64 s] */
 	uint32_t	errb_abs;				/* Bound on absolute clock error [ns]. */
-	uint32_t	errb_rate;				/* Bound on counter rate error [ps/s]. */
+	uint32_t	errb_rate;				/* Bound on relative counter period error [ps/s] */
 	uint32_t	status;					/* Clock status. */
-	int16_t		leapsec_total;		/* All leap seconds seen so far. */
-	int8_t		leapsec;				/* Next leap second (in {-1,0,1}). */
-
+	int16_t	leapsec_total;			/* Sum of leap seconds seen since clock start. */
+	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}). */
+	uint8_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
 };
 
 which does not quite preserve all the original rad_data and the additional

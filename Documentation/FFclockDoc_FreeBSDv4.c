@@ -376,6 +376,7 @@ struct fftimehands {
 	struct ffclock_estimate	cest;      // copy of kernel FF data from daemon used during this tick
 	struct bintime		tick_time;       // UTC Ca timestamp at tick-start
 	struct bintime		tick_time_lerp;  // monotonic version of UTC Ca at tick-start
+	struct bintime		tick_time_diff;  // version of Ca which drifts, never jumps
 	struct bintime		tick_error;		  // bound in error for tick_time
 	ffcounter		tick_ffcount;		  // FF counter value at tick-start (doesnt wrap!)
 	uint64_t		   period_lerp;        // adjusted period used by monotonic version
@@ -449,14 +450,14 @@ struct ffclock_estimate
 {
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast). */
 	vcounter_t	update_ffcount;	/* Counter value at last update. */
-	vcounter_t	next_expected		/* Estimated time of next update [counter] */
+	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second. */
 	uint64_t	period;					/* Estimate of current counter period  [2^-64 s] */
 	uint32_t	errb_abs;				/* Bound on absolute clock error [ns]. */
 	uint32_t	errb_rate;				/* Bound on relative counter period error [ps/s] */
 	uint32_t	status;					/* Clock status. */
-	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second. */
-	int16_t		leapsec_total;		/* Sum of leap seconds seen since clock start. */
-	int8_t		leapsec_next;		/* Next leap second (in {-1,0,1}). */
+	int16_t	leapsec_total;			/* Sum of leap seconds seen since clock start. */
+	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}). */
+	uint8_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
 };
 
 As the architypal FF algorithm, we will describe this data structure in relation
@@ -581,8 +582,9 @@ FF --> algo
 						just set phat_err = phat_local_err
 
 
-vcounter_t next_expected == vcounter_t next_expected
-	FF <-- algo:	Direct. The kernel should know when an update is expected.
+uint8_t secs_to_nextupdate == vcounter_t next_expected
+	FF <-- algo:	The kernel should know when an update is expected, but interval
+	               in sec need in kernel to avoid need for calculation, that than an event ts
 						Status update code in ffclock_windup needs this.
 	FF --> algo:	set to 0, as poll_period is owned by daemon.
 						The kernel can never tell the daemon what the poll_period is,
@@ -616,14 +618,14 @@ A common scenario after boot is:
 	no change for 1000s of invocations of windup_ffclock
 	daemon launched,  pulls current kernel value of cest
    first daemon push of rad_data
-		setting;   all fields,  now next_expected>0
+		setting;   all fields,  now secs_to_nextupdate>0
 
 If the daemon is initializing, then fill_radclock_data will provide the very rough value
 of period to the algo as a option for use, prior to any algo update push.
 
 If the daemon was running but later ceases to push updates, then the value of
 cest will likely never changed.  This is detected in ffclock_windup by observing
-that cest is old (update_ffcount) and late (next_expected).
+that cest is old (update_ffcount) and late (secs_to_nextupdate).
 
 Libprocesses in that scenario will be using this out of date kernel version via
 the inversion routine fill_radclock_data, with inversion failures:
@@ -823,8 +825,6 @@ ffclock_windup(delta): simplified code:
 		
  	/* readjust CaMono period */
 	 	ffth->period_lerp = cest->period;	   // start afresh with this update, no past dynamics
-	   ffdelta = next_expected - thisupdateFF // counter diff between last and next updates
-		secs_til_nextupdate = floor( ffdelta*period ) // corresponding #seconds [ estimated polling period ]
 		gap_lerp = min(gap_lerp,secs_til_nextupdate*5000PPM) // cap rate of gap reduction to 5000PPM
 	   period_lerp += gap_lerp/ffdelta        // adjust to reduce gap to zero over ffdelta cycles
 		

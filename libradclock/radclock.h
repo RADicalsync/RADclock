@@ -38,31 +38,27 @@
  * get internal clock parameters.
  */
 
-/* RADclock status word */
-#define STARAD_UNSYNC			0x0001	/* RADclock not sync'ed (just started,
-										 * server not reachable)
-										 */
-#define STARAD_WARMUP			0x0002	/* RADclock in warmup phase, error
-										 * estimates unreliable
-										 */
-#define STARAD_KCLOCK			0x0004	/* RADclock kernel time is reliable */
-#define STARAD_SYSCLOCK			0x0008	/* The system clock is fairly accurate
-										 *  (if adjusted by the RADclock)
-										 */
-#define STARAD_STARVING			0x0010	/* RADclock is lacking quality input */
-#define STARAD_PERIOD_QUALITY	0x0020	/* The quality of the RADclock period
-										 * estimate is poor
-										 */
-#define STARAD_PERIOD_SANITY	0x0040	/* Consecutive period sanity checks have
-										 * been triggered
-										 */
-#define STARAD_OFFSET_QUALITY	0x0080	/* The quality of the RADclock offset
-										 * estimate is poor
-										 */
-#define STARAD_OFFSET_SANITY	0x0100	/* Consecutive offset sanity checks
-										 * have been triggered
-										 */
-
+/** RADclock status word **/
+/* RADclock not sync'ed (just started, server not reachable) */
+#define STARAD_UNSYNC			0x0001
+/* RADclock in warmup phase, error estimates unreliable */
+#define STARAD_WARMUP			0x0002
+/* RADclock kernel time is reliable */
+#define STARAD_KCLOCK			0x0004
+/* The system clock is fairly accurate (if adjusted by the RADclock) */
+#define STARAD_SYSCLOCK			0x0008
+/* RADclock is lacking valid input stamps */
+#define STARAD_STARVING			0x0010
+/* Upward Shift Detected */
+#define STARAD_RTT_UPSHIFT		0x0020
+/* Quality of the RADclock period estimate is poor */
+#define STARAD_PERIOD_QUALITY	0x0040
+/* Consecutive period sanity checks have been triggered */
+#define STARAD_PERIOD_SANITY	0x0080
+/* Quality of the RADclock offset estimate is poor */
+#define STARAD_OFFSET_QUALITY	0x0100
+/* Consecutive offset sanity checks have been triggered */
+#define STARAD_OFFSET_SANITY	0x0200
 
 typedef uint64_t vcounter_t;
 
