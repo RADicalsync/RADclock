@@ -592,7 +592,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 		printout_FFdata(&cest);
 	}
 	
-	err = radclock_init_vcounter_syscall(clock);
+	err = radclock_init_vcounter_syscall(clock); // null if KV>1
 	if (err)
 		return (1);
 
@@ -612,7 +612,8 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	 * This is a hack, need to move to kern dep code, or just ultimately remove
 	 */
 	#define	MAX_SYSCLOCK_NAME_LEN 16
-	int inttopass;
+	int inttopass, intold;
+	char currname[32];		// maps to 'old' input
 	char nametopass[32];
 	char nameavail[32];
 	size_t sn;
@@ -620,59 +621,78 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	
 	verbose(LOG_NOTICE, "clock_init_live:  testing sysctl interface");
 
-	err = sysctlbyname("kern.timecounter.hardware", &nametopass[0], &sn, NULL, 0);
-	verbose(LOG_NOTICE, "\t Hardware counter: %s", nametopass);
+//	// Check current hardware counter
+//	sn = sizeof(currname);
+//	err = sysctlbyname("kern.timecounter.hardware", &currname[0], &sn, NULL, 0);
+//	verbose(LOG_NOTICE, "\t Hardware counter: %s [sn = %u]", currname, strlen(currname));
+//
+//	strlcpy(nametopass,"HPET",32);
+//	verbose(LOG_NOTICE, "\t Trying to change counter to %s", nametopass);
+//	err = sysctlbyname("kern.timecounter.hardware", NULL, &sn, nametopass, strlen(nametopass));
+//
+//	// Check current hardware counter
+//	sn = sizeof(currname);  	// reset, as on return sn is set to the actual length of currname
+//	err = sysctlbyname("kern.timecounter.hardware", &currname[0], &sn, NULL, 0);
+//	verbose(LOG_NOTICE, "\t Hardware counter: %s [sn = %u]", currname, strlen(currname));
+
 	
-	sn = sizeof(nametopass);
-	strlcpy(nametopass,"HPET",sn);
-	verbose(LOG_NOTICE, "\t Trying to change counter to %s", nametopass);
-	err = sysctlbyname("kern.timecounter.hardware", &nametopass[0], &sn, NULL, 0);
-	verbose(LOG_NOTICE, "\t ** Hardware counter: %s", nametopass);
+//	err = sysctlbyname("kern.sysclock.ffclock.version", &intold, &si, NULL, 0);
+//	verbose(LOG_NOTICE, "\t FF Kernel version: %d", intold);
+//	intold = 5;
+//	inttopass = 6;
+//	verbose(LOG_NOTICE, "  FFcounter bypass state: (old,new) = (%d,%d)", intold, inttopass); // init values
+//	err = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass", &intold, &si, NULL, 0); // get current from kern
+//	verbose(LOG_NOTICE, "  FFcounter bypass state: (old,new) = (%d,%d)", intold, inttopass); // rtns intold =0
+//	err = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass", NULL, &si, &inttopass, si); // set to this
+//	err = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass", &intold, &si, NULL, 0); // get current
+//	verbose(LOG_NOTICE, "  FFcounter bypass state: (old,new) = (%d,%d)", intold, inttopass); // was set as expected
+//
 	
-	err = sysctlbyname("kern.sysclock.ffclock.version", &inttopass, &si, NULL, 0);
-	verbose(LOG_NOTICE, "\t FF Kernel version: %d", inttopass);
-	inttopass=99;
-	err = sysctlbyname("kern.sysclock.ffcounter_bypass", &inttopass, &si, NULL, 0);
-	verbose(LOG_NOTICE, "  FFcounter bypass state: %d", inttopass);
-	
-	sn = sizeof(nameavail);	// reset, as each call with a PROC handler modifies sn
+	sn = sizeof(nameavail);
 	err = sysctlbyname("kern.sysclock.available", &nameavail[0], &sn, NULL, 0);
 	verbose(LOG_NOTICE, "\t Available sysclocks: %s", nameavail);
 	
-	
-	
-	/* Get the active sysclock */
-	sn = sizeof(nametopass);
-	err = sysctlbyname("kern.sysclock.active", &nametopass[0], &sn, NULL, 0);
-	verbose(LOG_NOTICE, "\t Active sysclock: %s", nametopass);
 
-	/* To set the active sysclock, pass its name in */
-	// Prepare the name
-	sn = sizeof(nametopass);
-	strlcpy(nametopass,"feed-forward",sn);  // userland doesnt understand SYSCLOCK_{FFWD,FBCK}
-	//nametopass[13] = '\0';
-	verbose(LOG_NOTICE, "\t Trying to change sysclock to: %s", nametopass);
-	
-	// Ask to change to it
-	err = sysctlbyname("kern.sysclock.active", &nametopass[0], &sn, NULL, 0);
-	verbose(LOG_NOTICE, "\t ** Active sysclock: %s [sn = %u]", nametopass, strlen(nametopass));
-	
-	// Check afterward if has changed
-	sn = sizeof(nametopass);
-	memset(nametopass,0,sn);
-	nametopass[0] = '\0';
-	err = sysctlbyname("kern.sysclock.active", &nametopass[0], &sn, NULL, 0);
-	verbose(LOG_NOTICE, "\t Active sysclock: %s", nametopass);
+	/* Get the active sysclock */
+	sn = sizeof(currname);
+	err = sysctlbyname("kern.sysclock.active", &currname[0], &sn, NULL, 0);
+	verbose(LOG_NOTICE, "\t Active sysclock: %s [sn = %u]", currname, strlen(currname));
+
+//	/* Change to feed-forward */
+//	sn = sizeof(nametopass);
+//	strlcpy(nametopass,"feed-forward",sn);  // userland doesnt understand SYSCLOCK_{FFWD,FBCK}
+//	verbose(LOG_NOTICE, "\t Trying to change sysclock to: %s", nametopass);
+//	err = sysctlbyname("kern.sysclock.active", NULL, NULL, nametopass, strlen(nametopass));
+//
+//	// Check afterward if has changed
+//	sn = sizeof(currname);
+//	memset(currname,0,sn); currname[0] = '\0';
+//	err = sysctlbyname("kern.sysclock.active", &currname[0], &sn, NULL, 0);
+//	verbose(LOG_NOTICE, "\t Active sysclock: %s [sn = %u]", currname, strlen(currname));
+//
+//	// Change it back !
+//	sn = sizeof(currname);
+//	strlcpy(nametopass,"feedback",sn);  // userland doesnt understand SYSCLOCK_{FFWD,FBCK}
+//	verbose(LOG_NOTICE, "\t Trying to change sysclock to: %s", nametopass);
+//	err = sysctlbyname("kern.sysclock.active", NULL, NULL, nametopass, strlen(nametopass));
+//
+//
+//	// Check afterward if has changed
+//	sn = sizeof(currname);
+//	memset(currname,0,sn); currname[0] = '\0';
+//	err = sysctlbyname("kern.sysclock.active", &currname[0], &sn, NULL, 0);
+//	verbose(LOG_NOTICE, "\t Active sysclock: %s [sn = %u]", currname, strlen(currname));
+
 
 
 	/* Get the value of the interface's timestamp default setting */
 	// TODO: drop this once clear that if-level ts types won't be reappearing
 	//       Only works on BSD anyway, will break under Linux
-	if (clock->kernel_version == 2) {
-		sn = sizeof(nameavail);
-		err = sysctlbyname("net.bpf.tscfg.default", &nameavail[0], &sn, NULL, 0);
-		verbose(LOG_NOTICE, "\t Timestamp default configuration for interfaces: %s", nameavail);
-	}
+//	if (clock->kernel_version == 2) {
+//		sn = sizeof(nameavail);
+//		err = sysctlbyname("net.bpf.tscfg.default", &nameavail[0], &sn, NULL, 0);
+//		verbose(LOG_NOTICE, "\t Timestamp default configuration for interfaces: %s", nameavail);
+//	}
 	
 	/* Get the value of our interface's timestamp setting */
 //	sn = sizeof(nameavail);

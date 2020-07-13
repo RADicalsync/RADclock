@@ -927,9 +927,9 @@ double compute_phat (struct bidir_peer* peer,
 {
 	long double DelTb, DelTe;	// Server time intervals between stamps j and i
 	vcounter_t DelTa, DelTf;	// Counter intervals between stamps j and i 
-	double phat;			// Period estimate for current stamp
-	double phat_b;			// Period estimate for current stamp (backward dir)
-	double phat_f; 			// Period estimate for current stamp (forward dir)
+	double phat;					// Period estimate for current stamp
+	double phat_b;					// Period estimate for current stamp (backward dir)
+	double phat_f; 				// Period estimate for current stamp (forward dir)
 
 	DelTa = near->Ta - far->Ta;
 	DelTb = near->Tb - far->Tb;
@@ -1067,11 +1067,9 @@ void record_packet_j (struct bidir_peer* peer, vcounter_t RTT,
 
 
 /* Return value `ret' allows signal to be sent to plocal algo that phat sanity
- * triggered on This stamp, enabling it to set STARAD_PERIOD_QUALITY correctly
- * as this is nominally a plocal flag, whereas STARAD_PERIOD_SANITY is set if
- * either phat or plocal merits it (though with separate count variables).
+ * triggered on This stamp.
  */
-int process_phat_full (struct bidir_peer* peer, struct radclock_handle* handle,
+int process_phat_full(struct bidir_peer* peer, struct radclock_handle* handle,
 	struct radclock_phyparam *phyparam, vcounter_t RTT,
 	struct bidir_stamp* stamp, int qual_warning)
 {
@@ -1084,6 +1082,7 @@ int process_phat_full (struct bidir_peer* peer, struct radclock_handle* handle,
 						// different stamps
 
 	ret = 0;
+	DEL_STATUS(handle, STARAD_PHAT_UPDATED);		// typical case if no update
 
 	/* Compute new phat based on pstamp and current stamp */
 	phat = compute_phat(peer, &peer->pstamp, stamp);
@@ -1119,31 +1118,22 @@ int process_phat_full (struct bidir_peer* peer, struct radclock_handle* handle,
 	//baseerr = peer->phat * (double)labs((long)(peer->RTThat - peer->pstamp_RTThat));
 	perr_ij = (perr_ij + baseerr) / DelTb;
 
-	if ( (perr_ij >= peer->perr) && (perr_ij >= peer->Ep_qual) ) 
-	{
-		/* Note: STARAD_PERIOD_QUAL is not set on every point that fails.
-		 * Quality is a plocal issue only. Arguable?
-		 */
-		return 0;
-	}
-
-	/*
-	 * We reach this point, so good candidate.
-	 * If better, or extremely good, update with naive estimate using (j,i),
-	 * else do nothing
-	 * if extremely good, accept in order to gracefully track
-	 * avoids possible lock-in (eg due to 'lucky' error on error estimate)
-	 * phat_f: forward  (OUTGOING, sender)*
-	 * phat_b: backward (INCOMING, receiver)
-	 * perr: record improved quality
-	 * pkt_i: record 2nd packet index
+	/* Only continue if quality better than current, or extremely good.
+	 * The latter allows graceful tracking, avoids possible lock-in due to
+	 * overly optimistic error estimates.
 	 */
-	peer->perr	= perr_ij;
+	if ( (perr_ij >= peer->perr) && (perr_ij >= peer->Ep_qual) )
+		return 0;
+
+
+	/* Candidate accepted based on quality, record this */
+	ADD_STATUS(handle, STARAD_PHAT_UPDATED);
+	peer->perr = perr_ij;
 
 	if ( fabs((phat - peer->phat)/phat) > phyparam->RateErrBOUND/3 ) {
 		verbose(VERB_SYNC, "i=%lu: Jump in phat update, phat stats: (j,i)=(%lu,%lu), "
 			"rel diff = %.10g, perr = %.3g, baseerr = %.10g, DelTb = %5.3Lg [hrs]",
-			peer->pstamp_i, peer->stamp_i, (phat - peer->phat)/phat,
+			peer->stamp_i, peer->pstamp_i, peer->stamp_i, (phat - peer->phat)/phat,
 			peer->perr, baseerr, DelTb/3600);
 	}
 
@@ -1165,13 +1155,12 @@ int process_phat_full (struct bidir_peer* peer, struct radclock_handle* handle,
 			peer->perr, baseerr, DelTb/3600);
 
 		peer->phat_sanity_count++;
-		ADD_STATUS(handle, STARAD_PERIOD_SANITY);
-		ret = STARAD_PERIOD_SANITY;
-	}
-	else {
+		ADD_STATUS(handle, STARAD_PHAT_SANITY);
+		ret = STARAD_PLOCAL_SANITY;
+	} else {
 		peer->K += peer->stamp.Ta * (long double) (peer->phat - phat);
 		peer->phat = phat;
-		DEL_STATUS(handle, STARAD_PERIOD_SANITY);
+		DEL_STATUS(handle, STARAD_PHAT_SANITY);
 	}
 
 	return (ret);
@@ -1284,9 +1273,12 @@ process_plocal_full(struct bidir_peer* peer, struct radclock_handle* handle,
 				"(%lu,%lu), not updating plocalerr = %5.3lg, "
 				"Eplocal_qual = %5.3lg ", peer->stamp_i, peer->far_i,
 				peer->near_i, peer->plocalerr, peer->Eplocal_qual);
-		ADD_STATUS(handle, STARAD_PERIOD_QUALITY);
+		ADD_STATUS(handle, STARAD_PLOCAL_QUALITY);
 		return 0;
 	}
+
+	/* Candidate acceptable based on quality, record this */
+	DEL_STATUS(handle, STARAD_PLOCAL_QUALITY);
 
 	/* if quality looks good, continue but refuse to update if result looks
 	 * insane. qual_warning may not apply to stamp_near or stamp_far, but we
@@ -1301,17 +1293,14 @@ process_plocal_full(struct bidir_peer* peer, struct radclock_handle* handle,
 		verbose(VERB_SANITY, "i=%lu: plocal update fails sanity check: relative "
 				"difference is: %5.3lg estimated error was %5.3lg",
 				peer->stamp_i, fabs(peer->plocal-plocal)/peer->plocal, plocalerr);
-		ADD_STATUS(handle, STARAD_PERIOD_SANITY);
+		ADD_STATUS(handle, STARAD_PLOCAL_SANITY);
 		peer->plocal_sanity_count++;
 	} else {
 		peer->plocal = plocal;
 		// TODO, we should actually age this stored value if quality is
 		// bad or sanity and we cannot update to the latest computed
 		peer->plocalerr = plocalerr;
-		DEL_STATUS(handle, STARAD_PERIOD_QUALITY);
-		/* Since have quality, mistrust sanity unless period algos disagree */
-		if ( phat_sanity_raised != STARAD_PERIOD_SANITY )
-			DEL_STATUS(handle, STARAD_PERIOD_SANITY);
+		DEL_STATUS(handle, STARAD_PLOCAL_SANITY);
 	}
 	return 0;
 }
@@ -1455,12 +1444,12 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 	 */
 	gapsize = peer->phat * (double)(stamp->Tf - peer->stamp.Tf);
 	if ( minET < peer->Eoffset_qual ) {
+		DEL_STATUS(handle, STARAD_OFFSET_QUALITY);
 		if ( wsum==0 ) {
 			verbose(VERB_QUALITY, "i=%lu, quality looks good (minET = %lg) yet wsum=0! "
 					"Eoffset_qual = %lg may be too large", peer->stamp_i, minET, peer->Eoffset_qual);
 			thetahat = peer->thetahat;
-		}
-		else {
+		} else {
 			thetahat /= wsum;
 			/* store est'd quality of new estimate */
 			peer->minET = minET;
@@ -1471,6 +1460,7 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 			PEER_ERROR(peer)->Ebound_min_last = Ebound_min;
 			copystamp(stamp, &peer->thetastamp);
 		}
+		
 		/* if result looks insane, give warning */
 		if ( fabs(peer->thetahat - thetahat) > (peer->Eoffset_sanity_min + peer->Eoffset_sanity_rate * gapsize) ) {
 			verbose(VERB_SANITY, "i=%lu: thetahat update fails sanity check: "
@@ -1478,17 +1468,13 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 					peer->stamp_i, 1000*(thetahat-peer->thetahat), 1000*minET);
 			peer->offset_sanity_count++;
 			ADD_STATUS(handle, STARAD_OFFSET_SANITY);
-		}
-		else {
-			DEL_STATUS(handle, STARAD_OFFSET_QUALITY);
+		} else
 			DEL_STATUS(handle, STARAD_OFFSET_SANITY);
-		}
 
 		/* update value of thetahat, even if sanity triggered */
 		peer->thetahat = thetahat;
 
-	}
-	else {
+	} else {
 		verbose(VERB_QUALITY, "i=%lu: thetahat quality over offset window very poor "
 				"(%5.3lg [ms]), repeating current value", peer->stamp_i, 1000*minET);
 		ADD_STATUS(handle, STARAD_OFFSET_QUALITY);
@@ -1669,8 +1655,7 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 		/*
 		 * Don't reassess pt errors (shifts already accounted for) then add SD
 		 * quality measure (large SD at small RTT=> delayed Te, distorting
-		 * th_naive) then add aging with pessimistic rate (safer to trust
-		 * recent)
+		 * th_naive) then add aging with pessimistic rate (safer to trust recent)
 		 */
 		RTT_tmp = history_find(&peer->RTT_hist, j);
 		RTThat_tmp = history_find(&peer->RTThat_hist, j);
@@ -1697,20 +1682,14 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 		 */
 		if ( j == peer->stamp_i ) {
 			minET = ET; jbest = j; Ebound_min = Ebound;
-		}
-		else	{
+		} else {
 			if (ET < minET) { minET = ET; jbest = j; }
 			if (Ebound < Ebound_min) { Ebound_min = Ebound; } // dont assume min index same here
 		}
-		/* calculate weight, is <=1 note: Eoffset initialised to non-0 value,
-		 * safe to divide
-		 */
+		/* calculate weight, is <=1 note: Eoffset initialised to non-0 value, safe to divide */
 		wj = exp(- ET * ET / peer->Eoffset / peer->Eoffset); wsum += wj;
 
-		/*
-		 * Correct phat already used by difference with more locally accurate
-		 * plocal
-		 */
+		/* Correct phat already used by difference with more locally accurate plocal */
 		thnaive_tmp = history_find(&peer->thnaive_hist, j);
 		if (peer->plocal_problem)
 			thetahat += wj * (*thnaive_tmp);
@@ -1719,14 +1698,13 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 				peer->phat * (double) (stamp->Tf - stamp_tmp->Tf));
 	}
 
-	/*
-	 * Check Quality and Calculate new candidate estimate
+	/* Check Quality and Calculate new candidate estimate
 	 * quality over window looks good, use weights over window
 	 */
 	if (minET < peer->Eoffset_qual) {
+		DEL_STATUS(handle, STARAD_OFFSET_QUALITY);
 		/* if wsum==0 just copy thetahat to avoid crashing (can't divide by zero)
-		 *   this problem must be addressed by operator
-		 * else safe to normalise
+		 * (this problem must be addressed by operator), else safe to normalise
 		 */
 		if (wsum == 0) {
 			verbose(VERB_QUALITY, "i=%lu: quality looks good (minET = %lg) yet "
@@ -1739,19 +1717,9 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 			/* store est'd quality of new estimate */
 			peer->minET = minET;   // BUG  wrong place!  and is this minET_old?
 		}
-	}
-
-	/*
-	 * Quality bad, forget weights (and plocal refinement) and lean on last
-	 * reliable estimate
-	 */
-	else {
-		/*
-		 * if this executes, sanity can't be triggered! quality so bad,
-		 * simply can't update
-		 */
-		 //  BUG  where has gap code gone!!
-		thetahat = peer->thetahat;
+	} else {  // quality bad, forget weights (and plocal refinement) and lean on last reliable estimate
+		//  BUG  where has gap code gone!!
+		thetahat = peer->thetahat;	// this will effectively suppress sanity check
 		verbose(VERB_QUALITY, "i=%lu: thetahat quality very poor. wsum = %5.3lg, "
 				"curr err = %5.3lg, old = %5.3lg, this pt-err = [%5.3lg] [ms]",
 				peer->stamp_i, wsum, 1000*minET, 1000*peer->minET, 1000*ET);
@@ -1780,6 +1748,7 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 				"errTf = %5.3lf [ms], thetahat = %5.3lf [ms], diff = %5.3lf [ms]",
 				peer->stamp_i, 1000*errTf, 1000*thetahat,1000*(errTf-thetahat));
 
+
 	/* Apply Sanity Check 
 	 * sanity also relative to duration of lockouts due to low quality
 	 */
@@ -1798,18 +1767,8 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 		peer->offset_sanity_count++;
 		ADD_STATUS(handle, STARAD_OFFSET_SANITY);
 	}
-	else {
-		/* it passes or the candidate has been overwritten to last good one
-		 * TODO this is weird logic, prone to bugs and should be corrected,
-		 *      and the reason why the status flag have to be tested first.
-		 */
-		if (peer->thetahat != thetahat)
-			DEL_STATUS(handle, STARAD_OFFSET_QUALITY);
-
-		 /* update current value
-		 * both sane and quality, then a `true' update, record event for sanity test
-		 */
-		peer->thetahat = thetahat;
+	else { // either quality and sane, or repeated due to bad quality
+		peer->thetahat = thetahat;  //  it passes! update current value
 		if ( ( minET < peer->Eoffset_qual ) && ( wsum != 0 ) ) {
 // TODO check the logic of this branch, why thetahat update not in here as well
 			copystamp(stamp, &peer->thetastamp);
@@ -1817,7 +1776,6 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 			/* Record last good estimate of error bound after sanity check */
 			PEER_ERROR(peer)->Ebound_min_last = Ebound_min;
 		}
-//		DEL_STATUS(handle, STARAD_OFFSET_QUALITY);
 		DEL_STATUS(handle, STARAD_OFFSET_SANITY);
 	}
 
@@ -2034,7 +1992,7 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 				peer->stamp_i);
 	}
 
-	/* at end of history window */
+	/* at end of history/top window */
 	if ( peer->stamp_i == peer->top_win_half ) {
 		/* move window ahead by top_win/2 so i is the first stamp in the 2nd half */
 		peer->top_win_half   += peer->top_win/2;

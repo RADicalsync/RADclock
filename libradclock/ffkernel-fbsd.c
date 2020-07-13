@@ -205,7 +205,7 @@ has_vm_vcounter(struct radclock *clock)
 #   error "FreeBSD with rdtsc() defined but no machine/cpufunc.h header"
 #  endif
 # else
-static inline uint64_t
+static inline uint64_t	// same definition as in cpufunc.h
 rdtsc(void)
 {
     u_int32_t low, high;
@@ -221,7 +221,7 @@ vcounter_t radclock_readtsc(void) {
 
 // TODO we could afford some cleaning in here
 inline int
-radclock_get_vcounter_rdtsc(struct radclock *handle, vcounter_t *vcount)
+radclock_get_vcounter_rdtsc(struct radclock *clock, vcounter_t *vcount)
 {
 	*vcount = radclock_readtsc();
 	return 0;
@@ -233,7 +233,7 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 {
 	struct module_stat stat;
 	int err;
-
+	
 	switch (clock->kernel_version) {
 	case 0:
 	case 1:
@@ -263,17 +263,17 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 
 
 int
-radclock_get_vcounter_syscall(struct radclock *handle, vcounter_t *vcount)
+radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
 {
 	int ret;
 
 	if (vcount == NULL)
 		return (-1);
 
-	switch (handle->kernel_version) {
+	switch (clock->kernel_version) {
 	case 0:
 	case 1:
-		ret = syscall(handle->syscall_get_vcounter, vcount);
+		ret = syscall(clock->syscall_get_vcounter, vcount);
 		break;
 	case 2:
 	case 3:
@@ -300,75 +300,140 @@ radclock_get_vcounter_syscall(struct radclock *handle, vcounter_t *vcount)
  * Otherwise fall back to syscalls
  */
 int
-radclock_init_vcounter(struct radclock *handle)
+radclock_init_vcounter(struct radclock *clock)
 {
 	size_t size_ctl;
-	int passthrough_counter;
+	int bypass_active;
 	int ret;
 
-	passthrough_counter = 0;
-
-	switch (handle->kernel_version) {
-	case 0:
-		passthrough_counter = 0;
-		break;
-
-	case 1:
-		size_ctl = sizeof(passthrough_counter);
-		ret = sysctlbyname("kern.timecounter.passthrough", &passthrough_counter,
-				&size_ctl, NULL, 0);
-		if (ret == -1)
-		{
-			logger(RADLOG_ERR, "Cannot find kern.timecounter.passthrough in sysctl");
-			return (-1);
-		}
-		break;
-
-// FIXME XXX For these two versions, the sysctl has snicked in the official
-// kernel withouth the backend support. This test is not discrimating!
-	case 2:
-	case 3:
-		size_ctl = sizeof(passthrough_counter);
-		ret = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",
-			&passthrough_counter, &size_ctl, NULL, 0);
-		if (ret == -1) {
-			logger(RADLOG_ERR, "Cannot find kern.sysclock.ffclock.ffcounter_bypass");
-			passthrough_counter = 0;
-			return (-1);
-		}
-	}
-
-	size_ctl = sizeof(handle->hw_counter);
-	ret = sysctlbyname("kern.timecounter.hardware", &handle->hw_counter[0],
+	/* Retrieve name of hardware counter used by the kernel timecounter */
+	size_ctl = sizeof(clock->hw_counter);
+	ret = sysctlbyname("kern.timecounter.hardware", &clock->hw_counter[0],
 		&size_ctl, NULL, 0);
 	if (ret == -1) {
 		logger(RADLOG_ERR, "Cannot find kern.timecounter.hardware in sysctl");
 		return (-1);
 	}
-	logger(RADLOG_NOTICE, "Timecounter used is %s", handle->hw_counter);
+	logger(RADLOG_NOTICE, "Timecounter used is %s", clock->hw_counter);
 
-	if ( passthrough_counter == 0) {
-		handle->get_vcounter = &radclock_get_vcounter_syscall;
+
+	/* Retrieve value of kernel PT mode */
+	bypass_active = 0;
+	switch (clock->kernel_version) {
+	case 0:
+		bypass_active = 0;
+		break;
+
+	case 1:
+		size_ctl = sizeof(bypass_active);
+		ret = sysctlbyname("kern.timecounter.passthrough", &bypass_active,
+				&size_ctl, NULL, 0);
+		if (ret == -1) {
+			logger(RADLOG_ERR, "Cannot find kern.timecounter.passthrough in sysctl");
+			return (-1);
+		}
+		break;
+
+	case 2:
+	case 3:
+		size_ctl = sizeof(bypass_active);
+		ret = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",
+			&bypass_active, &size_ctl, NULL, 0);
+		if (ret == -1) {
+			logger(RADLOG_ERR, "Cannot find kern.sysclock.ffclock.ffcounter_bypass");
+			bypass_active = 0;
+			return (-1);
+		}
+	}
+	logger(RADLOG_NOTICE, "Kernel bypass mode is %d", bypass_active);
+
+
+	/* Make decision on mode and assign corresponding get_vcounter function.
+	 *  Here activatePT authorizes deamons to activate the kernal PT option if
+	 *  appropriate, but not to deactivate it.
+	 *  Sufficient for now to keep activatePT an internal parameter (see algo Doc)
+	 *  If want to make a config parameter later, must read it in clock_init_live
+	 *  where handle->conf is available and pass here as 2nd argument.
+	 */
+	int activatePT = 0;		// user's intention regardline passthrough=bypass
+
+	if ( (bypass_active == 0 && activatePT == 0) || clock->kernel_version<3) {
+		clock->get_vcounter = &radclock_get_vcounter_syscall;
 		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter with syscall.");
+		//goto profileit;
 		return (0);
 	}
 
-	if (strcmp(handle->hw_counter, "TSC") == 0) {
-		handle->get_vcounter = &radclock_get_vcounter_rdtsc;
-		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using rdtsc(). "
-			"* Make sure TSC is reliable *");
-	} else {
-		handle->get_vcounter = &radclock_get_vcounter_syscall;
+	/* Activate if not already, provided it passes basic tests [ needs KV>2 ]*/
+	if ( strcmp(clock->hw_counter, "TSC") != 0 ) {
+		logger(RADLOG_NOTICE, "Bypass active/requested but counter seems wrong.");
+		clock->get_vcounter = &radclock_get_vcounter_syscall;
 		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using syscall.");
+	} else {
+		logger(RADLOG_NOTICE, "Counter seems to be a TSC (assumed reliable)");
+		if (bypass_active == 0) {
+			logger(RADLOG_NOTICE, "Activating kernel bypass mode as requested");
+			bypass_active = 1;
+			sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass", NULL, NULL, &bypass_active, size_ctl);
+		}
+		clock->get_vcounter = &radclock_get_vcounter_rdtsc;
+		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using rdtsc()");
 	}
 
-	/* Last, a warning */
-	if (passthrough_counter == 1) {
-		if ((strcmp(handle->hw_counter, "TSC") != 0)
-			&& (strcmp(handle->hw_counter, "ixen") != 0))
-			logger(RADLOG_ERR, "Passthrough mode in ON but the timecounter "
-					"does not support it!!");
-	}
+//profileit:
+//	/* rdtsc and syscall profiling code */
+//	if ( HAVE_RDTSC ) {
+//
+//	int k;
+//	vcounter_t rd, rd1, rd2, rd3, rd4, tc;
+//
+//	rd1 = radclock_readtsc();	// warm up counter
+////	for (k=1; k<=2; k++) {
+////		rd1 = radclock_readtsc();
+////		rd2 = radclock_readtsc();
+////		rd3 = (vcounter_t) rdtsc32();
+////		rd4 = (vcounter_t) rdtsc32();
+////		printf("Direct rdtsc back-back latency test\n");
+////		printf(" rd1 = %llu\n rd2 = %llu   Diff = %llu \n",
+////		(long long unsigned)rd1, (long long unsigned)rd2, (long long unsigned)(rd2 - rd1));
+////		printf(" rd1 = %llX\n rd2 = %llX   Diff = %llX \n",
+////		(long long unsigned)rd1, (long long unsigned)rd2, (long long unsigned)(rd2 - rd1));
+////		printf(" rd3 = %llX\n rd4 = %llX   Diff = %llX midDiff = %llX \n\n",
+////		(long long unsigned)rd3, (long long unsigned)rd4,
+////		(long long unsigned)(rd4 - rd3),
+////		(long long unsigned)(rd3 - (unsigned)rd2) );
+////	}
+//
+//	/* Profile rdtsc */
+//	for (k=1; k<=1; k++) {
+//		rd1 = radclock_readtsc();
+//		rd  = radclock_readtsc();	// cut out radclock_get_vcounter_rdtsc wrapper
+//		rd2 = radclock_readtsc();
+//		printf("Bracket test for rdtsc call latency\n");
+//		printf(" rd1 = %llu\n rd  = %llu\n rd2 = %llu  \t Diff = %llu \n",
+//			(long long unsigned)rd1, (long long unsigned)rd, (long long unsigned)rd2, (long long unsigned)(rd2 - rd1));
+//		printf(" rd1 = %llX\n rd  = %llX\n rd2 = %llX  \t Diff = %llX \n\n",
+//			(long l
+//
+//			ong unsigned)rd1, (long long unsigned)rd, (long long unsigned)rd2, (long long unsigned)(rd2 - rd1));	}
+//
+//	/* Profile syscall */
+//	ffclock_getcounter(&tc);	// warm up tc counter
+//	for (k=1; k<=5; k++) {
+//		rd1 = radclock_readtsc();
+//		ffclock_getcounter(&tc);	// cut out radclock_get_vcounter_syscall wrapper
+//		rd2 = radclock_readtsc();
+//		printf("Bracket test for ffcounter call latency\n");
+//		printf(" rd1 = %llu\n tc  = %llu\n rd2 = %llu  \t Diff = %llu  \t rd2-tc = %llu \n",
+//			(long long unsigned)rd1, (long long unsigned)tc, (long long unsigned)rd2,
+//			(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - tc) );
+//		printf(" rd1 = %llX\n tc  = %llX\n rd2 = %llX  \t Diff = %llX  \t rd2-tc = %llX \n\n",
+//			(long long unsigned)rd1, (long long unsigned)tc, (long long unsigned)rd2,
+//			(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - tc) );
+//	}
+//
+//	} // HAVE_RDTSC
+	
 
 	return (0);
 }

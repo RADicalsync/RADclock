@@ -85,9 +85,9 @@ vcounter_t radclock_readtsc(void)
 
 
 
-int radclock_get_vcounter(struct radclock *handle, vcounter_t *vcount)
+int radclock_get_vcounter(struct radclock *clock, vcounter_t *vcount)
 {
-	return handle->get_vcounter(handle, vcount);
+	return clock->get_vcounter(clock, vcount);
 }
 
 

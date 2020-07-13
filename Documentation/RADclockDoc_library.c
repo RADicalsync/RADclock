@@ -818,11 +818,13 @@ RADclock''s view of its status and the quality of its estimates:
 #define STARAD_KCLOCK			0x0004	// RADclock kernel time is reliable
 #define STARAD_SYSCLOCK			0x0008	// system clock (if RADclock controlled) is accurate
 #define STARAD_STARVING			0x0010	// stamps lacking (pkts lost, server unavailable, match failure)
-#define STARAD_PERIOD_QUALITY	0x0020	// RADclock period estimate is poor
-#define STARAD_PERIOD_SANITY	0x0040	// consecutive period sanity checks triggered
-#define STARAD_OFFSET_QUALITY	0x0080 	// RADclock absolute time poor (relatively speaking..)
-#define STARAD_OFFSET_SANITY	0x0100	// consecutive offset sanity checks triggered
-
+#define STARAD_RTT_UPSHIFT		0x0020	// Quality of the RADclock period estimate is poor
+#define STARAD_PHAT_UPDATED	0x0040   // phat updated on this stamp (not adopted if sanity triggered)
+#define STARAD_PHAT_SANITY		0x0080   // phat update seems impossible, suspect server error or path asym change
+#define STARAD_PLOCAL_QUALITY	0x0100	// Quality of new plocal estimate below level acceptable for adoption
+#define STARAD_PLOCAL_SANITY	0x0200	// plocal update is suspect, likely server error or path asym change, adoption blocked
+#define STARAD_OFFSET_QUALITY	0x0400	// Quality of new offset estimate below level acceptable for adoption
+#define STARAD_OFFSET_SANITY	0x0800	// offset update is suspect, likely server error or path asym change, adoption blocked
 
 The functions relating to clock creation etc we have already seen from radapi-base.c:
 	 struct radclock  *radclock_create(void);

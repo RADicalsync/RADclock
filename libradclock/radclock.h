@@ -50,15 +50,24 @@
 /* RADclock is lacking valid input stamps */
 #define STARAD_STARVING			0x0010
 /* Upward Shift Detected */
+
 #define STARAD_RTT_UPSHIFT		0x0020
 /* Quality of the RADclock period estimate is poor */
-#define STARAD_PERIOD_QUALITY	0x0040
-/* Consecutive period sanity checks have been triggered */
-#define STARAD_PERIOD_SANITY	0x0080
-/* Quality of the RADclock offset estimate is poor */
-#define STARAD_OFFSET_QUALITY	0x0100
-/* Consecutive offset sanity checks have been triggered */
-#define STARAD_OFFSET_SANITY	0x0200
+
+#define STARAD_PHAT_UPDATED	0x0040
+/* phat updated on this stamp (not adopted if sanity triggered) */
+#define STARAD_PHAT_SANITY		0x0080
+/* phat update seems impossible, suspect server error or path asym change */
+
+#define STARAD_PLOCAL_QUALITY	0x0100
+/* Quality of new plocal estimate below level acceptable for adoption */
+#define STARAD_PLOCAL_SANITY	0x0200
+/* plocal update is suspect, likely server error or path asym change, adoption blocked */
+
+#define STARAD_OFFSET_QUALITY	0x0400
+/* Quality of new offset estimate below level acceptable for adoption */
+#define STARAD_OFFSET_SANITY	0x0800
+/* offset update is suspect, likely server error or path asym change, adoption blocked */
 
 typedef uint64_t vcounter_t;
 

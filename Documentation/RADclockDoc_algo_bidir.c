@@ -170,6 +170,118 @@ pthread_raw.c:process_stamp
 
 On kernel side, see FFclockDoc_FreeBSDv4 under  windup calls.
 
+// From kernel doc:
+The current tc is accessible via
+sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)   // see if tc there or changed
+and is recorded in the global  clock.hw_counter[32] , initialized in radclock_init_vcounter.
+It is acted on in pthread_dataproc.c:process_stamp  just before the pushing of
+a fresh parameter update to the kernel. If a change is seen, the update is skipped
+(hence ffclock_windup had earlier just advanced a standard tick, with no update)
+and the algo reinitialized (however it is not clear if this is done properly).
+For more details see the algo documentation.
+
+
+
+/* TODO
+	- put in a better why to catch a tc and restart the daemon - it is a rare event, just do it
+	   - now that ffclock_change_tc pushes the almost reset FFdata to the global, there is a pretty
+	    foolproof ways to confirm this from the daemon side - though just checking that the tc has changed still says
+	    is all:  the daemon is not going to check until the next valid stamp comes through, unless you add more to the
+	    asynchronous status part, which you must do anyway to support telemetry
+	- check that algo re-init is correct and complete if not doing a full restart
+*/
+
+
+
+
+
+==============================================================
+FFcounter timestamping bypass/passthrough mode
+======================================
+
+Bypass mode enables a TSC counter, if available, to be accessed more directly
+that its recreated FFcounter form within the tc mechanism.
+See the FreeBSD doc for an introduction.
+
+The goal of the daemon side code is to take advantage of the bypass mode if possible.
+The logic is performed within ffkernk-*.c:radclock_init_vcounter ,
+currently only supported properly for FreeBSD.
+
+Taking advantage means setting the clock->get_vcounter  fn pointer to either
+radclock_get_vcounter_{syscall,rdtsc} .
+If rdtsc() is not yet defined, a standard definition is provided.
+
+The code first echos the current counter and the mode taken from the kernel.
+If the mode is active, this implies that the TSC is the counter, and so the daemon
+can select rdtsc() (but this assumption is tested).
+If not, but if TSC is the tc counter and an internal configuration
+variable  activatePT  indicates bypass is desirable, then the daemon first activates the mode.
+
+If activatePT=0, it is still easy to activate bypass at any time using
+	sysctl kern.sysclock.ffclock.ffcounter_bypass=1
+
+The daemon calls radclock_init_vcounter but does not in fact use the counter reading calls,
+and so does not use bypass in that sense, as it obtains the key raw timestamps from bpf.
+Libprocesses will use radclock_init_vcounter, and can benefit individually from a bypass that
+may have been activated (or a counter that was changed to TSC then bypass activated)
+at some point after the daemon was launched, eg just before the
+libprocess was launched via sysctl, or within some related research program.
+
+
+// TODO: determin if the term passthrough should be abandoned everywhere for bypass
+
+
+
+
+==============================================================
+Packet Timestamp Mode Selection and Testing
+============================
+
+See the FreeBSD Doc for details on the _T_ timestamp type language, header size issues,
+and the bpf -> pcap mapping.
+
+
+
+  - Tests in extract_vcount_stamp_v3  are being performed per-pkt,
+    but should be performed once only, perhaps at compile time
+    
+    
+    
+    
+============= OLD notes to be removed
+
+On the daemon side, the timestamp mode is set as :
+pcap-fbsd.c:descriptor_set_tsmode
+  PKTCAP_TSMODE_SYSCLOCK   bd_tstamp = BPF_T_MICROTIME
+  PKTCAP_TSMODE_FFNATIVECLOCK						 bd_tstamp = BPF_T_FFCOUNTER
+  ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp) == -1)
+11
+Actually want something like
+	PKTCAP_TSMODE_DEAMON			bd_tstamp = BPF_T_FFCOUNTER | BPF_T_FBCLOCK | BPF_T_NANOTIME
+	  - daemon wants the FFcounter, and the FB as well to enable external comparisons
+		  - or, could say that deamon doesnt use it so doesnt care, ask for FAST to reduce kernel load
+	  - timeval is old, timespec is better  [ bintime less convenient for floating pt ]
+	PKTCAP_TSMODE_READFF			bd_tstamp = BPF_T_FFCOUNTER | BPF_T_FFCLOCK | BPF_T_NANOTIME
+	  - libprocess may want the raw timestamp, or the convenience of an immediate conversion to Ca(t)
+	  - how to get FFCLOCK_{LEAPSEC,LERP} preferences into  BPF_T_ language
+	    At least bpf.c does include timeff.h  which includes these macros
+		 - currently wouldnt want LERP, but would want LEAP
+		 - could expand BPF_T_FFCLOCK  with BPF_T_FFLERPCLOCK, natural, it is a kind of clock
+			otherwise BPF_T_FFCLOCK is ambiguous and would have to be LERP for safety for generic applications
+		 - what about FAST?  it requires knowledge of kernel internals, rationale
+		   is lower system load if hz res sufficient
+	    - leap is somewhat wierd, the native Ca is leap free for the algo, but what is it really?
+		   it is neither UTC, nor uptime, the kernel shouldnt know about this..  it is really
+		   a daemon concept, but should just return with LEAP by default.
+			Confusion:
+			  daemon:   native means algo version without new leaps
+							but Ca taken to be UTC (rely on read fns to include leaps)
+			  kernel:   native means Ca UTC but with update induced jumps
+			            BUT:  data structure still hold leap stuff separately, again rely on read fns for UTC
+							LERP or `mono FF` means Ca UTC smoothed out
+
+			Libprocesses can use the API if they want native Ca.
+
 
 
 ==============================================================

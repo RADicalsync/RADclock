@@ -429,11 +429,6 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
  */
 
 
-// TODO XXX improve the management of kernel support versions. Currently that's
-// pretty ugly and not optimised
-
-
-
 
 /* XXX Can we clean that ??
  * Redefinition of the BPF header as in bpf.h Just to avoid to have to include
@@ -545,7 +540,7 @@ extract_vcount_stamp_v2(pcap_t *p_handle, const struct pcap_pkthdr *header,
  *  timeval =  64bits:  should work in traditional timestamps, where catchpacket code
  *                      will select bpf_hdr, and both it and bpf_hdr_hack_v3 use timeval
  *                      Hence the layouts are compatible and the raw ts member will be recovered
- * The above cases are neatly handled together without have to explicitly measure sizeof(timeval).
+ * The above cases are neatly handled together without having to explicitly measure sizeof(timeval).
  *  timeval =  64bits:  will fail if select non-traditional FORMAT which will force the use of xhdr
  * Could be fixed with more effort, by detecting sizeof(timeval), and testing if
  * the header pointer is right under the expected, and a backup scenario.  For full
@@ -761,6 +756,7 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 		return (1);
 
 	// FIXME : need a function pointer to the correct extract_vcount function
+	//         Yes, would avoid need for testing each time
 	switch (clock->kernel_version) {
 	case 0:
 	case 1:

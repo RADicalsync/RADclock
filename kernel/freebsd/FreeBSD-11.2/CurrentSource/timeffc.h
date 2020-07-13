@@ -41,16 +41,16 @@
  * Provides time of last daemon update, clock status and bound on error.
  */
 struct ffclock_estimate {
-	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
-	ffcounter	update_ffcount;	/* Counter value at last update. */
-	ffcounter	leapsec_expected;	/* Estimated counter value of next leap second. */
+	struct bintime	update_time;	/* FFclock time of last update, ie Ca(tlast) */
+	ffcounter	update_ffcount;	/* Counter value at last update */
+	ffcounter	leapsec_expected;	/* Estimated counter value of next leap sec */
 	uint64_t	period;				/* Estimate of current counter period [2^-64 s] */
-	uint32_t	errb_abs;			/* Bound on absolute clock error [ns]. */
+	uint32_t	errb_abs;				/* Bound on absolute clock error [ns] */
 	uint32_t	errb_rate;			/* Bound on relative counter period err [ps/s] */
-	uint32_t	status;				/* Clock status. */
-	int16_t	leapsec_total;		/* Sum of leap seconds seen since clock start. */
-	int8_t	leapsec_next;		/* Next leap second (in {-1,0,1}). */
-	uint8_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
+	uint32_t	status;					/* Clock status */
+	uint16_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
+	int8_t	leapsec_total;			/* Sum of leap secs seen since clock start */
+	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
 };
 
 /* Constants to hold errors and error rates in 64bit binary fraction fields */
@@ -63,11 +63,18 @@ struct ffclock_estimate {
 #if __BSD_VISIBLE
 #ifdef _KERNEL
 
-/* Define the kern.sysclock sysctl tree. */
+/* Declare the kern.sysclock sysctl tree. */
 SYSCTL_DECL(_kern_sysclock);
 
-/* Define the kern.sysclock.ffclock sysctl tree. */
+/* Declare the kern.sysclock.ffclock sysctl tree. */
 SYSCTL_DECL(_kern_sysclock_ffclock);
+
+/* Flag defining if counter bypass mode is desired or not.
+ * This is only possible if the counter is a TSC with rdtsc defined.
+ */
+#ifdef FFCLOCK
+extern int sysctl_kern_ffclock_ffcounter_bypass;
+#endif
 
 /*
  * Index into the sysclocks array for obtaining the ASCII name of a particular

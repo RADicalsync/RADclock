@@ -658,7 +658,8 @@ printout_FFtick(struct fftimehands *ffth)
 	printf("*    update_time: %llu.%llu [bintime]\t\t status: 0x%04X\n",
 		(unsigned long long)cest->update_time.sec,
 		(unsigned long long)cest->update_time.frac, cest->status);
-	printf("*    update_ffcount: %llu  secs_to_nextupdate: %u \n",
+	printf("*    update_ffcount: %llu = %#llX \t secs_to_nextupdate: %u \n",
+		(unsigned long long)cest->update_ffcount,
 		(unsigned long long)cest->update_ffcount, cest->secs_to_nextupdate);
 	printf("*    errb_{abs,rate} = %lu  %lu\n",
 		(unsigned long)cest->errb_abs, (unsigned long)cest->errb_rate);
@@ -680,7 +681,9 @@ printout_FFtick(struct fftimehands *ffth)
 		(unsigned long long)ffth->tick_error.sec,
 		(unsigned long long)ffth->tick_error.frac);
 	
-	printf("   tick_ffcount: %llu \n", (unsigned long long)ffth->tick_ffcount);
+	printf("   tick_ffcount: %llu = %#llX\n",
+		(unsigned long long)ffth->tick_ffcount,
+		(unsigned long long)ffth->tick_ffcount);
 	printf("   period_lerp %llu (u_diff: %llu %llu)\n",
 		(unsigned long long)ffth->period_lerp,
 		(unsigned long long)(ffth->period_lerp - cest->period),
@@ -695,9 +698,9 @@ printout_FFtick(struct fftimehands *ffth)
  * Update the fftimehands. The updated tick state is based on the previous tick if
  * there has been no actionable update in the FFclock parameters during the current
  * tick (ffclock_updated <= 0), and each of the native, monotonic, and difference
- * FFclocks advance linearly. Otherwise it is based off the updated parameters and
- * the time of the update. The native FFclock will then jump, the monotonic clock will
- * not (except under special conditions).  The diff clock will never
+ * FFclocks advance linearly. Otherwise it is based off the updated parameters at
+ * the time of the update. The native FFclock will then jump, the monotonic clock
+ * will not (except under special conditions).  The diff clock will never
  * jump, to ensure its intended use as a difference clock, used to measure
  * time differences. The linear interpolation parameters of the
  * monotonic FFclock ({tick_time,period}_lerp) are recomputed for the new tick.
@@ -718,7 +721,7 @@ ffclock_windup(unsigned int delta)
 	/* verbosity control */
 	struct bintime bttest;
 	static u_int ccc = 0;
-	static u_int	 watch = 0;
+	static u_int watch = 0;
    int updatedcopy = ffclock_updated;
 	
 	forward_jump = 0;
@@ -760,7 +763,7 @@ ffclock_windup(unsigned int delta)
 		bintime_add(&ffth->tick_error, &bt);
 
 		/* Update mono FFclock members {period_lerp, tick_time_lerp} */
-		ffth->period_lerp = fftimehands->period_lerp;
+		ffth->period_lerp 	= fftimehands->period_lerp;
 		ffth->tick_time_lerp = fftimehands->tick_time_lerp;
 		ffclock_convert_delta(ffdelta, ffth->period_lerp, &bt);
 		bintime_add(&ffth->tick_time_lerp, &bt);
@@ -783,7 +786,7 @@ ffclock_windup(unsigned int delta)
 	}
 
 	/* Flag event where FFclock update entered next tick. Should be very rare. */
-	if (ffclock_estimate.update_ffcount > ffth->tick_ffcount) {
+	if (ffclock_estimate.update_ffcount >= ffth->tick_ffcount) {
 		printf("ffclock_windup: at vcount = %llu, ffclock update slipped into "
 		       "next tick, will process on next call. \n",
 				(unsigned long long)ffth->tick_ffcount);
@@ -801,7 +804,7 @@ ffclock_windup(unsigned int delta)
 		ffdelta = ffth->tick_ffcount - cest->update_ffcount; // time since update
 		ffth->tick_time = cest->update_time;
 		ffclock_convert_delta(ffdelta, cest->period, &bt);
-		bintime_add(&ffth->tick_time, &bt);						// bt not changed, reuse
+		bintime_add(&ffth->tick_time, &bt);
 		bintime_mul(&bt, cest->errb_rate * PS_IN_BINFRAC);	// errb_rate in [ps/s]
 		bintime_addx(&bt, cest->errb_abs * NS_IN_BINFRAC);	// errb_abs in [ns]
 		ffth->tick_error = bt;
@@ -813,7 +816,7 @@ ffclock_windup(unsigned int delta)
 			
 		/* Update mono FFclock member tick_time_lerp, standard case.
 		 *   ffclock_updated by ffclock_setto_rtc :  re-initialize
-		 *   ffclock_updated by daemon :             ensure continuity across ticks
+		 *   ffclock_updated by daemon :             ensure continuity over ticks
 		 */
 		if (ffclock_updated == INT8_MAX)	{	// update set by ffclock_setto_rtc
 			ffth->tick_time_lerp = ffth->tick_time;
@@ -824,7 +827,7 @@ ffclock_windup(unsigned int delta)
 			bintime_add(&ffth->tick_time_lerp, &bt);
 		}
 		
-		/* Record direction of jump between monoFFclock and FFclock at tick start */
+		/* Record dirn of jump between monoFFclock and FFclock at tick-start */
       if (bintime_cmp(&ffth->tick_time, &ffth->tick_time_lerp, >))
 			forward_jump = 1;		// else = 0
 		
@@ -839,11 +842,11 @@ ffclock_windup(unsigned int delta)
 		}
 		
 		/* Update mono FFclock member tick_time_lerp, exceptional case.
-		 * Break monotonicity by allowing mono FFclock to jump to meet native FFclock
-		 * Only occurs under tight conditions to prevent a poor mono FFclock
+		 * Break monotonicity by allowing monoFFclock jump to meet native FFclock
+		 * Only occurs under tight conditions to prevent a poor monoFFclock
 		 * initialization from taking a very long time to catch up to FFclock.
-		 * Also, absorb the jump into ffclock_boottime to ensure continuity of boot
-		 * uptime functions.
+		 * Also, absorb the jump into ffclock_boottime to ensure continuity of
+		 * boot uptime functions.
 		 */
 		if (((ffclock_status & FFCLOCK_STA_UNSYNC) == FFCLOCK_STA_UNSYNC) &&
 		    ((cest->status & FFCLOCK_STA_UNSYNC) == 0) &&
@@ -853,14 +856,14 @@ ffclock_windup(unsigned int delta)
 			else
 				bintime_sub(&ffclock_boottime, &gap_lerp);
 			ffth->tick_time_lerp = ffth->tick_time;
-			bintime_clear(&gap_lerp); // signal to period_lerp algo that nothing to do
+			bintime_clear(&gap_lerp); // signal nothing to do to period_lerp algo
 			printf("** ffwindup:  Jumping monotonic FFclock\n" );
 			if (!watch) watch = 1;	// activate verbosity watching
 		}
 
 		
 		/* Update mono FFclock member period_lerp
-		 * The goal of the monoFF algorithm is to reduce gap between monoFF and the
+		 * The goal of the monoFF algorithm is to reduce the gap between monoFF and the
 		 * native FF to zero by the next FFclock update. The reduction uses linear
 		 * interpolation via selecting period_lerp.  To ensure rate quality,
 		 * |period_lerp - period| is capped to 5000PPM (5ms/s).
@@ -932,11 +935,51 @@ ffclock_windup(unsigned int delta)
 	if ( watch ) {
 		// if ( (fftimehands->tick_ffcount) < 3000*timehands->th_counter->tc_frequency && ccc<20) { // <10sec
 		printf(" %u\t ffwindup:  ffclock_updated = %d  Tick start = %llu \n",
-				 ccc++, updatedcopy, (long long unsigned)fftimehands->tick_ffcount );
+				 ccc++, updatedcopy, (long long unsigned)ffth->tick_ffcount );
 		printout_FFtick(fftimehands);		// current
 		printf("   UPDATED TO --->\n");
 		printout_FFtick(ffth);				// updated
 		watch++;
+		
+		/* testing of bypass code */
+//		int k;
+//		uint64_t rd1, rd2;
+//		u_int tc;
+//		ffcounter now;
+//
+//		sysctl_kern_ffclock_ffcounter_bypass = 0;
+//
+//		for (k=1; k<=2; k++) {
+//			rd1 = rdtsc();
+//			tc  = (uint64_t) timecounter->tc_get_timecount(timecounter);
+//			rd2 = rdtsc();
+//			printf("Bracket test for ffcounter call latency\n");
+//			printf(" rd1 = %llX\n tc  =  %llX\n rd2 = %llX  \t Diff = %llX  \t rd2-tc = %llX \n\n",
+//				(long long unsigned)rd1, (long long unsigned)tc, (long long unsigned)rd2,
+//				(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - tc) );
+//		}
+//		for (k=1; k<=2; k++) {
+//			rd1 = rdtsc();
+//			ffclock_read_counter(&now);
+//			rd2 = rdtsc();
+//			printf("Bracket test for ffclock_read_counter call latency\n");
+//			printf(" rd1 = %llX\n now = %llX\n rd2 = %llX  \t Diff = %llX  \t rd2-now = %llX \n\n",
+//				(long long unsigned)rd1, (long long unsigned)now, (long long unsigned)rd2,
+//				(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - now) );
+//		}
+//
+//		sysctl_kern_ffclock_ffcounter_bypass = 1;
+//
+//		for (k=1; k<=2; k++) {
+//			rd1 = rdtsc();
+//			ffclock_read_counter(&now);
+//			rd2 = rdtsc();
+//			printf("Bracket test for ffclock_read_counter call latency\n");
+//			printf(" rd1 = %llX\n now = %llX\n rd2 = %llX  \t Diff = %llX  \t rd2-now = %llX \n\n",
+//				(long long unsigned)rd1, (long long unsigned)now, (long long unsigned)rd2,
+//				(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - now) );
+//		}
+		
 		if (watch>=3) watch = 0; 	//	switch watch off after context interval
 	}
 	
@@ -946,29 +989,48 @@ ffclock_windup(unsigned int delta)
 
 /*
  * Adjust the fftimehands when the timecounter is changed. Stating the obvious,
- * the old and new hardware counter cannot be read simultaneously. tc_windup()
- * does read the two counters 'back to back', but a few cycles are effectively
- * lost, and not accumulated in tick_ffcount. This is a fairly radical
- * operation for a feed-forward synchronization daemon, and it is its job to not
- * pushing irrelevant data to the kernel. Because there is no locking here,
- * simply force to ignore pending or next update to give daemon a chance to
- * realize the counter has changed.
+ * the old and new hardware counter cannot be read simultaneously.
+ * Because there is no locking here, simply force to ignore pending or next
+ * update to give daemon a chance to realize the counter has changed.
  */
 static void
-ffclock_change_tc(struct timehands *th)
+ffclock_change_tc(struct timehands *th, u_int ncount)
 {
 	struct fftimehands *ffth;
 	struct ffclock_estimate *cest;
 	struct timecounter *tc;
 	uint8_t ogen;
+	ffcounter now;
 
 	tc = th->th_counter;
+	
+	/* Prepare next fftimehand where tick state will be updated */
 	ffth = fftimehands->next;
 	ogen = ffth->gen;
 	ffth->gen = 0;
-
 	cest = &ffth->cest;
+	
+	/* Reset FFcounter to match start of current tick.
+	 *  If a TSC derived counter, get correct higher order bits to ensure the
+	 *  FFcounter origin matches that of the counter, rather than the time the
+	 *  counter was adopted. If not TSC, the origin will be ncount in the past.
+	 *  In all cases, the lower of FFcounter and th_offset_count will agree.
+	 */
+	if ( strcmp(tc->tc_name, "TSC") != 0 )
+		ffth->tick_ffcount = (ffcounter)ncount;  // origin matches timehands
+	else {
+		now = (ffcounter) rdtsc();
+		if (strcmp(tc->tc_name, "TSC-low") == 0) // TSC reads are shifted
+			now >>= (int)(intptr_t)tc->tc_priv;
+		/* reconstruct the counter value at the time ncount was taken */
+		ffth->tick_ffcount = now - (ffcounter)((u_int)now - ncount);
+	}
+	
+	/* This update does not advance the tick itself, intead it reinitiates when
+	 * existing values are not appropriate for the new counter.
+	 */
 	bcopy(&(fftimehands->cest), cest, sizeof(struct ffclock_estimate));
+	cest->update_ffcount = 0;		// cest->update_time still valid, so retained
 	cest->secs_to_nextupdate = 0;
 	cest->period = ((1ULL << 63) / tc->tc_frequency ) << 1;
 	cest->errb_abs = 0;
@@ -978,11 +1040,16 @@ ffclock_change_tc(struct timehands *th)
 	cest->leapsec_total = 0;
 	cest->leapsec_next = 0;
 
-	ffth->tick_ffcount = fftimehands->tick_ffcount;
-	ffth->tick_time_lerp = fftimehands->tick_time_lerp;
-	ffth->tick_time_diff = fftimehands->tick_time_diff;
 	ffth->tick_time = fftimehands->tick_time;
+	ffth->tick_error = fftimehands->tick_error;
+	ffth->tick_time_diff = fftimehands->tick_time_diff;
+	ffth->tick_time_lerp = fftimehands->tick_time_lerp;
 	ffth->period_lerp = cest->period;
+	
+	/* Push reset FFdata to the global variable */
+	mtx_lock(&ffclock_mtx);
+	bcopy(cest,&ffclock_estimate, sizeof(struct ffclock_estimate));
+	mtx_unlock(&ffclock_mtx);
 
 	/* Do not lock but ignore next update from synchronization daemon. */
 	if (ffclock_updated == INT8_MAX)	// reset not yet processed by ffclock_windup
@@ -995,9 +1062,10 @@ ffclock_change_tc(struct timehands *th)
 	ffth->gen = ogen;
 	fftimehands = ffth;
 	
-	printf("ffclock_change_tc: at tick_ffcount = %llu, to  %s (%llu Hz)\n",
-		(unsigned long long)ffth->tick_ffcount, tc->tc_name,
-		(unsigned long long)tc->tc_frequency);
+	printf("ffclock_change_tc: new tick_ffcount = %llu = %#llX, with tc %s (%llu Hz)\n",
+		(unsigned long long)ffth->tick_ffcount,
+		(unsigned long long)ffth->tick_ffcount,
+		tc->tc_name, (unsigned long long)tc->tc_frequency);
 }
 
 /*
@@ -1088,6 +1156,7 @@ ffclock_convert_diff(ffcounter ffdelta, struct bintime *bt)
 
 /*
  * Access to current ffcounter value.
+ * If bypass mode on, assume the counter is TSC, and access it directly.
  */
 void
 ffclock_read_counter(ffcounter *ffcount)
@@ -1096,6 +1165,11 @@ ffclock_read_counter(ffcounter *ffcount)
 	struct fftimehands *ffth;
 	unsigned int gen, delta;
 
+	if (sysctl_kern_ffclock_ffcounter_bypass == 1) {
+		*ffcount = (ffcounter) rdtsc();
+		return;
+	}
+	
 	/*
 	 * ffclock_windup() called from tc_windup(), safe to rely on
 	 * th->th_generation only, for correct delta and ffcounter.
@@ -1228,8 +1302,10 @@ extern int time_status;
 extern long time_esterror;
 
 /*
- * Take a snapshot of sysclock data which can be used to compare system clocks
- * and generate timestamps after the fact.
+ * Take a raw timestamp (timecounter reading), and then snapshot the sysclock
+ * data which can be used to compare system clocks and generate timestamps
+ * of all possible types after the fact.
+ * If bypass mode on, assume the counter is TSC, and access it directly.
  */
 void
 sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
@@ -1239,22 +1315,28 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 	struct bintime bt;
 	unsigned int delta, gen;
 #ifdef FFCLOCK
-	struct fftimehands *ffth;
 	struct ffclock_info *ffi;
+	struct fftimehands *ffth;
 	struct ffclock_estimate cest;
-
-	ffi = &clock_snap->ff_info;
 #endif
 
-	fbi = &clock_snap->fb_info;
 	delta = 0;
-
 	do {
 		th = timehands;
 		gen = atomic_load_acq_int(&th->th_generation);
+		if (!fast) {
+#ifdef FFCLOCK
+			if (sysctl_kern_ffclock_ffcounter_bypass == 1)
+				delta = rdtsc32() - th->th_offset_count;
+			else
+#endif
+				delta = tc_delta(th);
+		}
+		fbi = &clock_snap->fb_info;
 		fbi->th_scale = th->th_scale;
 		fbi->tick_time = th->th_offset;
 #ifdef FFCLOCK
+		ffi = &clock_snap->ff_info;
 		ffth = fftimehands;
 		ffi->tick_time = ffth->tick_time_lerp;
 		ffi->tick_time_diff = ffth->tick_time_diff;
@@ -1264,8 +1346,6 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 		clock_snap->ffcount = ffth->tick_ffcount;
 		cest = ffth->cest;
 #endif
-		if (!fast)
-			delta = tc_delta(th);
 		atomic_thread_fence_acq();
 	} while (gen == 0 || gen != th->th_generation);
 
@@ -1597,6 +1677,9 @@ tc_windup(struct bintime *new_boottimebin)
 
 	/* Now is a good time to change timecounters. */
 	if (th->th_counter != timecounter) {
+		printf("Changing tc counter on this tc-tick:  %s = %#X --> %s = %#X \n",
+			th->th_counter->tc_name, th->th_offset_count,
+			timecounter->tc_name, ncount);
 #ifndef __arm__
 		if ((timecounter->tc_flags & TC_FLAGS_C2STOP) != 0)
 			cpu_disable_c2_sleep++;
@@ -1608,7 +1691,7 @@ tc_windup(struct bintime *new_boottimebin)
 		tc_min_ticktock_freq = max(1, timecounter->tc_frequency /
 		    (((uint64_t)timecounter->tc_counter_mask + 1) / 3));
 #ifdef FFCLOCK
-		ffclock_change_tc(th);
+		ffclock_change_tc(th,ncount);
 #endif
 	}
 
@@ -1702,7 +1785,7 @@ sysctl_kern_timecounter_hardware(SYSCTL_HANDLER_ARGS)
 		if (strcmp(newname, newtc->tc_name) != 0)
 			continue;
 
-		printf(" %d\t Callback tc_hardware start  %llu:  newname= %s  error= %d\n",
+		printf(" %d\t Callback tc_hardware inloop  %llu:  newname= %s  error= %d\n",
    	ccc++, (long long unsigned)ffcount, newname, error);
 		/* Warm up new timecounter. */
 		(void)newtc->tc_get_timecount(newtc);
@@ -2177,10 +2260,22 @@ inittimecounter(void *dummy)
 	ffclock_init();
 #endif
 	/* warm up new timecounter (again) and get rolling. */
+//	int k;
+//	uint64_t rd1, rd2;
+//	u_int tc;
+//
+//	rd1 = rdtsc();
+//	printf(" *** inittimecounter before windup:  (th_offset_count,tick_ffcount) = (%X, %llX)     (TSC = %#llX = %llu)\n",
+//		timehands->th_offset_count,
+//		(long long unsigned)fftimehands->tick_ffcount, (long long unsigned)rd1, (long long unsigned)rd1 );
 	(void)timecounter->tc_get_timecount(timecounter);
 	(void)timecounter->tc_get_timecount(timecounter);
 	mtx_lock_spin(&tc_setclock_mtx);
 	tc_windup(NULL);
+//	rd2 = rdtsc();
+//	printf(" *** inittimecounter after  windup:  (th_offset_count,tick_ffcount) = (%X, %llX)    (TSC = %#llX = %llu)\n",
+//		timehands->th_offset_count,
+//		(long long unsigned)fftimehands->tick_ffcount, (long long unsigned)rd2, (long long unsigned)rd2 );
 	mtx_unlock_spin(&tc_setclock_mtx);
 }
 

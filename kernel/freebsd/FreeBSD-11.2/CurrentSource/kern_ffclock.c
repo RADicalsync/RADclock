@@ -243,7 +243,7 @@ SYSCTL_PROC(_kern_sysclock, OID_AUTO, active, CTLTYPE_STRING | CTLFLAG_RW,
     0, 0, sysctl_kern_sysclock_active, "A",
     "Name of the active system clock which is currently serving time");
 
-static int sysctl_kern_ffclock_ffcounter_bypass = 0;
+int sysctl_kern_ffclock_ffcounter_bypass=0;
 SYSCTL_INT(_kern_sysclock_ffclock, OID_AUTO, ffcounter_bypass, CTLFLAG_RW,
     &sysctl_kern_ffclock_ffcounter_bypass, 0,
     "Use reliable hardware timecounter as the feed-forward counter");

@@ -2134,7 +2134,7 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 	bpf_jit_filter *bf;
 #endif
 
-	/* Obtain state data for both FF and FB clocks */
+	/* Obtain state data and tc counter timestamp for both FF and FB clocks */
 	sysclock_getsnapshot(&cs, 0);
 	
 	BPFIF_RLOCK(bp);

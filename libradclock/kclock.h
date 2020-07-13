@@ -48,16 +48,16 @@ struct bintime {
 #include <sys/timeffc.h>
 #else
 struct ffclock_estimate {
-	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast). */
-	vcounter_t	update_ffcount;	/* Counter value at last update. */
-	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second. */
+	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
+	vcounter_t	update_ffcount;	/* Counter value at last update */
+	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second */
 	uint64_t	period;					/* Estimate of current counter period  [2^-64 s] */
-	uint32_t	errb_abs;				/* Bound on absolute clock error [ns]. */
+	uint32_t	errb_abs;				/* Bound on absolute clock error [ns] */
 	uint32_t	errb_rate;				/* Bound on relative counter period error [ps/s] */
-	uint32_t	status;					/* Clock status. */
-	int16_t	leapsec_total;			/* Sum of leap seconds seen since clock start. */
-	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}). */
-	uint8_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
+	uint32_t	status;					/* Clock status */
+	uint16_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
+	int8_t	leapsec_total;			/* Sum of leap secs seen since clock start */
+	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
 };
 #endif
 
