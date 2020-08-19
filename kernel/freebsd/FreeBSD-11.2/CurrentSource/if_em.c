@@ -36,6 +36,7 @@
 #include "opt_ddb.h"
 #include "opt_inet.h"
 #include "opt_inet6.h"
+#include "opt_ffclock.h"
 
 #ifdef HAVE_KERNEL_OPTION_HEADERS
 #include "opt_device_polling.h"
@@ -302,7 +303,11 @@ static void	em_refresh_mbufs(struct rx_ring *, int);
 static void	em_register_vlan(void *, if_t, u16);
 static void	em_unregister_vlan(void *, if_t, u16);
 static void	em_setup_vlan_hw_support(struct adapter *);
+#ifdef FFCLOCK
+static int	em_xmit(struct tx_ring *, struct mbuf **, struct ifnet *);
+#else
 static int	em_xmit(struct tx_ring *, struct mbuf **);
+#endif
 static int	em_dma_malloc(struct adapter *, bus_size_t,
 		    struct em_dma_alloc *, int);
 static void	em_dma_free(struct adapter *, struct em_dma_alloc *);
@@ -366,7 +371,7 @@ static device_method_t em_methods[] = {
 };
 
 static driver_t em_driver = {
-	"em", em_methods, sizeof(struct adapter),
+	"eDV", em_methods, sizeof(struct adapter),
 };
 
 devclass_t em_devclass;
@@ -483,6 +488,8 @@ em_probe(device_t dev)
 	uint16_t	pci_subdevice_id = 0;
 	em_vendor_info_t *ent;
 
+	printf("DV: enter em_probe: \n");
+
 	INIT_DEBUGOUT("em_probe: begin");
 
 	pci_vendor_id = pci_get_vendor(dev);
@@ -506,12 +513,14 @@ em_probe(device_t dev)
 			sprintf(adapter_name, "%s %s",
 				em_strings[ent->index],
 				em_driver_version);
+			printf("DV: found %s\n", adapter_name);
 			device_set_desc_copy(dev, adapter_name);
 			return (BUS_PROBE_DEFAULT);
 		}
 		ent++;
 	}
 
+	printf("DV: exit em_probe with %d \n",ENXIO);
 	return (ENXIO);
 }
 
@@ -531,6 +540,8 @@ em_attach(device_t dev)
 	struct adapter	*adapter;
 	struct e1000_hw	*hw;
 	int		error = 0;
+
+	printf("em_attach: begin DV");
 
 	INIT_DEBUGOUT("em_attach: begin");
 
@@ -1002,7 +1013,18 @@ em_start_locked(if_t ifp, struct tx_ring *txr)
 		 *  Encapsulation can modify our pointer, and or make it
 		 *  NULL on failure.  In that event, we can't requeue.
 		 */
+#ifdef FFCLOCK
+		static u_int ccc = 0;
+		if ( ccc<2 )
+			printf("DV: %u\t in  em_start_locked FF\n", ccc++);
+		/* ETHER_BPF_MTAP called at end of em_exit, but not if return an error */
+		if (em_xmit(txr, &m_head, ifp)) {
+#else
+		static u_int ccc = 0;
+		if ( ccc<2 )
+			printf("DV: %u\t in  em_start_locked \n", ccc++);
 		if (em_xmit(txr, &m_head)) {
+#endif
 			if (m_head == NULL)
 				break;
 			if_sendq_prepend(ifp, m_head);
@@ -1014,8 +1036,9 @@ em_start_locked(if_t ifp, struct tx_ring *txr)
 			txr->busy = EM_TX_BUSY;
 
 		/* Send a copy of the frame to the BPF listener */
-		ETHER_BPF_MTAP(ifp, m_head);
-
+#ifndef FFCLOCK
+		ETHER_BPF_MTAP(ifp, m_head);	// now called at end of em_xmit
+#endif
 	}
 
 	return;
@@ -1026,6 +1049,8 @@ em_start(if_t ifp)
 {
 	struct adapter	*adapter = if_getsoftc(ifp);
 	struct tx_ring	*txr = adapter->tx_rings;
+
+	printf("em_start: DV");
 
 	if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
 		EM_TX_LOCK(txr);
@@ -1089,7 +1114,18 @@ em_mq_start_locked(if_t ifp, struct tx_ring *txr)
 
 	/* Process the queue */
 	while ((next = drbr_peek(ifp, txr->br)) != NULL) {
+#ifdef FFCLOCK
+		static u_int ccc = 0;
+		if ( ccc<2 )
+			printf("DV: %u\t in  em_mq_start_locked FF\n", ccc++);
+		/* ETHER_BPF_MTAP called at end of em_exit, but not if return an error */
+		if ((err = em_xmit(txr, &next, ifp)) != 0) {
+#else
+		static u_int ccc = 0;
+		if ( ccc<2 )
+			printf("DV: %u\t in  em_start_locked\n", ccc++);
 		if ((err = em_xmit(txr, &next)) != 0) {
+#endif
 			if (next == NULL) {
 				/* It was freed, move forward */
 				drbr_advance(ifp, txr->br);
@@ -1108,7 +1144,9 @@ em_mq_start_locked(if_t ifp, struct tx_ring *txr)
 		if_inc_counter(ifp, IFCOUNTER_OBYTES, next->m_pkthdr.len);
 		if (next->m_flags & M_MCAST)
 			if_inc_counter(ifp, IFCOUNTER_OMCASTS, 1);
-		ETHER_BPF_MTAP(ifp, next);
+#ifndef FFCLOCK
+		ETHER_BPF_MTAP(ifp, next);	// now called at end of em_xmit
+#endif
 		if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
                         break;
 	}
@@ -1494,6 +1532,7 @@ static void
 em_init(void *arg)
 {
 	struct adapter *adapter = arg;
+	printf("em_init: DV");
 
 	EM_CORE_LOCK(adapter);
 	em_init_locked(adapter);
@@ -1906,9 +1945,12 @@ em_media_change(if_t ifp)
  *
  *  return 0 on success, positive on failure
  **********************************************************************/
-
 static int
+#ifdef FFCLOCK
+em_xmit(struct tx_ring *txr, struct mbuf **m_headp, struct ifnet *ifp)
+#else
 em_xmit(struct tx_ring *txr, struct mbuf **m_headp)
+#endif
 {
 	struct adapter		*adapter = txr->adapter;
 	bus_dma_segment_t	segs[EM_MAX_SCATTER];
@@ -2208,6 +2250,16 @@ retry:
 	tx_buffer = &txr->tx_buffers[first];
 	tx_buffer->next_eop = last;
 
+#ifdef FFCLOCK
+	static u_int cccc = 0;
+	if ( cccc<2 )
+		printf("DV: %u\t in  em_xmit FF\n", cccc++);
+	ETHER_BPF_MTAP(ifp, m_head);	// Move here to ensure causal read, can't fail
+#else
+	static u_int cccc = 0;
+	if ( cccc<2 )
+		printf("DV: %u\t in  em_xmit\n", cccc++);
+#endif
 	/*
 	 * Advance the Transmit Descriptor Tail (TDT), this tells the E1000
 	 * that this frame is available to transmit.
@@ -4635,7 +4687,11 @@ em_initialize_receive_unit(struct adapter *adapter)
 	 * Set the interrupt throttling rate. Value is calculated
 	 * as DEFAULT_ITR = 1/(MAX_INTS_PER_SEC * 256ns)
 	 */
+#ifndef FFCLOCK
 	E1000_WRITE_REG(hw, E1000_ITR, DEFAULT_ITR);
+#else
+	E1000_WRITE_REG(hw, E1000_ITR, 0);	// disable all interrupt throttling
+#endif
 
 	/* Use extended rx descriptor formats */
 	rfctl = E1000_READ_REG(hw, E1000_RFCTL);
