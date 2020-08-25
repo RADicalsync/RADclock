@@ -916,7 +916,7 @@ diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/Or
 +.An Lawrence Stewart Aq lstewart@FreeBSD.org .
 diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/OriginalSource_11.2/if_em.c /Users/darryl/Papers/TSCclock/Programs/V4/RADclock_mycurrent/kernel/freebsd/FreeBSD-11.2/CurrentSource/if_em.c
 --- /Users/darryl/Papers/TSCclock/Programs/V4/OriginalSource_11.2/if_em.c	2019-03-07 17:28:39.000000000 +1100
-+++ /Users/darryl/Papers/TSCclock/Programs/V4/RADclock_mycurrent/kernel/freebsd/FreeBSD-11.2/CurrentSource/if_em.c	2020-08-19 13:22:19.000000000 +1000
++++ /Users/darryl/Papers/TSCclock/Programs/V4/RADclock_mycurrent/kernel/freebsd/FreeBSD-11.2/CurrentSource/if_em.c	2020-08-25 16:18:11.000000000 +1000
 @@ -38,2 +38,3 @@
  #include "opt_inet6.h"
 +#include "opt_ffclock.h"
@@ -929,11 +929,6 @@ diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/Or
  static int	em_xmit(struct tx_ring *, struct mbuf **);
 +#endif
  static int	em_dma_malloc(struct adapter *, bus_size_t,
-@@ -368,3 +373,3 @@
- static driver_t em_driver = {
--	"em", em_methods, sizeof(struct adapter),
-+	"eDV", em_methods, sizeof(struct adapter),
- };
 @@ -485,2 +490,4 @@
  
 +	printf("DV: enter em_probe: \n");
@@ -947,27 +942,19 @@ diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/Or
  
 +	printf("DV: exit em_probe with %d \n",ENXIO);
  	return (ENXIO);
-@@ -534,2 +543,4 @@
- 
-+	printf("em_attach: begin DV");
-+
- 	INIT_DEBUGOUT("em_attach: begin");
-@@ -1004,3 +1015,14 @@
+@@ -1004,3 +1013,11 @@
  		 */
 +#ifdef FFCLOCK
 +		static u_int ccc = 0;
 +		if ( ccc<2 )
 +			printf("DV: %u\t in  em_start_locked FF\n", ccc++);
-+		/* ETHER_BPF_MTAP called at end of em_exit, but not if return an error */
++		/* ETHER_BPF_MTAP called at end of em_xmit, but not if return an error */
 +		if (em_xmit(txr, &m_head, ifp)) {
 +#else
-+		static u_int ccc = 0;
-+		if ( ccc<2 )
-+			printf("DV: %u\t in  em_start_locked \n", ccc++);
  		if (em_xmit(txr, &m_head)) {
 +#endif
  			if (m_head == NULL)
-@@ -1016,4 +1038,5 @@
+@@ -1016,4 +1033,5 @@
  		/* Send a copy of the frame to the BPF listener */
 -		ETHER_BPF_MTAP(ifp, m_head);
 -
@@ -975,12 +962,7 @@ diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/Or
 +		ETHER_BPF_MTAP(ifp, m_head);	// now called at end of em_xmit
 +#endif
  	}
-@@ -1029,2 +1052,4 @@
- 
-+	printf("em_start: DV");
-+
- 	if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
-@@ -1091,3 +1116,14 @@
+@@ -1091,3 +1109,11 @@
  	while ((next = drbr_peek(ifp, txr->br)) != NULL) {
 +#ifdef FFCLOCK
 +		static u_int ccc = 0;
@@ -989,24 +971,17 @@ diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/Or
 +		/* ETHER_BPF_MTAP called at end of em_exit, but not if return an error */
 +		if ((err = em_xmit(txr, &next, ifp)) != 0) {
 +#else
-+		static u_int ccc = 0;
-+		if ( ccc<2 )
-+			printf("DV: %u\t in  em_start_locked\n", ccc++);
  		if ((err = em_xmit(txr, &next)) != 0) {
 +#endif
  			if (next == NULL) {
-@@ -1110,3 +1146,5 @@
+@@ -1110,3 +1136,5 @@
  			if_inc_counter(ifp, IFCOUNTER_OMCASTS, 1);
 -		ETHER_BPF_MTAP(ifp, next);
 +#ifndef FFCLOCK
 +		ETHER_BPF_MTAP(ifp, next);	// now called at end of em_xmit
 +#endif
  		if ((if_getdrvflags(ifp) & IFF_DRV_RUNNING) == 0)
-@@ -1496,2 +1534,3 @@
- 	struct adapter *adapter = arg;
-+	printf("em_init: DV");
- 
-@@ -1908,5 +1947,8 @@
+@@ -1908,5 +1936,8 @@
   **********************************************************************/
 -
  static int
@@ -1016,20 +991,16 @@ diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/Or
  em_xmit(struct tx_ring *txr, struct mbuf **m_headp)
 +#endif
  {
-@@ -2210,2 +2252,12 @@
+@@ -2210,2 +2241,8 @@
  
 +#ifdef FFCLOCK
 +	static u_int cccc = 0;
 +	if ( cccc<2 )
-+		printf("DV: %u\t in  em_xmit FF\n", cccc++);
++		printf("DV: %u\t in em_xmit FF\n", cccc++);
 +	ETHER_BPF_MTAP(ifp, m_head);	// Move here to ensure causal read, can't fail
-+#else
-+	static u_int cccc = 0;
-+	if ( cccc<2 )
-+		printf("DV: %u\t in  em_xmit\n", cccc++);
 +#endif
  	/*
-@@ -4637,3 +4689,7 @@
+@@ -4637,3 +4674,7 @@
  	 */
 +#ifndef FFCLOCK
  	E1000_WRITE_REG(hw, E1000_ITR, DEFAULT_ITR);
@@ -1037,6 +1008,90 @@ diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/Or
 +	E1000_WRITE_REG(hw, E1000_ITR, 0);	// disable all interrupt throttling
 +#endif
  
+diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/OriginalSource_11.2/if_igb.c /Users/darryl/Papers/TSCclock/Programs/V4/RADclock_mycurrent/kernel/freebsd/FreeBSD-11.2/CurrentSource/if_igb.c
+--- /Users/darryl/Papers/TSCclock/Programs/V4/OriginalSource_11.2/if_igb.c	2019-03-07 17:28:39.000000000 +1100
++++ /Users/darryl/Papers/TSCclock/Programs/V4/RADclock_mycurrent/kernel/freebsd/FreeBSD-11.2/CurrentSource/if_igb.c	2020-08-25 16:24:46.000000000 +1000
+@@ -38,2 +38,3 @@
+ #include "opt_rss.h"
++#include "opt_ffclock.h"
+ 
+@@ -191,4 +192,7 @@
+ static void	igb_setup_vlan_hw_support(struct adapter *);
+-
++#ifdef FFCLOCK
++static int	igb_xmit(struct tx_ring *, struct mbuf **, struct ifnet *);
++#else
+ static int	igb_xmit(struct tx_ring *, struct mbuf **);
++#endif
+ static int	igb_dma_malloc(struct adapter *, bus_size_t,
+@@ -854,3 +858,11 @@
+ 		 */
++#ifdef FFCLOCK
++		static u_int ccc = 0;
++		if ( ccc<2 )
++			printf("DV: %u\t in  igb_start_locked FF\n", ccc++);
++		/* ETHER_BPF_MTAP called at end of igb_xmit, but not if return an error */
++		if (igb_xmit(txr, &m_head, ifp)) {
++#else
+ 		if (igb_xmit(txr, &m_head)) {
++#endif
+ 			if (m_head != NULL)
+@@ -863,4 +875,5 @@
+ 		/* Send a copy of the frame to the BPF listener */
++#ifndef FFCLOCK
+ 		ETHER_BPF_MTAP(ifp, m_head);
+-
++#endif
+ 		/* Set watchdog on */
+@@ -961,3 +974,11 @@
+ 	while ((next = drbr_peek(ifp, txr->br)) != NULL) {
++#ifdef FFCLOCK
++		static u_int ccc = 0;
++		if ( ccc<2 )
++			printf("DV: %u\t in  igb_mq_start_locked FF\n", ccc++);
++		/* ETHER_BPF_MTAP called at end of igb_exit, but not if return an error */
++		if ((err = igb_xmit(txr, &next, ifp)) != 0) {
++#else
+ 		if ((err = igb_xmit(txr, &next)) != 0) {
++#endif
+ 			if (next == NULL) {
+@@ -979,3 +1000,5 @@
+ 			if_inc_counter(ifp, IFCOUNTER_OMCASTS, 1);
++#ifndef FFCLOCK
+ 		ETHER_BPF_MTAP(ifp, next);
++#endif
+ 		if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
+@@ -1821,3 +1844,7 @@
+ static int
++#ifdef FFCLOCK
++igb_xmit(struct tx_ring *txr, struct mbuf **m_headp, struct ifnet *ifp)
++#else
+ igb_xmit(struct tx_ring *txr, struct mbuf **m_headp)
++#endif
+ {
+@@ -1945,8 +1972,15 @@
+ 
+-        /* Set the EOP descriptor that will be marked done */
+-        txbuf = &txr->tx_buffers[first];
++	/* Set the EOP descriptor that will be marked done */
++	txbuf = &txr->tx_buffers[first];
+ 	txbuf->eop = txd;
+ 
+-        bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
++	bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
+             BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
++            
++#ifdef FFCLOCK
++	static u_int cccc = 0;
++	if ( cccc<2 )
++		printf("DV: %u\t in em_xmit FF\n", cccc++);
++	ETHER_BPF_MTAP(ifp, m_head);	// Move here to ensure causal read, can't fail
++#endif
+ 	/*
+@@ -1960,2 +1994,3 @@
+ }
++
+ static void
 diff -U 1 --unidirectional-new-file /Users/darryl/Papers/TSCclock/Programs/V4/OriginalSource_11.2/kern_ffclock.c /Users/darryl/Papers/TSCclock/Programs/V4/RADclock_mycurrent/kernel/freebsd/FreeBSD-11.2/CurrentSource/kern_ffclock.c
 --- /Users/darryl/Papers/TSCclock/Programs/V4/OriginalSource_11.2/kern_ffclock.c	2019-03-07 17:28:39.000000000 +1100
 +++ /Users/darryl/Papers/TSCclock/Programs/V4/RADclock_mycurrent/kernel/freebsd/FreeBSD-11.2/CurrentSource/kern_ffclock.c	2020-08-19 11:49:42.000000000 +1000

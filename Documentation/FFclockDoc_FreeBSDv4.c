@@ -150,22 +150,22 @@ The FF components in header files, including structure and macro definitions,
 are in general unprotected, but with some exceptions.
 
 
-The FFCLOCK symbol will be defined if a line containing :
-options FFCLOCK
-appears in the architecture specific conf file, at /usr/src/sys/amd64/conf  in the case of amd64.
-If defined, this is then automatically noted in each of
-?/opt_ffclock.h
-	included in kern_{tc,ffclock}.c,  subr_rtc.c, bpf.c  	// used to convey knowledge of symbol
+The FFCLOCK symbol will be defined if lines containing :
+	ident	FFCLOCK
+	options FFCLOCK
+appear in the architecture specific conf file, at /usr/src/sys/amd64/conf/FFCLOCK  in the case of amd64.
+If FFCLOCK is defined, this is automatically noted in each of
+/usr/obj/usr/src/sys/FFCLOCK/opt_ffclock.h :
+#define FFCLOCK 1
+	included in kern_{tc,ffclock}.c,  subr_rtc.c, bpf.c, if_{em,igb).c  	// used to convey knowledge of symbol
 conf/options:
 	FFCLOCK
 conf/NOTES:
 	options 	FFCLOCK
 
 /* TODO:
-  describe where option is set, content of  opt_ffclock.h
   explain connection to kern_ffclock.c:  FEATURE(ffclock, "Feed-forward clock support");
 */
-
 
 To track the FF code and its compilation control we define the following:
 	Fully Protected:		new pure FF functions, or defines, protected by FFCLOCK
@@ -257,10 +257,8 @@ bpf.c
 
 =======================================================
 Drivers need modifications to ensure timestamping occurs in the right place.
-Here changes are not protected by a guard macro, instead a "\\FFCLOCK"  comment
-flags them, but we describe them using the {Un}protected etc notation.
 
-dev/e1000/if_em.c		// changes built on 9.0.0, quite a few other changes in 9.2, 10
+dev/e1000/if_em.c
   Unprotected
 		em_xmit										// new argument allowing internal call to ETHER_BPF_MTAP
 		em_{,mq}_start_locked               // call to new em_xmit
@@ -268,17 +266,8 @@ dev/e1000/if_em.c		// changes built on 9.0.0, quite a few other changes in 9.2, 
 		em_{,mq}_start_locked               // commenting out call to ETHER_BPF_MTAP
 		em_initialize_receive_unit          // E1000_WRITE_REG: disable interrupt throttling setting with
 
-
-Here changes are flagged by the "\\ben" instead of"\\FFCLOCK" :
 dev/e1000/if_igb.c	 // changes built on 9.0.0   File missing from watson
-  Exactly analogous changed to if_em.c, just applied to igb_xmit instead of em_xmit .
-
-
-In addition, both if_{em,igb}.c have associated DTRACE code, flagged by "\\ben" :
-		igb_rxeof					: just adds a DTRACE probe, not related to FF
-		  SDT_PROBE(timestamp, if_igb, igb_rxeof, stamp, sendmp, 0, 0, 0, 0);
-
-/* TODO:  finish updating this part of doc, and port to missing driver */
+  Exactly analogous changed to if_em.c, just applied to igb_ instead of em_ .
 
 
 =======================================================
@@ -1987,35 +1976,25 @@ See the algo Doc for the timestamp mode setting of the daemon.
 Device drivers
 ======================================
 
+Drivers need modifications to ensure timestamping occurs in the right place.
+The changes to if_em.c (if_igb.c is analogous) simply move the call to
+ETHER_BPF_MTAP, which does the timestamping, inside the em_xmit function instead
+of after it returns. The reasons are twofold:
+  (i) timestamp location optimization:  placing it inside   _xmit, just before
+		telling the hardware it is good to send, makes the timestamp very close to the
+		target timestamp event (the instant when the last bit of the packets enters the NIC).
+ (ii) to ensure the timestamp call it taken BEFORE the pkt is sent.
+  
+Note that (ii) is critical. If the card is told to send before the timestamp call
+is made, then there is a chance, even if unlikely, that the packet will Actually
+pass the target timestamp event before the actual timestamp within ETHER_BPF_MTAP
+executes, resulting in a +ve timestamping error. This breaks the RTT bounding
+model underlying the algo and must be avoided!
 
-
-====================================
-Drivers need modifications to use the new bpf functions, and to ensure timestamping
-occurs in the right place.  Here changes are not protected by a guard macro, but
-a "\\FFCLOCK"  comment flags them, but we describe them using the {Un}protected etc notation.
-
-dev/e1000/if_em.c		// changes built on 9.0, quite a few other changes in 9.2, 10
-  Unprotected
-		em_xmit										// new argument allowing internal call to ETHER_BPF_MTAP
-		em_{,mq}_start_locked               // call to new em_xmit
-  Protected from:
-		em_{,mq}_start_locked               // commenting out call to ETHER_BPF_MTAP
-		em_initialize_receive_unit          // E1000_WRITE_REG: disable interrupt throttling setting with
-
-
-Here changes are flagged by the "\\ben" instead of"\\FFCLOCK" :
-dev/e1000/if_igb.c	 // changes built on 9.0.0   File missing from watson
-  Exactly analogous changed to if_em.c, just applied to igb_xmit instead of em_xmit .
-
-
-In addition, both if_{em,igb}.c have associated DTRACE code, flagged by "\\ben" :
-		igb_rxeof					: just adds a DTRACE probe, not related to FF
-		  SDT_PROBE(timestamp, if_igb, igb_rxeof, stamp, sendmp, 0, 0, 0, 0);
-
-
-/* TODO:  finish updating this part of doc, and port to missing driver */
-
-
+In extreme cases, timestamping may be so delayed that it occurs After the response
+packet returns, generating a negative measured/perceived RTT. In more subtle cases,
+latency filtering will be misled, leading to increased error but with no obvious
+cause, or reliable error bound.
 
 
 ==============================================================

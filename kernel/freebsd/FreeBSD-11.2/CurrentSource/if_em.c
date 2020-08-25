@@ -371,7 +371,7 @@ static device_method_t em_methods[] = {
 };
 
 static driver_t em_driver = {
-	"eDV", em_methods, sizeof(struct adapter),
+	"em", em_methods, sizeof(struct adapter),
 };
 
 devclass_t em_devclass;
@@ -540,8 +540,6 @@ em_attach(device_t dev)
 	struct adapter	*adapter;
 	struct e1000_hw	*hw;
 	int		error = 0;
-
-	printf("em_attach: begin DV");
 
 	INIT_DEBUGOUT("em_attach: begin");
 
@@ -1017,12 +1015,9 @@ em_start_locked(if_t ifp, struct tx_ring *txr)
 		static u_int ccc = 0;
 		if ( ccc<2 )
 			printf("DV: %u\t in  em_start_locked FF\n", ccc++);
-		/* ETHER_BPF_MTAP called at end of em_exit, but not if return an error */
+		/* ETHER_BPF_MTAP called at end of em_xmit, but not if return an error */
 		if (em_xmit(txr, &m_head, ifp)) {
 #else
-		static u_int ccc = 0;
-		if ( ccc<2 )
-			printf("DV: %u\t in  em_start_locked \n", ccc++);
 		if (em_xmit(txr, &m_head)) {
 #endif
 			if (m_head == NULL)
@@ -1049,8 +1044,6 @@ em_start(if_t ifp)
 {
 	struct adapter	*adapter = if_getsoftc(ifp);
 	struct tx_ring	*txr = adapter->tx_rings;
-
-	printf("em_start: DV");
 
 	if (if_getdrvflags(ifp) & IFF_DRV_RUNNING) {
 		EM_TX_LOCK(txr);
@@ -1121,9 +1114,6 @@ em_mq_start_locked(if_t ifp, struct tx_ring *txr)
 		/* ETHER_BPF_MTAP called at end of em_exit, but not if return an error */
 		if ((err = em_xmit(txr, &next, ifp)) != 0) {
 #else
-		static u_int ccc = 0;
-		if ( ccc<2 )
-			printf("DV: %u\t in  em_start_locked\n", ccc++);
 		if ((err = em_xmit(txr, &next)) != 0) {
 #endif
 			if (next == NULL) {
@@ -1532,7 +1522,6 @@ static void
 em_init(void *arg)
 {
 	struct adapter *adapter = arg;
-	printf("em_init: DV");
 
 	EM_CORE_LOCK(adapter);
 	em_init_locked(adapter);
@@ -2253,12 +2242,8 @@ retry:
 #ifdef FFCLOCK
 	static u_int cccc = 0;
 	if ( cccc<2 )
-		printf("DV: %u\t in  em_xmit FF\n", cccc++);
+		printf("DV: %u\t in em_xmit FF\n", cccc++);
 	ETHER_BPF_MTAP(ifp, m_head);	// Move here to ensure causal read, can't fail
-#else
-	static u_int cccc = 0;
-	if ( cccc<2 )
-		printf("DV: %u\t in  em_xmit\n", cccc++);
 #endif
 	/*
 	 * Advance the Transmit Descriptor Tail (TDT), this tells the E1000

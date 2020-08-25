@@ -36,6 +36,7 @@
 #include "opt_inet.h"
 #include "opt_inet6.h"
 #include "opt_rss.h"
+#include "opt_ffclock.h"
 
 #ifdef HAVE_KERNEL_OPTION_HEADERS
 #include "opt_device_polling.h"
@@ -189,8 +190,11 @@ static void	igb_refresh_mbufs(struct rx_ring *, int);
 static void	igb_register_vlan(void *, struct ifnet *, u16);
 static void	igb_unregister_vlan(void *, struct ifnet *, u16);
 static void	igb_setup_vlan_hw_support(struct adapter *);
-
+#ifdef FFCLOCK
+static int	igb_xmit(struct tx_ring *, struct mbuf **, struct ifnet *);
+#else
 static int	igb_xmit(struct tx_ring *, struct mbuf **);
+#endif
 static int	igb_dma_malloc(struct adapter *, bus_size_t,
 		    struct igb_dma_alloc *, int);
 static void	igb_dma_free(struct adapter *, struct igb_dma_alloc *);
@@ -852,7 +856,15 @@ igb_start_locked(struct tx_ring *txr, struct ifnet *ifp)
 		 *  Encapsulation can modify our pointer, and or make it
 		 *  NULL on failure.  In that event, we can't requeue.
 		 */
+#ifdef FFCLOCK
+		static u_int ccc = 0;
+		if ( ccc<2 )
+			printf("DV: %u\t in  igb_start_locked FF\n", ccc++);
+		/* ETHER_BPF_MTAP called at end of igb_xmit, but not if return an error */
+		if (igb_xmit(txr, &m_head, ifp)) {
+#else
 		if (igb_xmit(txr, &m_head)) {
+#endif
 			if (m_head != NULL)
 				IFQ_DRV_PREPEND(&ifp->if_snd, m_head);
 			if (txr->tx_avail <= IGB_MAX_SCATTER)
@@ -861,8 +873,9 @@ igb_start_locked(struct tx_ring *txr, struct ifnet *ifp)
 		}
 
 		/* Send a copy of the frame to the BPF listener */
+#ifndef FFCLOCK
 		ETHER_BPF_MTAP(ifp, m_head);
-
+#endif
 		/* Set watchdog on */
 		txr->watchdog_time = ticks;
 		txr->queue_status |= IGB_QUEUE_WORKING;
@@ -959,7 +972,15 @@ igb_mq_start_locked(struct ifnet *ifp, struct tx_ring *txr)
 
 	/* Process the queue */
 	while ((next = drbr_peek(ifp, txr->br)) != NULL) {
+#ifdef FFCLOCK
+		static u_int ccc = 0;
+		if ( ccc<2 )
+			printf("DV: %u\t in  igb_mq_start_locked FF\n", ccc++);
+		/* ETHER_BPF_MTAP called at end of igb_exit, but not if return an error */
+		if ((err = igb_xmit(txr, &next, ifp)) != 0) {
+#else
 		if ((err = igb_xmit(txr, &next)) != 0) {
+#endif
 			if (next == NULL) {
 				/* It was freed, move forward */
 				drbr_advance(ifp, txr->br);
@@ -977,7 +998,9 @@ igb_mq_start_locked(struct ifnet *ifp, struct tx_ring *txr)
 		enq++;
 		if (next->m_flags & M_MCAST && adapter->vf_ifp)
 			if_inc_counter(ifp, IFCOUNTER_OMCASTS, 1);
+#ifndef FFCLOCK
 		ETHER_BPF_MTAP(ifp, next);
+#endif
 		if ((ifp->if_drv_flags & IFF_DRV_RUNNING) == 0)
 			break;
 	}
@@ -1819,7 +1842,11 @@ igb_media_change(struct ifnet *ifp)
  *  
  **********************************************************************/
 static int
+#ifdef FFCLOCK
+igb_xmit(struct tx_ring *txr, struct mbuf **m_headp, struct ifnet *ifp)
+#else
 igb_xmit(struct tx_ring *txr, struct mbuf **m_headp)
+#endif
 {
 	struct adapter  *adapter = txr->adapter;
 	u32		olinfo_status = 0, cmd_type_len;
@@ -1943,12 +1970,19 @@ retry:
 	txbuf->map = map;
 	bus_dmamap_sync(txr->txtag, map, BUS_DMASYNC_PREWRITE);
 
-        /* Set the EOP descriptor that will be marked done */
-        txbuf = &txr->tx_buffers[first];
+	/* Set the EOP descriptor that will be marked done */
+	txbuf = &txr->tx_buffers[first];
 	txbuf->eop = txd;
 
-        bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
+	bus_dmamap_sync(txr->txdma.dma_tag, txr->txdma.dma_map,
             BUS_DMASYNC_PREREAD | BUS_DMASYNC_PREWRITE);
+            
+#ifdef FFCLOCK
+	static u_int cccc = 0;
+	if ( cccc<2 )
+		printf("DV: %u\t in em_xmit FF\n", cccc++);
+	ETHER_BPF_MTAP(ifp, m_head);	// Move here to ensure causal read, can't fail
+#endif
 	/*
 	 * Advance the Transmit Descriptor Tail (Tdt), this tells the
 	 * hardware that this frame is available to transmit.
@@ -1958,6 +1992,7 @@ retry:
 
 	return (0);
 }
+
 static void
 igb_set_promisc(struct adapter *adapter)
 {
