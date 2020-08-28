@@ -1,9 +1,11 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
  *
- * This software was developed by Julien Ridoux and Darryl Veitch
- * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+ * This software was developed by Julien Ridoux at the University of Melbourne
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +28,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD: releng/11.2/sys/sys/_ffcounter.h 331722 2018-03-29 02:50:57Z eadler $
+ * $FreeBSD: releng/12.0/sys/sys/_ffcounter.h 326256 2017-11-27 15:01:59Z pfg $
  */
 
 #ifndef _SYS__FFCOUNTER_H_

@@ -1,9 +1,11 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
  *
- * This software was developed by Julien Ridoux and Darryl Veitch at the 
- * University of Melbourne under sponsorship from the FreeBSD Foundation.
+ * This software was developed by Julien Ridoux at the University of Melbourne
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -28,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/12.0/sys/kern/kern_ffclock.c 326271 2017-11-27 15:20:12Z pfg $");
 
 #include "opt_ffclock.h"
 
@@ -90,13 +92,13 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 
 	/*
 	 * Leap second adjustment. Total as seen by synchronisation algorithm
-	 * since it started. cest.leapsec_expected is the ffcounter prediction of
+	 * since it started. cest.leapsec_next is the ffcounter prediction of
 	 * when the next leapsecond occurs.
 	 */
 	if ((flags & FFCLOCK_LEAPSEC) == FFCLOCK_LEAPSEC) {
-		bt->sec -= cest.leapsec_total;	// subtracting means including leaps
-		if (cest.leapsec_expected != 0 && ffc > cest.leapsec_expected)
-			bt->sec -= cest.leapsec_next;
+		bt->sec -= cest.leapsec_total;
+		if (ffc > cest.leapsec_next)
+			bt->sec -= cest.leapsec;
 	}
 
 	/* Boot time adjustment, for uptime/monotonic clocks. */
@@ -108,8 +110,12 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 	if (error_bound) {
 		ffdelta_error = ffc - cest.update_ffcount;
 		ffclock_convert_diff(ffdelta_error, error_bound);
-		bintime_mul(error_bound, cest.errb_rate * PS_IN_BINFRAC);	// errb_rate ps/s
-		bintime_addx(error_bound, cest.errb_abs * NS_IN_BINFRAC);	// errb_abs [ns]
+		/* 18446744073709 = int(2^64/1e12), err_bound_rate in [ps/s] */
+		bintime_mul(error_bound, cest.errb_rate *
+		    (uint64_t)18446744073709LL);
+		/* 18446744073 = int(2^64 / 1e9), since err_abs in [ns] */
+		bintime_addx(error_bound, cest.errb_abs *
+		    (uint64_t)18446744073LL);
 	}
 
 	if (ffcount)
@@ -138,7 +144,8 @@ ffclock_difftime(ffcounter ffdelta, struct bintime *bt,
 		} while (update_ffcount != ffclock_estimate.update_ffcount);
 
 		ffclock_convert_diff(ffdelta, error_bound);
-		bintime_mul(error_bound, err_rate * PS_IN_BINFRAC);	// err_rate in [ps/s]
+		/* 18446744073709 = int(2^64/1e12), err_bound_rate in [ps/s] */
+		bintime_mul(error_bound, err_rate * (uint64_t)18446744073709LL);
 	}
 }
 
@@ -157,7 +164,7 @@ static char *sysclocks[] = {"feedback", "feed-forward"};
 #define	MAX_SYSCLOCK_NAME_LEN 16
 #define	NUM_SYSCLOCKS nitems(sysclocks)
 
-static int ffclock_version = 3;
+static int ffclock_version = 2;
 SYSCTL_INT(_kern_sysclock_ffclock, OID_AUTO, version, CTLFLAG_RD,
     &ffclock_version, 0, "Feed-forward clock kernel version");
 
@@ -199,43 +206,28 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 {
 	char newclock[MAX_SYSCLOCK_NAME_LEN];
 	int error;
-	int clk=0;
-	struct bintime bt;
-	ffcounter ffcount;
-	static int ccc = 0;
+	int clk;
 
 	/* Return the name of the current active sysclock. */
 	strlcpy(newclock, sysclocks[sysclock_active], sizeof(newclock));
 	error = sysctl_handle_string(oidp, newclock, sizeof(newclock), req);
-	
-	ffclock_last_tick(&ffcount, &bt, 0);
-	printf(" %d\t Callback sys_active start  %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   	ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
 
 	/* Check for error or no change */
 	if (error != 0 || req->newptr == NULL)
-		return (error);
+		goto done;
 
-	/* Change the active sysclock to the user specified one */
+	/* Change the active sysclock to the user specified one: */
 	error = EINVAL;
 	for (clk = 0; clk < NUM_SYSCLOCKS; clk++) {
-		if (strncmp(newclock, sysclocks[clk], MAX_SYSCLOCK_NAME_LEN - 1)) {
-			ffclock_last_tick(&ffcount, &bt, 0);
-			printf(" %d\t                    inloop %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   			ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
+		if (strncmp(newclock, sysclocks[clk],
+		    MAX_SYSCLOCK_NAME_LEN - 1)) {
 			continue;
 		}
 		sysclock_active = clk;
 		error = 0;
-		ffclock_last_tick(&ffcount, &bt, 0);
-		printf(" %d\t                    afloop %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   		ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
 		break;
 	}
-	ffclock_last_tick(&ffcount, &bt, 0);
-	printf(" %d\t                    atend  %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   	ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
-	
+done:
 	return (error);
 }
 
@@ -243,7 +235,7 @@ SYSCTL_PROC(_kern_sysclock, OID_AUTO, active, CTLTYPE_STRING | CTLFLAG_RW,
     0, 0, sysctl_kern_sysclock_active, "A",
     "Name of the active system clock which is currently serving time");
 
-int sysctl_kern_ffclock_ffcounter_bypass=0;
+static int sysctl_kern_ffclock_ffcounter_bypass = 0;
 SYSCTL_INT(_kern_sysclock_ffclock, OID_AUTO, ffcounter_bypass, CTLFLAG_RW,
     &sysctl_kern_ffclock_ffcounter_bypass, 0,
     "Use reliable hardware timecounter as the feed-forward counter");
@@ -254,6 +246,7 @@ SYSCTL_INT(_kern_sysclock_ffclock, OID_AUTO, ffcounter_bypass, CTLFLAG_RW,
 void
 ffclock_bintime(struct bintime *bt)
 {
+
 	ffclock_abstime(NULL, bt, NULL, FFCLOCK_LERP | FFCLOCK_LEAPSEC);
 }
 
@@ -278,6 +271,7 @@ ffclock_microtime(struct timeval *tvp)
 void
 ffclock_getbintime(struct bintime *bt)
 {
+
 	ffclock_abstime(NULL, bt, NULL,
 	    FFCLOCK_LERP | FFCLOCK_LEAPSEC | FFCLOCK_FAST);
 }
@@ -435,12 +429,8 @@ sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
 
 	mtx_lock(&ffclock_mtx);
 	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
-	if (ffclock_updated == INT8_MAX)	// reset not yet processed by ffclock_windup
-		ffclock_updated = 1;
-	else
-		ffclock_updated++;
+	ffclock_updated++;
 	mtx_unlock(&ffclock_mtx);
-	
 	return (error);
 }
 
@@ -473,18 +463,21 @@ sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
 int
 sys_ffclock_getcounter(struct thread *td, struct ffclock_getcounter_args *uap)
 {
+
 	return (ENOSYS);
 }
 
 int
 sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
 {
+
 	return (ENOSYS);
 }
 
 int
 sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
 {
+
 	return (ENOSYS);
 }
 

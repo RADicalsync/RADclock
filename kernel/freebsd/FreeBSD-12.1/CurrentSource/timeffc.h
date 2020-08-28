@@ -1,9 +1,11 @@
 /*-
+ * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ *
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
  *
- * This software was developed by Julien Ridoux and Darryl Veitch at the 
- * University of Melbourne under sponsorship from the FreeBSD Foundation.
+ * This software was developed by Julien Ridoux at the University of Melbourne
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,7 +28,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD$
+ * $FreeBSD: releng/12.0/sys/sys/timeffc.h 326256 2017-11-27 15:01:59Z pfg $
  */
 
 #ifndef _SYS_TIMEFF_H_
@@ -41,40 +43,25 @@
  * Provides time of last daemon update, clock status and bound on error.
  */
 struct ffclock_estimate {
-	struct bintime	update_time;	/* FFclock time of last update, ie Ca(tlast) */
-	ffcounter	update_ffcount;	/* Counter value at last update */
-	ffcounter	leapsec_expected;	/* Estimated counter value of next leap sec */
-	uint64_t	period;				/* Estimate of current counter period [2^-64 s] */
-	uint32_t	errb_abs;				/* Bound on absolute clock error [ns] */
-	uint32_t	errb_rate;			/* Bound on relative counter period err [ps/s] */
-	uint32_t	status;					/* Clock status */
-	uint16_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
-	int8_t	leapsec_total;			/* Sum of leap secs seen since clock start */
-	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
+	struct bintime	update_time;	/* Time of last estimates update. */
+	ffcounter	update_ffcount;	/* Counter value at last update. */
+	ffcounter	leapsec_next;	/* Counter value of next leap second. */
+	uint64_t	period;		/* Estimate of counter period. */
+	uint32_t	errb_abs;	/* Bound on absolute clock error [ns]. */
+	uint32_t	errb_rate;	/* Bound on counter rate error [ps/s]. */
+	uint32_t	status;		/* Clock status. */
+	int16_t		leapsec_total;	/* All leap seconds seen so far. */
+	int8_t		leapsec;	/* Next leap second (in {-1,0,1}). */
 };
-
-/* Constants to hold errors and error rates in 64bit binary fraction fields */
-#define	MS_IN_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
-#define	MUS_IN_BINFRAC	(uint64_t)18446744073709ULL		// floor(2^64/1e6)
-#define	NS_IN_BINFRAC	(uint64_t)18446744073ULL			// floor(2^64/1e9)
-#define	PS_IN_BINFRAC	(uint64_t)18446744ULL				// floor(2^64/1e12)
-
 
 #if __BSD_VISIBLE
 #ifdef _KERNEL
 
-/* Declare the kern.sysclock sysctl tree. */
+/* Define the kern.sysclock sysctl tree. */
 SYSCTL_DECL(_kern_sysclock);
 
-/* Declare the kern.sysclock.ffclock sysctl tree. */
+/* Define the kern.sysclock.ffclock sysctl tree. */
 SYSCTL_DECL(_kern_sysclock_ffclock);
-
-/* Flag defining if counter bypass mode is desired or not.
- * This is only possible if the counter is a TSC with rdtsc defined.
- */
-#ifdef FFCLOCK
-extern int sysctl_kern_ffclock_ffcounter_bypass;
-#endif
 
 /*
  * Index into the sysclocks array for obtaining the ASCII name of a particular
@@ -99,7 +86,6 @@ extern int sysclock_active;
  * Flags for use by sysclock_snap2bintime() and various ffclock_ functions to
  * control how the timecounter hardware is read and how the hardware snapshot is
  * converted into absolute time.
- * The flags all set independent bits and so are OR-able.
  * {FB|FF}CLOCK_FAST:	Do not read the hardware counter, instead using the
  *			value at last tick. The time returned has a resolution
  *			of the kernel tick timer (1/hz [s]).
@@ -110,11 +96,11 @@ extern int sysclock_active;
  */
 #define	FFCLOCK_FAST		0x00000001
 #define	FFCLOCK_LERP		0x00000002
-#define	FFCLOCK_LEAPSEC	0x00000004
+#define	FFCLOCK_LEAPSEC		0x00000004
 #define	FFCLOCK_UPTIME		0x00000008
 #define	FFCLOCK_MASK		0x0000ffff
 
-#define	FBCLOCK_FAST		0x00010000 /* Currently unused */
+#define	FBCLOCK_FAST		0x00010000 /* Currently unused. */
 #define	FBCLOCK_UPTIME		0x00020000
 #define	FBCLOCK_MASK		0xffff0000
 
@@ -139,7 +125,6 @@ struct fbclock_info {
 struct ffclock_info {
 	struct bintime		error;
 	struct bintime		tick_time;
-	struct bintime		tick_time_diff;
 	struct bintime		tick_time_lerp;
 	uint64_t		period;
 	uint64_t		period_lerp;
@@ -166,10 +151,10 @@ void sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast);
 
 /* Convert a timestamp from the selected system clock into bintime. */
 int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, int wantFast, int wantUptime, int wantLerp, int wantDiff);
+    int whichclock, uint32_t flags);
 
 /* Resets feed-forward clock from RTC */
-void ffclock_setto_rtc(struct timespec *ts);
+void ffclock_reset_clock(struct timespec *ts);
 
 /*
  * Return the current value of the feed-forward clock counter. Essential to
