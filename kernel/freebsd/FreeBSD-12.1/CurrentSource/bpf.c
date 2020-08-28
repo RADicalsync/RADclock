@@ -7,6 +7,9 @@
  * to Berkeley by Steven McCanne and Van Jacobson both of Lawrence
  * Berkeley Laboratory.
  *
+ * Portions of this software were developed by Julien Ridoux and Darryl Veitch
+ * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -39,6 +42,7 @@ __FBSDID("$FreeBSD: releng/11.2/sys/net/bpf.c 333056 2018-04-27 11:00:12Z ae $")
 
 #include "opt_bpf.h"
 #include "opt_compat.h"
+#include "opt_ffclock.h"
 #include "opt_ddb.h"
 #include "opt_netgraph.h"
 
@@ -58,6 +62,7 @@ __FBSDID("$FreeBSD: releng/11.2/sys/net/bpf.c 333056 2018-04-27 11:00:12Z ae $")
 #include <sys/signalvar.h>
 #include <sys/filio.h>
 #include <sys/sockio.h>
+#include <sys/timeffc.h>
 #include <sys/ttycom.h>
 #include <sys/uio.h>
 
@@ -110,6 +115,8 @@ struct bpf_if {
 	struct rwlock	bif_lock;	/* interface lock */
 	LIST_HEAD(, bpf_d) bif_wlist;	/* writer-only list */
 	int		bif_flags;	/* Interface flags */
+//	struct sysctl_oid *tscfgoid;	/* timestamp sysctl oid for interface */
+//	int tstype;							/* if-level timestamp interface */
 	struct bpf_if	**bif_bpf;	/* Pointer to pointer to us */
 };
 
@@ -136,12 +143,13 @@ CTASSERT(offsetof(struct bpf_if, bif_ext) == 0);
  */
 struct bpf_hdr32 {
 	struct timeval32 bh_tstamp;	/* time stamp */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 	uint32_t	bh_caplen;	/* length of captured portion */
 	uint32_t	bh_datalen;	/* original length of packet */
 	uint16_t	bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
 };
-#endif
+#endif /* !BURN_BRIDGES */
 
 struct bpf_program32 {
 	u_int bf_len;
@@ -159,7 +167,30 @@ struct bpf_dltlist32 {
 #define	BIOCGDLTLIST32	_IOWR('B', 121, struct bpf_dltlist32)
 #define	BIOCSETWF32	_IOW('B', 123, struct bpf_program32)
 #define	BIOCSETFNR32	_IOW('B', 130, struct bpf_program32)
-#endif
+#endif /* COMPAT_FREEBSD32 */
+
+/*
+ * Safety belt to ensure ABI of structs bpf_hdr32, bpf_hdr and bpf_xhdr are
+ * preserved for use with FFCLOCK, which changes the stamp field in the
+ * structs to allow storing a regular time stamp or ffcounter stamp.
+ */
+CTASSERT(sizeof(struct bpf_ts) >= sizeof(ffcounter) &&
+    sizeof(struct bintime) >= sizeof(ffcounter));
+
+//static const char *bpfiftstypes[] = {
+//	"default",
+//#define	BPF_TSTAMP_DEFAULT	0
+//	"none",
+//#define	BPF_TSTAMP_NONE		1
+//	"fast",
+//#define	BPF_TSTAMP_FAST		2
+//	"normal",
+//#define	BPF_TSTAMP_NORMAL	3
+//	"external"
+//#define	BPF_TSTAMP_EXTERNAL	4
+//};
+//#define	NUM_BPFIFTSTYPES	(sizeof(bpfiftstypes) / sizeof(*bpfiftstypes))
+
 
 #define BPF_LOCK()	   sx_xlock(&bpf_sx)
 #define BPF_UNLOCK()		sx_xunlock(&bpf_sx)
@@ -186,7 +217,11 @@ static __inline void
 		bpf_wakeup(struct bpf_d *);
 static void	catchpacket(struct bpf_d *, u_char *, u_int, u_int,
 		    void (*)(struct bpf_d *, caddr_t, u_int, void *, u_int),
+#ifdef FFCLOCK
+		    struct bintime *, ffcounter *);
+#else
 		    struct bintime *);
+#endif
 static void	reset_d(struct bpf_d *);
 static int	bpf_setf(struct bpf_d *, struct bpf_program *, u_long cmd);
 static int	bpf_getdltlist(struct bpf_d *, struct bpf_dltlist *);
@@ -195,6 +230,7 @@ static void	filt_bpfdetach(struct knote *);
 static int	filt_bpfread(struct knote *, long);
 static void	bpf_drvinit(void *);
 static int	bpf_stats_sysctl(SYSCTL_HANDLER_ARGS);
+//static int	bpf_tscfg_sysctl_handler(SYSCTL_HANDLER_ARGS);
 
 SYSCTL_NODE(_net, OID_AUTO, bpf, CTLFLAG_RW, 0, "bpf sysctl");
 int bpf_maxinsns = BPF_MAXINSNS;
@@ -205,6 +241,12 @@ SYSCTL_INT(_net_bpf, OID_AUTO, zerocopy_enable, CTLFLAG_RW,
     &bpf_zerocopy_enable, 0, "Enable new zero-copy BPF buffer sessions");
 static SYSCTL_NODE(_net_bpf, OID_AUTO, stats, CTLFLAG_MPSAFE | CTLFLAG_RW,
     bpf_stats_sysctl, "bpf statistics portal");
+//static SYSCTL_NODE(_net_bpf, OID_AUTO, tscfg, CTLFLAG_RW, NULL,
+//    "Per-interface timestamp configuration");
+//static int bpf_default_tstype = BPF_TSTAMP_NORMAL;
+//SYSCTL_PROC(_net_bpf_tscfg, OID_AUTO, default,
+//    CTLTYPE_STRING | CTLFLAG_RW, NULL, 0, bpf_tscfg_sysctl_handler, "A",
+//    "Per-interface system wide default timestamp configuration");
 
 static VNET_DEFINE(int, bpf_optimize_writers) = 0;
 #define	V_bpf_optimize_writers VNET(bpf_optimize_writers)
@@ -1681,7 +1723,6 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case BIOCSTSTAMP:
 		{
 			u_int	func;
-
 			func = *(u_int *)addr;
 			if (BPF_T_VALID(func))
 				d->bd_tstamp = func;
@@ -2076,48 +2117,6 @@ filt_bpfread(struct knote *kn, long hint)
 	return (ready);
 }
 
-#define	BPF_TSTAMP_NONE		0
-#define	BPF_TSTAMP_FAST		1
-#define	BPF_TSTAMP_NORMAL	2
-#define	BPF_TSTAMP_EXTERN	3
-
-static int
-bpf_ts_quality(int tstype)
-{
-
-	if (tstype == BPF_T_NONE)
-		return (BPF_TSTAMP_NONE);
-	if ((tstype & BPF_T_FAST) != 0)
-		return (BPF_TSTAMP_FAST);
-
-	return (BPF_TSTAMP_NORMAL);
-}
-
-static int
-bpf_gettime(struct bintime *bt, int tstype, struct mbuf *m)
-{
-	struct m_tag *tag;
-	int quality;
-
-	quality = bpf_ts_quality(tstype);
-	if (quality == BPF_TSTAMP_NONE)
-		return (quality);
-
-	if (m != NULL) {
-		tag = m_tag_locate(m, MTAG_BPF, MTAG_BPF_TIMESTAMP, NULL);
-		if (tag != NULL) {
-			*bt = *(struct bintime *)(tag + 1);
-			return (BPF_TSTAMP_EXTERN);
-		}
-	}
-	if (quality == BPF_TSTAMP_NORMAL)
-		binuptime(bt);
-	else
-		getbinuptime(bt);
-
-	return (quality);
-}
-
 /*
  * Incoming linkage from device drivers.  Process the packet pkt, of length
  * pktlen, which is stored in a contiguous buffer.  The packet is parsed
@@ -2128,24 +2127,23 @@ void
 bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 {
 	struct bintime bt;
+	struct sysclock_snap cs;
 	struct bpf_d *d;
+	u_int slen;
 #ifdef BPF_JITTER
 	bpf_jit_filter *bf;
 #endif
-	u_int slen;
-	int gottime;
 
-	gottime = BPF_TSTAMP_NONE;
-
+	/* Obtain state data and tc counter timestamp for both FF and FB clocks */
+	sysclock_getsnapshot(&cs, 0);
+	
 	BPFIF_RLOCK(bp);
 
 	LIST_FOREACH(d, &bp->bif_dlist, bd_next) {
 		/*
 		 * We are not using any locks for d here because:
-		 * 1) any filter change is protected by interface
-		 * write lock
-		 * 2) destroying/detaching d is protected by interface
-		 * write lock, too
+		 * 1) any filter change is protected by interface write lock
+		 * 2) destroying/detaching d is protected by interface write lock, too
 		 */
 
 		/* XXX: Do not protect counter for the sake of performance. */
@@ -2170,13 +2168,41 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 			BPFD_LOCK(d);
 
 			d->bd_fcount++;
-			if (gottime < bpf_ts_quality(d->bd_tstamp))
-				gottime = bpf_gettime(&bt, d->bd_tstamp, NULL);
+			
+			/* Obtain ts if requested, no external ts in bpf_tap case */
+			if ( BPF_T_FORMAT(d->bd_tstamp)!=BPF_T_NONE ) {
+				if ( (sysclock_active==SYSCLOCK_FBCK
+						&& BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK)
+						|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
+					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
+						d->bd_tstamp & BPF_T_FAST,
+						d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
+				else
+					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
+						d->bd_tstamp & BPF_T_FAST,
+						d->bd_tstamp & BPF_T_MONOTONIC,
+						BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
+						BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK );
+			}	else
+				bzero(&bt, sizeof(bt));
+
 #ifdef MAC
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
 #endif
-				catchpacket(d, pkt, pktlen, slen,
-				    bpf_append_bytes, &bt);
+#ifdef FFCLOCK
+			{
+				printf(" ** in bpf_tap **\n");
+				ffcounter ffcount = 0;
+				if (BPF_T_FFRAW(d->bd_tstamp) == BPF_T_FFC)
+					catchpacket(d, pkt, pktlen, slen,
+						bpf_append_mbuf, &bt, &cs.ffcount);
+				else
+					catchpacket(d, pkt, pktlen, slen,
+						bpf_append_mbuf, &bt, &ffcount);
+			}
+#else
+				catchpacket(d, pkt, pktlen, slen, bpf_append_bytes, &bt);
+#endif
 			BPFD_UNLOCK(d);
 		}
 	}
@@ -2195,12 +2221,13 @@ void
 bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 {
 	struct bintime bt;
+	struct sysclock_snap cs;
 	struct bpf_d *d;
+	struct m_tag *tag;
+	u_int pktlen, slen;
 #ifdef BPF_JITTER
 	bpf_jit_filter *bf;
 #endif
-	u_int pktlen, slen;
-	int gottime;
 
 	/* Skip outgoing duplicate packets. */
 	if ((m->m_flags & M_PROMISC) != 0 && m->m_pkthdr.rcvif == NULL) {
@@ -2208,8 +2235,10 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 		return;
 	}
 
+	/* Obtain state data for both FF and FB clocks */
+	sysclock_getsnapshot(&cs, 0);
+
 	pktlen = m_length(m, NULL);
-	gottime = BPF_TSTAMP_NONE;
 
 	BPFIF_RLOCK(bp);
 
@@ -2227,15 +2256,47 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 		slen = bpf_filter(d->bd_rfilter, (u_char *)m, pktlen, 0);
 		if (slen != 0) {
 			BPFD_LOCK(d);
-
+			
 			d->bd_fcount++;
-			if (gottime < bpf_ts_quality(d->bd_tstamp))
-				gottime = bpf_gettime(&bt, d->bd_tstamp, m);
+
+			/* Obtain ts if requested, and not already supplied externally */
+			if ( BPF_T_FORMAT(d->bd_tstamp)!=BPF_T_NONE ) {
+				tag = m_tag_locate(m, MTAG_BPF, MTAG_BPF_TIMESTAMP, NULL);
+				if (tag != NULL)	// if external ts available, use it
+					bt = *(struct bintime *)(tag + 1);
+				else
+					if ( (sysclock_active==SYSCLOCK_FBCK
+							&& BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK)
+							|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
+							d->bd_tstamp & BPF_T_FAST,
+							d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
+					else
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
+							d->bd_tstamp & BPF_T_FAST,
+							d->bd_tstamp & BPF_T_MONOTONIC,
+							BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
+							BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK );
+			} else
+				bzero(&bt, sizeof(bt));
+				
 #ifdef MAC
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
 #endif
-				catchpacket(d, (u_char *)m, pktlen, slen,
-				    bpf_append_mbuf, &bt);
+#ifdef FFCLOCK
+				{
+					//printf(" ** in bpf_mtap **\n");
+					ffcounter ffcount = 0;
+					if (BPF_T_FFRAW(d->bd_tstamp) == BPF_T_FFC)
+						catchpacket(d, (u_char *)m, pktlen, slen,
+							bpf_append_mbuf, &bt, &cs.ffcount);
+					else
+						catchpacket(d, (u_char *)m, pktlen, slen,
+							bpf_append_mbuf, &bt, &ffcount);
+				}
+#else
+				catchpacket(d, (u_char *)m, pktlen, slen, bpf_append_mbuf, &bt);
+#endif
 			BPFD_UNLOCK(d);
 		}
 	}
@@ -2250,10 +2311,11 @@ void
 bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 {
 	struct bintime bt;
+	struct sysclock_snap cs;
 	struct mbuf mb;
 	struct bpf_d *d;
+	struct m_tag *tag;
 	u_int pktlen, slen;
-	int gottime;
 
 	/* Skip outgoing duplicate packets. */
 	if ((m->m_flags & M_PROMISC) != 0 && m->m_pkthdr.rcvif == NULL) {
@@ -2261,6 +2323,9 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 		return;
 	}
 
+	/* Obtain state data for both FF and FB clocks */
+	sysclock_getsnapshot(&cs, 0);
+	
 	pktlen = m_length(m, NULL);
 	/*
 	 * Craft on-stack mbuf suitable for passing to bpf_filter.
@@ -2271,8 +2336,6 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 	mb.m_data = data;
 	mb.m_len = dlen;
 	pktlen += dlen;
-
-	gottime = BPF_TSTAMP_NONE;
 
 	BPFIF_RLOCK(bp);
 
@@ -2285,13 +2348,44 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 			BPFD_LOCK(d);
 
 			d->bd_fcount++;
-			if (gottime < bpf_ts_quality(d->bd_tstamp))
-				gottime = bpf_gettime(&bt, d->bd_tstamp, m);
+
+			/* Obtain ts if requested, and not already supplied externally */
+			if ( BPF_T_FORMAT(d->bd_tstamp)!=BPF_T_NONE ) {
+				tag = m_tag_locate(m, MTAG_BPF, MTAG_BPF_TIMESTAMP, NULL);
+				if (tag != NULL)	// if external ts available, use it
+					bt = *(struct bintime *)(tag + 1);
+				else
+					if ( (sysclock_active==SYSCLOCK_FBCK
+							&& BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK)
+							|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
+							d->bd_tstamp & BPF_T_FAST,
+							d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
+					else
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
+							d->bd_tstamp & BPF_T_FAST,
+							d->bd_tstamp & BPF_T_MONOTONIC,
+							BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
+							BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK );
+			} else
+				bzero(&bt, sizeof(bt));
 #ifdef MAC
 			if (mac_bpfdesc_check_receive(d, bp->bif_ifp) == 0)
 #endif
-				catchpacket(d, (u_char *)&mb, pktlen, slen,
-				    bpf_append_mbuf, &bt);
+#ifdef FFCLOCK
+				{
+					printf(" ** in bpf_tap2 **\n");
+					ffcounter ffcount = 0;
+					if (BPF_T_FFRAW(d->bd_tstamp) == BPF_T_FFC)
+						catchpacket(d, (u_char *)&mb, pktlen, slen,
+							bpf_append_mbuf, &bt, &cs.ffcount);
+					else
+						catchpacket(d, (u_char *)&mb, pktlen, slen,
+							bpf_append_mbuf, &bt, &ffcount);
+				}
+#else
+				catchpacket(d, (u_char *)&mb, pktlen, slen, bpf_append_mbuf, &bt);
+#endif
 			BPFD_UNLOCK(d);
 		}
 	}
@@ -2299,11 +2393,6 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 }
 
 #undef	BPF_CHECK_DIRECTION
-
-#undef	BPF_TSTAMP_NONE
-#undef	BPF_TSTAMP_FAST
-#undef	BPF_TSTAMP_NORMAL
-#undef	BPF_TSTAMP_EXTERN
 
 static int
 bpf_hdrlen(struct bpf_d *d)
@@ -2336,16 +2425,9 @@ bpf_hdrlen(struct bpf_d *d)
 static void
 bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)
 {
-	struct bintime bt2, boottimebin;
 	struct timeval tsm;
 	struct timespec tsn;
 
-	if ((tstype & BPF_T_MONOTONIC) == 0) {
-		bt2 = *bt;
-		getboottimebin(&boottimebin);
-		bintime_add(&bt2, &boottimebin);
-		bt = &bt2;
-	}
 	switch (BPF_T_FORMAT(tstype)) {
 	case BPF_T_MICROTIME:
 		bintime2timeval(bt, &tsm);
@@ -2374,7 +2456,11 @@ bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)
 static void
 catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
     void (*cpfn)(struct bpf_d *, caddr_t, u_int, void *, u_int),
+#ifdef FFCLOCK
+    struct bintime *bt, ffcounter *ffcount)
+#else
     struct bintime *bt)
+#endif
 {
 	struct bpf_xhdr hdr;
 #ifndef BURN_BRIDGES
@@ -2429,12 +2515,12 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 	else
 #endif
 		curlen = BPF_WORDALIGN(d->bd_slen);
+
 	if (curlen + totlen > d->bd_bufsize || !bpf_canwritebuf(d)) {
 		if (d->bd_fbuf == NULL) {
 			/*
 			 * There's no room in the store buffer, and no
-			 * prospect of room, so drop the packet.  Notify the
-			 * buffer model.
+			 * prospect of room, so drop the packet.  Notify the buffer model.
 			 */
 			bpf_buffull(d);
 			++d->bd_dcount;
@@ -2451,11 +2537,12 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 		 * reader should be woken up.
 		 */
 		do_wakeup = 1;
+
 	caplen = totlen - hdrlen;
 	tstype = d->bd_tstamp;
-	do_timestamp = tstype != BPF_T_NONE;
+	do_timestamp = BPF_T_FORMAT(tstype) != BPF_T_NONE;
 #ifndef BURN_BRIDGES
-	if (tstype == BPF_T_NONE || BPF_T_FORMAT(tstype) == BPF_T_MICROTIME) {
+	if (BPF_T_FORMAT(tstype)==BPF_T_NONE || BPF_T_FORMAT(tstype)==BPF_T_MICROTIME) {
 		struct bpf_ts ts;
 		if (do_timestamp)
 			bpf_bintime2ts(bt, &ts, tstype);
@@ -2466,11 +2553,13 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 				hdr32_old.bh_tstamp.tv_sec = ts.bt_sec;
 				hdr32_old.bh_tstamp.tv_usec = ts.bt_frac;
 			}
+#ifdef FFCLOCK
+			hdr32_old.bh_ffcounter = *ffcount;
+#endif
 			hdr32_old.bh_datalen = pktlen;
 			hdr32_old.bh_hdrlen = hdrlen;
 			hdr32_old.bh_caplen = caplen;
-			bpf_append_bytes(d, d->bd_sbuf, curlen, &hdr32_old,
-			    sizeof(hdr32_old));
+			bpf_append_bytes(d, d->bd_sbuf, curlen, &hdr32_old, sizeof(hdr32_old));
 			goto copy;
 		}
 #endif
@@ -2479,6 +2568,9 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 			hdr_old.bh_tstamp.tv_sec = ts.bt_sec;
 			hdr_old.bh_tstamp.tv_usec = ts.bt_frac;
 		}
+#ifdef FFCLOCK
+		hdr_old.bh_ffcounter = *ffcount;
+#endif
 		hdr_old.bh_datalen = pktlen;
 		hdr_old.bh_hdrlen = hdrlen;
 		hdr_old.bh_caplen = caplen;
@@ -2490,11 +2582,14 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 
 	/*
 	 * Append the bpf header.  Note we append the actual header size, but
-	 * move forward the length of the header plus padding.
+	 * later only move forward by hdrlen (bpf-aligned trailing padding)
 	 */
 	bzero(&hdr, sizeof(hdr));
 	if (do_timestamp)
 		bpf_bintime2ts(bt, &hdr.bh_tstamp, tstype);
+#ifdef FFCLOCK
+	hdr.bh_ffcounter = *ffcount;
+#endif
 	hdr.bh_datalen = pktlen;
 	hdr.bh_hdrlen = hdrlen;
 	hdr.bh_caplen = caplen;
@@ -2539,6 +2634,64 @@ bpf_freed(struct bpf_d *d)
 	mtx_destroy(&d->bd_lock);
 }
 
+///*
+// * Show or change the per bpf_if or system wide default timestamp configuration.
+// */
+//static int
+//bpf_tscfg_sysctl_handler(SYSCTL_HANDLER_ARGS)
+//{
+//	char tstype_name[16];
+//	struct bpf_if *bp;
+//	int error, tstype;
+//
+//	bp = (struct bpf_if *)arg1;
+//
+//	if (req->newptr == NULL) {
+//		/*
+//		 * Return the name of the BPF interface's timestamp setting, or
+//		 * the system wide default if bp is NULL.
+//		 */
+//		strlcpy(tstype_name,
+//		    bpfiftstypes[bp ? bp->tstype : bpf_default_tstype],
+//		    sizeof(tstype_name));
+//		error = sysctl_handle_string(oidp, tstype_name,
+//		    sizeof(tstype_name), req);
+//	} else {
+//		/*
+//		 * Change the timestamp configuration for this BPF interface or
+//		 * the system wide default setting.
+//		 */
+//		error = EINVAL;
+//		for (tstype = 0; tstype < NUM_BPFIFTSTYPES; tstype++) {
+//			if (strncmp((char *)req->newptr, bpfiftstypes[tstype],
+//			    strlen(bpfiftstypes[tstype])) == 0) {
+//				/* User specified type found in bpfiftstypes. */
+//				if (strcmp(oidp->oid_name, "default") == 0) {
+//					/*
+//					 * Don't allow BPF_TSTAMP_DEFAULT to be
+//					 * assigned to the
+//					 * "net.bpf.tscfg.default" OID.
+//					 */
+//					if (tstype != BPF_TSTAMP_DEFAULT) {
+//						bpf_default_tstype = tstype;
+//						error = 0;
+//					}
+//				} else {
+//					/*
+//					 * Valid tstype for
+//					 * "net.bpf.tscfg.<iface>" OID.
+//					 */
+//					bp->tstype = tstype;
+//					error = 0;
+//				}
+//				break;
+//			}
+//		}
+//	}
+//
+//	return (error);
+//}
+
 /*
  * Attach an interface to bpf.  dlt is the link layer type; hdrlen is the
  * fixed size of the link header (variable length headers not yet supported).
@@ -2565,6 +2718,17 @@ bpfattach2(struct ifnet *ifp, u_int dlt, u_int hdrlen, struct bpf_if **driverp)
 	if (bp == NULL)
 		panic("bpfattach");
 
+//	bp->tscfgoid = SYSCTL_ADD_PROC(NULL,
+//	    SYSCTL_STATIC_CHILDREN(_net_bpf_tscfg), OID_AUTO, ifp->if_xname,
+//	    CTLTYPE_STRING | CTLFLAG_RW, bp, sizeof(bp),
+//	    bpf_tscfg_sysctl_handler, "A",
+//	    "Interface BPF timestamp configuration");
+//	if (bp->tscfgoid == NULL) {
+//		free(bp, M_BPF);
+//		panic("bpfattach tscfgoid");
+//	}
+//
+//	bp->tstype = BPF_TSTAMP_DEFAULT;
 	LIST_INIT(&bp->bif_dlist);
 	LIST_INIT(&bp->bif_wlist);
 	bp->bif_ifp = ifp;
@@ -2705,7 +2869,7 @@ bpf_ifdetach(void *arg __unused, struct ifnet *ifp)
 		    __func__, bp, ifp);
 
 		LIST_REMOVE(bp, bif_next);
-
+        
 		rw_destroy(&bp->bif_lock);
 		free(bp, M_BPF);
 
