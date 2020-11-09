@@ -1,0 +1,48 @@
+#!/usr/local/bin/bash
+
+# Enable easy CLI adjustment of the value parameters within radclock.conf
+# It looks for the conf file in the currect dir and prompts otherwise
+#  conf_value_set polling_period 1 		# set to 1 sec  (if it isn't already)
+# If a new value is omitted, it still echos the current value
+
+
+# Check first argument is a valid and supported parameter
+for s in polling_period time_server verbose_level temperature_quality network_asymmetry
+do
+	[ $s == $1 ]	&& param=$1
+done
+if [ -z $param ]; then
+	echo "Parameter $1 not recognized"
+	exit
+fi
+
+# Conf file selection
+conf='radclock.conf'
+daemonconf='/etc/radclock.conf'
+if [ ! -f $conf ]; then
+	read -p "No $conf here, shall I use $daemonconf [nY] ? "	ans
+	[[ "$ans" == "n" ]] && exit
+	conf=$daemonconf
+fi
+
+# Get the current setting 
+currset=`grep $param $conf |cut -d' ' -f3`
+echo "Current $param state in $conf is $currset"
+
+# Check a new value is provided
+if [ -z "$2" ]; then			# remember to put args in quotes
+	echo "No new value given for this parameter";
+	exit
+fi
+
+# Action selection
+newstate=$2
+#echo "$currset --> $newstate"
+
+# Action execution
+varoff=$param" = "$currset
+varon=$param" = "$newstate
+if [ $currset != $newstate ]; then
+#echo "$varoff --> $varon"
+	sed -i "" "s/$varoff/$varon/" $conf; echo " --> setting to $newstate"
+fi

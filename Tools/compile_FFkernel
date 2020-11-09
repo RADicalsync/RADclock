@@ -1,0 +1,41 @@
+#!/usr/local/bin/bash
+
+# Will attempt a kernel build and install of FFclock.
+# Assumes the FFCLOCK kernel config file is already installed
+# Assumes you are in the build directory
+# Will try a fast build, or a full one if -c option given
+
+if [ `id -u` -ne 0 ]; then
+        echo "Sorry `id -un`, this must be run as root"
+        exit 0
+fi
+
+OS=`uname -s`s
+if [ $OS != FreeBSD ]; then
+	echo "This script only tested on FreeBSD, you are on $OS! fingers crossed."
+fi
+
+Based=`pwd`
+
+pushd /usr/src
+echo
+
+if [[ "$1" == "-c" ]]; then
+	echo "Now trying to build clean, executing 'make -j2  buildkernel KERNCONF=FFCLOCK'"
+	make -j2  buildkernel KERNCONF=FFCLOCK > $Based/build.log
+else
+	echo "Now trying to build fast, executing 'make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK'"
+	make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK > $Based/build.log
+fi
+
+if [ $? -eq 0 ]; then    # if previous command exits with success
+	tail -3 $Based/build.log
+	echo Build successful, now executing 'make installkernel KERNCONF=FFCLOCK'
+	make installkernel KERNCONF=FFCLOCK		> $Based/install.log
+	echo All good, you can reboot.
+else
+	echo
+	echo '** build failed ** inspect build.log to find out why'
+fi
+
+popd

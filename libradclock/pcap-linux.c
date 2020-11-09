@@ -70,7 +70,7 @@
 
 
 int
-descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int kmode)
+descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int kmode, u_int custom)
 {
 	/* int and long imay have different size on 32bit and 64bit architectures.
 	 * the kernel expects a long based on IOCTL definition

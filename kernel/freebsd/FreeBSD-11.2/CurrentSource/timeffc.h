@@ -34,6 +34,10 @@
 
 #include <sys/_ffcounter.h>
 
+
+#if __BSD_VISIBLE
+#ifdef _KERNEL
+
 /*
  * Feed-forward clock estimate
  * Holds time mark as a ffcounter and conversion to bintime based on current
@@ -54,14 +58,11 @@ struct ffclock_estimate {
 };
 
 /* Constants to hold errors and error rates in 64bit binary fraction fields */
-#define	MS_IN_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
-#define	MUS_IN_BINFRAC	(uint64_t)18446744073709ULL		// floor(2^64/1e6)
-#define	NS_IN_BINFRAC	(uint64_t)18446744073ULL			// floor(2^64/1e9)
-#define	PS_IN_BINFRAC	(uint64_t)18446744ULL				// floor(2^64/1e12)
+#define	MS_AS_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
+#define	MUS_AS_BINFRAC	(uint64_t)18446744073709ULL		// floor(2^64/1e6)
+#define	NS_AS_BINFRAC	(uint64_t)18446744073ULL			// floor(2^64/1e9)
+#define	PS_AS_BINFRAC	(uint64_t)18446744ULL				// floor(2^64/1e12)
 
-
-#if __BSD_VISIBLE
-#ifdef _KERNEL
 
 /* Declare the kern.sysclock sysctl tree. */
 SYSCTL_DECL(_kern_sysclock);
@@ -80,8 +81,8 @@ extern int sysctl_kern_ffclock_ffcounter_bypass;
  * Index into the sysclocks array for obtaining the ASCII name of a particular
  * sysclock.
  */
-#define	SYSCLOCK_FBCK	0
-#define	SYSCLOCK_FFWD	1
+#define	SYSCLOCK_FB	0
+#define	SYSCLOCK_FF	1
 extern int sysclock_active;
 
 /*
@@ -167,9 +168,6 @@ void sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast);
 /* Convert a timestamp from the selected system clock into bintime. */
 int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
     int whichclock, int wantFast, int wantUptime, int wantLerp, int wantDiff);
-
-/* Resets feed-forward clock from RTC */
-void ffclock_setto_rtc(struct timespec *ts);
 
 /*
  * Return the current value of the feed-forward clock counter. Essential to
@@ -276,7 +274,7 @@ static inline void
 bintime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_bintime(bt);
 	else
 		fbclock_bintime(bt);
@@ -286,7 +284,7 @@ static inline void
 nanotime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_nanotime(tsp);
 	else
 		fbclock_nanotime(tsp);
@@ -296,7 +294,7 @@ static inline void
 microtime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_microtime(tvp);
 	else
 		fbclock_microtime(tvp);
@@ -306,7 +304,7 @@ static inline void
 getbintime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getbintime(bt);
 	else
 		fbclock_getbintime(bt);
@@ -316,7 +314,7 @@ static inline void
 getnanotime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getnanotime(tsp);
 	else
 		fbclock_getnanotime(tsp);
@@ -326,7 +324,7 @@ static inline void
 getmicrotime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getmicrotime(tvp);
 	else
 		fbclock_getmicrotime(tvp);
@@ -336,7 +334,7 @@ static inline void
 binuptime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_binuptime(bt);
 	else
 		fbclock_binuptime(bt);
@@ -346,7 +344,7 @@ static inline void
 nanouptime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_nanouptime(tsp);
 	else
 		fbclock_nanouptime(tsp);
@@ -356,7 +354,7 @@ static inline void
 microuptime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_microuptime(tvp);
 	else
 		fbclock_microuptime(tvp);
@@ -366,7 +364,7 @@ static inline void
 getbinuptime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getbinuptime(bt);
 	else
 		fbclock_getbinuptime(bt);
@@ -376,7 +374,7 @@ static inline void
 getnanouptime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getnanouptime(tsp);
 	else
 		fbclock_getnanouptime(tsp);
@@ -386,7 +384,7 @@ static inline void
 getmicrouptime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getmicrouptime(tvp);
 	else
 		fbclock_getmicrouptime(tvp);

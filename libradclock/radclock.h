@@ -38,7 +38,9 @@
  * get internal clock parameters.
  */
 
-/** RADclock status word **/
+/** RADclock status word
+ * A status of 0x0000 indicates a radclock out of warmup, well served with packets, and all is well.
+ */
 /* RADclock not sync'ed (just started, server not reachable) */
 #define STARAD_UNSYNC			0x0001
 /* RADclock in warmup phase, error estimates unreliable */
@@ -49,25 +51,24 @@
 #define STARAD_SYSCLOCK			0x0008
 /* RADclock is lacking valid input stamps */
 #define STARAD_STARVING			0x0010
+
 /* Upward Shift Detected */
-
 #define STARAD_RTT_UPSHIFT		0x0020
-/* Quality of the RADclock period estimate is poor */
 
-#define STARAD_PHAT_UPDATED	0x0040
 /* phat updated on this stamp (not adopted if sanity triggered) */
-#define STARAD_PHAT_SANITY		0x0080
+#define STARAD_PHAT_UPDATED	0x0040
 /* phat update seems impossible, suspect server error or path asym change */
+#define STARAD_PHAT_SANITY		0x0080
 
-#define STARAD_PLOCAL_QUALITY	0x0100
 /* Quality of new plocal estimate below level acceptable for adoption */
-#define STARAD_PLOCAL_SANITY	0x0200
+#define STARAD_PLOCAL_QUALITY	0x0100
 /* plocal update is suspect, likely server error or path asym change, adoption blocked */
+#define STARAD_PLOCAL_SANITY	0x0200
 
-#define STARAD_OFFSET_QUALITY	0x0400
 /* Quality of new offset estimate below level acceptable for adoption */
-#define STARAD_OFFSET_SANITY	0x0800
+#define STARAD_OFFSET_QUALITY	0x0400
 /* offset update is suspect, likely server error or path asym change, adoption blocked */
+#define STARAD_OFFSET_SANITY	0x0800
 
 typedef uint64_t vcounter_t;
 
@@ -349,7 +350,8 @@ int radclock_get_status(struct radclock *clock, unsigned int *status);
 
 /* View these as presets for bpf's _T_ based timestamp type specification.
  * Used for convenience by daemon and libprocesses to set all FORMAT, FFCOUNTER, FLAVOR, CLOCK
- * dimensions of bpf tstype.  All set FLAVOR = NORMAL (UTC and !FAST) and FFCOUNTER = FFC.
+ * dimensions of bpf tstype.  All except PKTCAP_TSMODE_NOMODE set FLAVOR = NORMAL
+ * (UTC and !FAST) and FFCOUNTER = FFC.
  * Descriptions below specify high level intent, whether fully possible given KV or not.
  * Other bpf tstype dimensions are specified in KV dependent code.
  * Main use cases:
@@ -359,13 +361,16 @@ int radclock_get_status(struct radclock *clock, unsigned int *status);
  *		  the kernel's monoFF clock
  *   PKTCAP_TSMODE_FFNATIVECLOCK:  libprocesses, who just want to be able to
  *      get RADclock timestamps for each pkt, but made already in the kernel
- *   PKTCAP_TSMODE_DIFFCLOCK:  libprocesses measuring small time intervales such
+ *   PKTCAP_TSMODE_FFDIFFCLOCK:  libprocesses measuring small time intervales such
  *      as RTTs, who want to use the RADclock difference clock, but need to do so
  *      via an absolute clock read.  This clock is allowed to drift to achieve this.
  *   PKTCAP_TSMODE_RADCLOCK:  if dont trust the kernel timestamp, prefer to
  *		  read RADclock (native abs clock) in userland, based off kernel raw ts.
  *      Also useful in KV=2 when have no choice but to create a ts in the daemon.
- **/
+ *      This option requires extra code to actually perform the RADCLOCK read.
+ *   PKTCAP_TSMODE_CUSTOM:  signal that a customized tsmode will be defined and
+ *		  passed.
+ */
 enum pktcap_tsmode {
 	PKTCAP_TSMODE_NOMODE = 0,			// no FF support in pcap, or very early versions
 	PKTCAP_TSMODE_SYSCLOCK = 1,		// get raw, plus normal timestamp from sysclock
@@ -374,6 +379,7 @@ enum pktcap_tsmode {
 	PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
 	PKTCAP_TSMODE_FFDIFFCLOCK = 5,	//                "                    FF difference clock
 	PKTCAP_TSMODE_RADCLOCK = 6,		//    "   , plus RADclock timestamp (userland)
+	PKTCAP_TSMODE_CUSTOM = 100			// adopt the customised tsmode
 };
 
 
@@ -392,7 +398,7 @@ int radclock_register_pcap(struct radclock *clock, pcap_t *pcap_handle);
  * @return 0 on success, non-zero on failure
  */
 int pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle,
-		pktcap_tsmode_t mode);
+		pktcap_tsmode_t mode, u_int custom);
 
 
 /**

@@ -1,0 +1,27 @@
+#!/bin/sh
+#
+# PROVIDE: radclock
+# REQUIRE: DAEMON
+# KEYWORD: shutdown
+
+radclock_enable="YES"
+radclock_flags="-d"
+radclock_pidfile="/var/run/radclock/radclock.pid"
+
+. /etc/rc.subr
+
+name="radclock"
+rcvar=`set_rcvar`
+command="/usr/local/bin/radclock"
+extra_commands="reload rotate"
+load_rc_config $name
+
+reload_cmd="echo ' reloading conf file'; pkill -HUP -F $radclock_pidfile $name"
+
+rotate_cmd="echo ' closing log file (will reopen)'; pkill -USR1 -F $radclock_pidfile $name"
+
+status_cmd="ps -xHu |grep '$name\|PID' |grep -v 'grep\|status' "
+
+start_cmd="echo \"Starting ${name}.\"; /usr/bin/nice -5 ${command} ${radclock_flags} ${command_args}"
+
+run_rc_command "$1"

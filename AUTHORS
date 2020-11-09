@@ -1,36 +1,36 @@
-#
-# RADclock authors and contributors
-#
-# Ordered in somewhat chronological order
-
+##
+## RADclock authors and contributors
+##
 
 Conception and Algorithm design
 
 Darryl Veitch         <darryl.veitch@uts.edu.au>
 
-
 Core contributors to the RADclock software:
 
 Darryl Veitch         <darryl.veitch@uts.edu.au>
-
-
-Past contributors to the RADclock software:
-
-Yi Cao                <yc833@uowmail.edu.au>
 Julien Ridoux         <julien@synclab.org>
-Matt Davis            <matt@synclab.org>
-Timothy Broomhead     <t.broomhead@ugrad.unimelb.edu.au>
+s
+
+Past contributors to the RADclock software (rough chronological order):
+
+Jason Traish
+Peter Membrey
+Yi Cao                <yc833@uowmail.edu.au>
+Matt Davis
+Timothy Broomhead
 Benjamin Villain      <benjamin.villain@gmail.com>
-Laurence Cremean      <l.cremean@ugrad.unimelb.edu.au>
+Laurence Cremean
 Cameron Chambers      <camchambers@gmail.com>
 Thomas Young          <tfyoung@gmail.com>
+Julien Ridoux
 Erik Corell
 Philip Saxholm
 Mark Santcroos
 Michael Dwyer
+Darryl Veitch
 
-
-Contributors to ideas and design:
+Contributors to early kernel-side ideas and design:
 
 Bartek Wydrowski
 Tao Ye

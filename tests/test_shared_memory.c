@@ -22,7 +22,6 @@
 
 #include "../config.h"
 
-
 #include <sys/shm.h>
 #include <sys/time.h>
 
@@ -60,6 +59,7 @@ read_raddata(struct radclock_data *data)
 	return (0);
 }
 
+/* Returns 1 on success */
 int 
 read_shm(struct radclock *clock)
 {
@@ -68,21 +68,25 @@ read_shm(struct radclock *clock)
 
 	shm = (struct radclock_shm *)clock->ipc_shm;
 
-	fprintf(stdout, "Reading SHM:\n");
-	fprintf(stdout, "version: %d\n", shm->version);
-	fprintf(stdout, "status: %d\n", shm->status);
-	fprintf(stdout, "clockid: %d\n", shm->clockid);
-	fprintf(stdout, "gen: %u\n", shm->gen);
+	if (shm) {
+		fprintf(stdout, "Reading SHM:\n");
+		fprintf(stdout, " version: %d\n", shm->version);
+		fprintf(stdout, " status: %d\n", shm->status);
+		fprintf(stdout, " clockid: %d\n", shm->clockid);
+		fprintf(stdout, " gen: %u\n", shm->gen);
 
-	fprintf(stdout, "Current data:\n");
-	data = clock->ipc_shm + shm->data_off;
-	read_raddata(data);
+		fprintf(stdout, "Current data:\n");
+		data = clock->ipc_shm + shm->data_off;
+		read_raddata(data);
 
-	fprintf(stdout, "Old data:\n");
-	data = clock->ipc_shm + shm->data_off_old;
-	read_raddata(data);
+		fprintf(stdout, "Old data:\n");
+		data = clock->ipc_shm + shm->data_off_old;
+		read_raddata(data);
+		return (1);
+	} else
+		fprintf(stdout, "SHM is down.\n");
 
-	return (0);
+	return 0;
 }
 
 
@@ -92,16 +96,19 @@ main(int argc, char *argv[])
 	struct radclock *clock;
 	//struct timeval tv;
 	long double currtime;
-	int err;
+	int shmok, err;
 
 	clock = radclock_create();
 	radclock_init(clock);
 
-	read_shm(clock);
+	shmok = read_shm(clock);
 
-	err = radclock_gettime(clock, &currtime);
-	//fprintf(stdout, "UNIX time: %lld.%ld with error code: %d\n",tv.tv_sec, tv.tv_usec, err);
-	fprintf(stdout, "UNIX time: %Lf with error code: %d\n", currtime, err);
+	if (shmok) {
+		err = radclock_gettime(clock, &currtime);
+		//fprintf(stdout, "UNIX time: %lld.%ld with error code: %d\n",tv.tv_sec, tv.tv_usec, err);
+		fprintf(stdout, "UNIX time: %Lf with error code: %d\n", currtime, err);
+	}
+	
 	radclock_destroy(clock);
 
 	return (0);

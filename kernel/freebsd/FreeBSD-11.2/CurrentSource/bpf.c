@@ -126,8 +126,13 @@ CTASSERT(offsetof(struct bpf_if, bif_ext) == 0);
 
 #define PRINET  26			/* interruptible */
 
+#ifdef FFCLOCK		/* new bh_ffcounter member at end to ease ABI issues */
+#define	SIZEOF_BPF_HDR(type)	\
+    (offsetof(type, bh_ffcounter) + sizeof(((type *)0)->bh_ffcounter))
+#else
 #define	SIZEOF_BPF_HDR(type)	\
     (offsetof(type, bh_hdrlen) + sizeof(((type *)0)->bh_hdrlen))
+#endif
 
 #ifdef COMPAT_FREEBSD32
 #include <sys/mount.h>
@@ -143,11 +148,11 @@ CTASSERT(offsetof(struct bpf_if, bif_ext) == 0);
  */
 struct bpf_hdr32 {
 	struct timeval32 bh_tstamp;	/* time stamp */
-	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 	uint32_t	bh_caplen;	/* length of captured portion */
 	uint32_t	bh_datalen;	/* original length of packet */
 	uint16_t	bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 };
 #endif /* !BURN_BRIDGES */
 
@@ -2171,14 +2176,14 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 			
 			/* Obtain ts if requested, no external ts in bpf_tap case */
 			if ( BPF_T_FORMAT(d->bd_tstamp)!=BPF_T_NONE ) {
-				if ( (sysclock_active==SYSCLOCK_FBCK
+				if ( (sysclock_active==SYSCLOCK_FB
 						&& BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK)
 						|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
-					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
+					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FB,
 						d->bd_tstamp & BPF_T_FAST,
 						d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
 				else
-					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
+					sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FF,
 						d->bd_tstamp & BPF_T_FAST,
 						d->bd_tstamp & BPF_T_MONOTONIC,
 						BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
@@ -2265,14 +2270,14 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 				if (tag != NULL)	// if external ts available, use it
 					bt = *(struct bintime *)(tag + 1);
 				else
-					if ( (sysclock_active==SYSCLOCK_FBCK
+					if ( (sysclock_active==SYSCLOCK_FB
 							&& BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK)
 							|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
-						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FB,
 							d->bd_tstamp & BPF_T_FAST,
 							d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
 					else
-						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FF,
 							d->bd_tstamp & BPF_T_FAST,
 							d->bd_tstamp & BPF_T_MONOTONIC,
 							BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
@@ -2355,14 +2360,14 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 				if (tag != NULL)	// if external ts available, use it
 					bt = *(struct bintime *)(tag + 1);
 				else
-					if ( (sysclock_active==SYSCLOCK_FBCK
+					if ( (sysclock_active==SYSCLOCK_FB
 							&& BPF_T_CLOCK(d->bd_tstamp)==BPF_T_SYSCLOCK)
 							|| BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FBCLOCK )
-						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FBCK,
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FB,
 							d->bd_tstamp & BPF_T_FAST,
 							d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
 					else
-						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FFWD,
+						sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FF,
 							d->bd_tstamp & BPF_T_FAST,
 							d->bd_tstamp & BPF_T_MONOTONIC,
 							BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,

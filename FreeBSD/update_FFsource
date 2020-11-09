@@ -1,0 +1,31 @@
+#!/usr/local/bin/bash
+
+Arch=`uname -p`
+OS=`uname -s`
+OSv=`uname -r | cut -d'-' -f1`
+Installd="/usr/src"
+
+FFsource=kernel-patches/freebsd/$OS-$OSv/CurrentSource  # reference versions now in repo
+
+echo "You are on $OS-$OSv, updating corresponding kernel files into $Installd (for arch $Arch)"
+
+## Copy into source tree
+echo "  Copying the following from  $FFsource  -->  source tree rooted at $Installd"
+if [ $OSv == "11.2" ]; then
+	ls -l $FFsource
+	\cp $FFsource/if_*.c			$Installd/sys/dev/e1000/
+else
+	ls -l $FFsource  | grep -v "if_"
+fi
+\cp $FFsource/{kern_*,subr_rtc}.c		$Installd/sys/kern/
+\cp $FFsource/{timeffc,_ffcounter}.h 	$Installd/sys/sys/
+\cp $FFsource/bpf.{c,h}	 		$Installd/sys/net/
+\cp $FFsource/FFCLOCK	 		$Installd/sys/$Arch/conf/
+\cp $FFsource/ffclock.2	 		$Installd/lib/libc/sys/
+\cp $FFsource/ffclock.4	 		$Installd/share/man/man4/
+
+## Update includes  [ though probably has no effect until something recompiled ]
+Included="/usr/include"
+echo "  Copying these includes into $Included"
+\cp $FFsource/{timeffc,_ffcounter}.h	$Included/sys/
+\cp $FFsource/bpf.h							$Included/net/

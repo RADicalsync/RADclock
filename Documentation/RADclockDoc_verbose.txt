@@ -1,6 +1,8 @@
 /*
-* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-*/
+ * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ *
+ * This file is part of the radclock program.
+ */
 
 RADclock documentation.
 Written by Darryl Veitch
@@ -69,10 +71,15 @@ VERB relates to messages specific to the RADclock algo, and takes levels
 #define VERB_{DEFAULT,QUALITY,CAUSALITY,SANITY,CONTROL,SYNC,DEBUG} = {10,11,12,13,14,15, 20}
 For these the configuration parameter conf->verbose_level controls whether
 they will be printed or not.
-Three values are supported:
+Three categories are supported:
 	0:  `Off`    no VERB messages will be printed
 	1:  `On`    all VERB messages will be printed except VERB_DEBUG (default)
   >1:  `Max`   all VERB messages will be printed
+
+The handle records conf->verbose_level as the position in the labels_verb array,
+namely {0,1,2}, corresponding to {quiet,normal,high} values of the keycode of the
+verbose_level label recorded the conf file.
+
 
 VERB messages are printed to a radclock specific logfile, with run_mode dependent defaults:
 #define DAEMON_LOG_FILE	"/var/log/radclock.log"      // if live And daemonized
@@ -99,8 +106,9 @@ on run_mode:
   RADCLOCK_SYNC_DEAD   stderr  (since in that case there will be an associated terminal)
 
 
-An abuse of the above VERB/LOG division is allowed to support convenient runtime
-verbosity control of non-VERB messages. Namely, verbose_level values above 1 can be used
+An abuse of the above VERB/LOG division is allowed withing the daemon to support
+convenient runtime verbosity control of non-VERB messages (this does not work for
+user radclocks).  Namely, verbose_level values above 1 can be used
 to activate arbitrary additional verbosity, including that written using
 verbose(LOG_*) or logger(RADLOD_*) levels.  For example in clock_init_live:
 if ( VERB_LEVEL>1 ) printout_FFdata(&cest);   // printout_FFdata uses logger(RADLOG_NOTICE
@@ -181,6 +189,12 @@ this via a call to verbose_open().
 In all cases a call to verbose will work.  It will try to open a logfile
 but if it fails, it will fall back to outputting to stderr if needed.
 All LOG messages will therefore be logged, but VERB messages will depend on verbosity level.
+
+During normal operation, if the logfile is closed via a USR1 signal,
+it will be reopened by the next call to verbose which will call verbose_open
+after noticing the file is not open. As usual, it will either append to
+to the existing file, or overwrite it, depending on whether it is running
+as a daemon or not.
 
 Prior to the initialization, needed verbosity is achieved by direct use of
 fprintf to stdout  (for example in command line parameter parsing), or

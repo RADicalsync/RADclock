@@ -282,8 +282,11 @@ radclock_vcount_to_abstime(struct radclock *clock, const vcounter_t *vcount,
 
 	if (clock->ipc_shm)
 		quality = ffcounter_to_abstime_shm(clock, *vcount, abstime);
-	else
+	else {
+		logger(RADLOG_WARNING, "Using kernel data instead of shm, expected?");
 		quality = ffcounter_to_abstime_kernel(clock, *vcount, abstime);
+	}
+		
 	return (quality);
 }
 

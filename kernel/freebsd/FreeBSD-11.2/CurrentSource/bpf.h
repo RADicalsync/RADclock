@@ -175,12 +175,12 @@ enum bpf_direction {
 #define	BPF_T_NOFFC			0x0000   // no FFcount
 #define	BPF_T_FFC			0x0010   // want FFcount
 #define	BPF_T_FFRAW_MASK	0x0010
-// FLAVOR flags   [ can view bits as ORable flags ]
+// FLAG flags   [ can view bits as ORable flags ]
 #define	BPF_T_NORMAL		0x0000	// UTC, !FAST
 #define	BPF_T_FAST			0x0100   // UTC,  FAST
 #define	BPF_T_MONOTONIC	0x0200	// UPTIME, !FAST
 #define	BPF_T_MONOTONIC_FAST	0x0300// UPTIME,  FAST
-#define	BPF_T_FLAVOR_MASK	0x0300
+#define	BPF_T_FLAG_MASK	0x0300
 // CLOCK flags   [ mutually exclusive, not to be ORed ]
 #define	BPF_T_SYSCLOCK		0x0000	// read current sysclock
 #define	BPF_T_FBCLOCK		0x1000   // read FB
@@ -192,7 +192,7 @@ enum bpf_direction {
 // Extract FORMAT, FFRAW, FLAVOR, CLOCK  bits
 #define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
 #define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
-#define	BPF_T_FLAVOR(t)	((t) & BPF_T_FLAVOR_MASK)
+#define	BPF_T_FLAVOR(t)	((t) & BPF_T_FLAG_MASK)
 #define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
 
 // Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl
@@ -202,11 +202,11 @@ enum bpf_direction {
 // and not ask for a FF clock that doesnt exist.
 #ifdef FFCLOCK
 #define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
-											  BPF_T_FLAVOR_MASK | BPF_T_CLOCK_MASK)) == 0 \
+											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
 									&& BPF_T_CLOCK(t)<=BPF_T_FFDIFFCLOCK )
 #else
 #define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
-											  BPF_T_FLAVOR_MASK | BPF_T_CLOCK_MASK)) == 0 \
+											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
 									&& BPF_T_CLOCK(t)<=BPF_T_FBCLOCK )
 #endif
 
@@ -219,20 +219,20 @@ struct bpf_ts {
 };
 struct bpf_xhdr {
 	struct bpf_ts	bh_tstamp;	/* time stamp */
-	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 	bpf_u_int32	bh_caplen;	/* length of captured portion */
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 };
 /* Obsolete */
 struct bpf_hdr {
 	struct timeval	bh_tstamp;	/* time stamp */
-	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 	bpf_u_int32	bh_caplen;	/* length of captured portion */
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 };
 #ifdef _KERNEL
 #define	MTAG_BPF		0x627066

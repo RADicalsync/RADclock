@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2006-2012, Julien Ridoux
+# Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
 # Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
 # All rights reserved.
 #
@@ -29,6 +29,7 @@
 AM_CPPFLAGS = -I$(top_srcdir)/libradclock/ -I$(ADD_INCLS)
 
 noinst_HEADERS = \
+		radclock_daemon.h \
 		config_mgr.h \
 		create_stamp.h \
 		fixedpoint.h \

@@ -35,8 +35,6 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
-#ifdef HAVE_SYS_TIMEFFC_H
-#endif
 #include <sys/socket.h>
 
 #include <net/ethernet.h>	// ETHER_HDR_LEN
@@ -139,7 +137,7 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 		printout_FFdata(cest);
 	}
 	if (cest->secs_to_nextupdate == 0)
-		logger(RADLOG_WARNING, "FFdata from kernel never set by daemon");
+		logger(RADLOG_WARNING, "FFdata in kernel not yet set by daemon");
 
 	return (0);
 }

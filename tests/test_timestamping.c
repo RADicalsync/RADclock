@@ -40,9 +40,9 @@ main(int argc, char **argv)
 {
 	struct radclock *clock;
 	struct bpf_program fp;	/* The compiled filter expression */
-	pktcap_tsmode_t tsmode, tsmode2;
+	pktcap_tsmode_t tsmode;
 	pcap_t *phandle;
-	char fltstr[120];
+	//char fltstr[120];
 	char errbuf[PCAP_ERRBUF_SIZE];	/* Error string */
 	char *if_name;
 	int err;
@@ -83,7 +83,7 @@ main(int argc, char **argv)
 	}
 
 	tsmode = PKTCAP_TSMODE_SYSCLOCK;
-	err = pktcap_set_tsmode(clock, phandle, tsmode);
+	err = pktcap_set_tsmode(clock, phandle, tsmode, 0);
 	if (err == -1 ) {
 		fprintf(stderr, "FAILED: pktcap_set_tsmode SYSCLOCK\n");
 		return (1);
@@ -91,9 +91,8 @@ main(int argc, char **argv)
 		fprintf(stderr, "SUCCESS: pktcap_set_tsmode SYSCLOCK\n");
 
 
-
 	tsmode = PKTCAP_TSMODE_RADCLOCK;
-	err = pktcap_set_tsmode(clock, phandle, tsmode);
+	err = pktcap_set_tsmode(clock, phandle, tsmode, 0);
 	if (err == -1 ) {
 		fprintf(stderr, "FAILED: pktcap_set_tsmode RADCLOCK\n");
 		return (1);
@@ -101,7 +100,7 @@ main(int argc, char **argv)
 		fprintf(stderr, "SUCCESS: pktcap_set_tsmode RADCLOCK\n");
 
 	tsmode = PKTCAP_TSMODE_FFNATIVECLOCK;
-	err = pktcap_set_tsmode(clock, phandle, tsmode);
+	err = pktcap_set_tsmode(clock, phandle, tsmode, 0);
 	if (err == -1 ) {
 		fprintf(stderr, "FAILED: pktcap_set_tsmode FFNATIVECLOCK\n");
 		return (1);

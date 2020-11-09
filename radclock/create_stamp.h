@@ -72,7 +72,7 @@
  * store simple stats in incoming reference time information. Extensible.
  */
 struct timeref_stats {
-  u_int32_t   ref_count;     // # ref TS inputs: NTP cases: # of pkts seen;  GPS: # of pulses 
+  u_int32_t   ref_count;     // # TS inputs: NTP: # of pkts seen;  GPS: # of pulses
   u_int32_t   badqual_count; // # judged of poor quality; NTP cases: not stratum 1; GPS: ?
 }; 
 

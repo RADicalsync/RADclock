@@ -85,18 +85,19 @@
 #define DEFAULT_VERBOSE				1
 #define DEFAULT_SYNCHRO_TYPE		SYNCTYPE_NTP	// Protocol used 
 #define DEFAULT_SERVER_IPC			BOOL_ON			// Update the clock 
-#define DEFAULT_SERVER_NTP			BOOL_ON			// Default we start a NTP server
+#define DEFAULT_SERVER_NTP			BOOL_OFF			// Don't act as a server
 #define DEFAULT_SERVER_VM_UDP		BOOL_OFF			// Don't Start VM servers
 #define DEFAULT_SERVER_XEN			BOOL_OFF
 #define DEFAULT_SERVER_VMWARE		BOOL_OFF
-#define DEFAULT_ADJUST_FBCLOCK		BOOL_OFF		// Not normally a FBclock daemon
+#define DEFAULT_ADJUST_FFCLOCK	BOOL_ON		// Normally a FFclock daemon !
+#define DEFAULT_ADJUST_FBCLOCK	BOOL_OFF		// Not normally a FBclock daemon
 #define DEFAULT_NTP_POLL_PERIOD 	16				// 16 NTP pkts every [sec]
 #define DEFAULT_PHAT_INIT			1.e-9
 #define DEFAULT_ASYM_HOST			0.0				// 0 micro-sconds
 #define DEFAULT_ASYM_NET			0.0				// 0 micro-seconds 
 #define DEFAULT_HOSTNAME			"platypus2.tklab.feit.uts.edu.au"
-#define DEFAULT_TIME_SERVER		"ntp1.net.monash.edu.au"
-#define DEFAULT_NETWORKDEV			"xl0"
+#define DEFAULT_TIME_SERVER		"ntp.waia.asn.au"	// ntp1.net.monash.edu.au now buggy
+#define DEFAULT_NETWORKDEV			"em0"
 #define DEFAULT_SYNC_IN_PCAP		"sync_input.pcap"
 #define DEFAULT_SYNC_IN_ASCII		"sync_input.ascii"
 #define DEFAULT_SYNC_OUT_PCAP		"sync_output.pcap"
@@ -115,9 +116,10 @@
 #define CONFIG_VERBOSE			10
 #define CONFIG_SERVER_IPC		11
 //#define CONFIG_				13
-#define CONFIG_SYNCHRO_TYPE		13
+#define CONFIG_SYNCHRO_TYPE	13
 #define CONFIG_SERVER_NTP		14
-#define CONFIG_ADJUST_FBCLOCK	15
+#define CONFIG_ADJUST_FFCLOCK	15
+#define CONFIG_ADJUST_FBCLOCK	16
 /* Clock parameters */
 #define CONFIG_POLLPERIOD		20
 //#define CONFIG_				21
@@ -130,14 +132,14 @@
 #define CONFIG_SKM_SCALE		32
 #define CONFIG_RATE_ERR_BOUND	33
 #define CONFIG_BEST_SKM_RATE	34
-#define CONFIG_OFFSET_RATIO		35
+#define CONFIG_OFFSET_RATIO	35
 #define CONFIG_PLOCAL_QUALITY	36
 /* Network Level */
 #define CONFIG_HOSTNAME			40
 #define CONFIG_TIME_SERVER		41
 /* I/O defintions */
 #define CONFIG_NETWORKDEV		50
-#define CONFIG_SYNC_IN_PCAP		51
+#define CONFIG_SYNC_IN_PCAP	51
 #define CONFIG_SYNC_IN_ASCII	52
 #define CONFIG_SYNC_OUT_PCAP	53
 #define CONFIG_SYNC_OUT_ASCII	54
@@ -155,8 +157,8 @@
  * CONFIG_QUALITY_UNKWN has to be defined with the highest values to parse
  * the config file correctly
  */
-#define CONFIG_QUALITY_POOR		0
-#define CONFIG_QUALITY_GOOD		1
+#define CONFIG_QUALITY_POOR	0
+#define CONFIG_QUALITY_GOOD	1
 #define CONFIG_QUALITY_EXCEL	2
 #define CONFIG_QUALITY_UNKWN	3
 
@@ -167,16 +169,16 @@
 #define UPDMASK_NOUPD			0x0000000
 #define UPDMASK_POLLPERIOD		0x0000001
 //#define UPDMASK_				0x0000002
-#define UPDMASK_TEMPQUALITY		0x0000004
+#define UPDMASK_TEMPQUALITY	0x0000004
 #define UPDMASK_ASYM_HOST		0x0000008
 #define UPDMASK_ASYM_NET		0x0000010
 #define UPDMASK_SERVER_IPC		0x0000020
-//#define UPDMASK_				0x0000040
-#define UPDMASK_SYNCHRO_TYPE	0x0000080
-#define UPDMASK_SERVER_NTP		0x0000100
+#define UPDMASK_SYNCHRO_TYPE	0x0000040
+#define UPDMASK_SERVER_NTP		0x0000080
+#define UPDMASK_ADJUST_FFCLOCK	0x0000100
 #define UPDMASK_ADJUST_FBCLOCK	0x0000200
 #define UPDMASK_HOSTNAME		0x0000400
-#define UPDMASK_TIME_SERVER		0x0000800
+#define UPDMASK_TIME_SERVER	0x0000800
 #define UPDMASK_VERBOSE			0x0001000
 #define UPDMASK_NETWORKDEV		0x0002000
 #define UPDMASK_SYNC_IN_PCAP	0x0004000
@@ -187,7 +189,7 @@
 #define UPDMASK_SERVER_VM_UDP	0x0080000
 #define UPDMASK_SERVER_XEN		0x0100000
 #define UPDMASK_SERVER_VMWARE	0x0200000
-#define UPDMASK_VM_UDP_LIST		0x0400000
+#define UPDMASK_VM_UDP_LIST	0x0400000
 #define UPDMASK_PID_FILE		0x0800000
 #define UPD_NTP_UPSTREAM_PORT	0x1000000
 #define UPD_NTP_DOWNSTREAM_PORT	0x2000000
@@ -207,9 +209,9 @@ struct radclock_config {
 	u_int32_t mask;						/* Update param mask */
 	char 	conffile[MAXLINE]; 			/* Configuration file path */
 	char 	logfile[MAXLINE]; 			/* Log file path */
-	char 	radclock_version[MAXLINE]; 	/* Package version id */
+	char 	radclock_version[MAXLINE]; /* Package version id */
 	int 	verbose_level; 				/* debug output level */
-	int 	poll_period; 				/* period of NTP pkt sending [sec] */
+	int 	poll_period; 					/* period of NTP pkt sending [sec] */
 	struct 	radclock_phyparam phyparam; /* Physical and temperature characteristics */ 
 	int 	synchro_type; 				/* multi-choice depending on client-side protocol */
 	int 	server_ipc; 				/* Boolean */
@@ -217,20 +219,21 @@ struct radclock_config {
 	int 	server_vm_udp;				/* Boolean */
 	int 	server_xen;					/* Boolean */
 	int 	server_vmware;				/* Boolean */
+	int 	adjust_FFclock;			/* Boolean */
 	int 	adjust_FBclock;			/* Boolean */
 	double 	phat_init;					/* Initial value for phat */
 	double 	asym_host;					/* Host asymmetry estimate [sec] */
 	double	asym_net;					/* Network asymmetry estimate [sec] */ 
-        int     ntp_upstream_port;                      /* NTP Upstream port */
-        int     ntp_downstream_port;                    /* NTP Downstream port */
+	int     ntp_upstream_port;       /* NTP Upstream port */
+	int     ntp_downstream_port;     /* NTP Downstream port */
 	char 	hostname[MAXLINE]; 			/* Client hostname */
 	char 	time_server[MAXLINE]; 		/* Server name */
 	char 	network_device[MAXLINE];	/* physical device string, eg xl0, eth0 */ 
 	char 	sync_in_pcap[MAXLINE];	 	/* read from stored instead of live input */
-	char 	sync_in_ascii[MAXLINE]; 		/* input is a preprocessed stamp file */
-	char 	sync_out_pcap[MAXLINE]; 		/* raw packet Output file name */
+	char 	sync_in_ascii[MAXLINE]; 	/* input is a preprocessed stamp file */
+	char 	sync_out_pcap[MAXLINE]; 	/* raw packet Output file name */
 	char 	sync_out_ascii[MAXLINE]; 	/* output processed stamp file */
-	char 	clock_out_ascii[MAXLINE];  		/* output matlab requirements */
+	char 	clock_out_ascii[MAXLINE];  /* output matlab requirements */
 	char 	vm_udp_list[MAXLINE];  		/* File containing list of udp vm's */
 };
 

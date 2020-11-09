@@ -488,8 +488,6 @@ em_probe(device_t dev)
 	uint16_t	pci_subdevice_id = 0;
 	em_vendor_info_t *ent;
 
-	printf("DV: enter em_probe: \n");
-
 	INIT_DEBUGOUT("em_probe: begin");
 
 	pci_vendor_id = pci_get_vendor(dev);
@@ -513,14 +511,12 @@ em_probe(device_t dev)
 			sprintf(adapter_name, "%s %s",
 				em_strings[ent->index],
 				em_driver_version);
-			printf("DV: found %s\n", adapter_name);
 			device_set_desc_copy(dev, adapter_name);
 			return (BUS_PROBE_DEFAULT);
 		}
 		ent++;
 	}
 
-	printf("DV: exit em_probe with %d \n",ENXIO);
 	return (ENXIO);
 }
 
@@ -1012,9 +1008,6 @@ em_start_locked(if_t ifp, struct tx_ring *txr)
 		 *  NULL on failure.  In that event, we can't requeue.
 		 */
 #ifdef FFCLOCK
-		static u_int ccc = 0;
-		if ( ccc<2 )
-			printf("DV: %u\t in  em_start_locked FF\n", ccc++);
 		/* ETHER_BPF_MTAP called at end of em_xmit, but not if return an error */
 		if (em_xmit(txr, &m_head, ifp)) {
 #else
@@ -1108,9 +1101,6 @@ em_mq_start_locked(if_t ifp, struct tx_ring *txr)
 	/* Process the queue */
 	while ((next = drbr_peek(ifp, txr->br)) != NULL) {
 #ifdef FFCLOCK
-		static u_int ccc = 0;
-		if ( ccc<2 )
-			printf("DV: %u\t in  em_mq_start_locked FF\n", ccc++);
 		/* ETHER_BPF_MTAP called at end of em_exit, but not if return an error */
 		if ((err = em_xmit(txr, &next, ifp)) != 0) {
 #else
@@ -2240,9 +2230,6 @@ retry:
 	tx_buffer->next_eop = last;
 
 #ifdef FFCLOCK
-	static u_int cccc = 0;
-	if ( cccc<2 )
-		printf("DV: %u\t in em_xmit FF\n", cccc++);
 	ETHER_BPF_MTAP(ifp, m_head);	// Move here to ensure causal read, can't fail
 #endif
 	/*

@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2006-2012, Julien Ridoux
+# Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
 # Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
 # All rights reserved.
 #
@@ -28,29 +28,30 @@
 # Tell aclocal where local autoconf macros are  (following advice from manual)
 ACLOCAL_AMFLAGS = -I m4
 
-DIST_SUBDIRS = libradclock radclock examples man
+DIST_SUBDIRS = libradclock radclock examples man tests
 
-EXTRA_DIST = python-module debian redhat
+EXTRA_DIST = Documentation Tools FreeBSD python-module
+#EXTRA_DIST = python-module debian redhat
 
 
 SUBDIRS = $(DIST_SUBDIRS)
-SUBDIRS += tests
+#SUBDIRS += tests
 
-# Extra cscope target
-CSCOPE_DIRS = libradclock radclock
+## Extra cscope target
+#CSCOPE_DIRS = libradclock radclock
 
-cscope: cscope-clean cscope.out
+#cscope: cscope-clean cscope.out
 
-cscope.out: $(srcdir)/cscope.files
-	cd $(srcdir); cscope -buq -p4
+#cscope.out: $(srcdir)/cscope.files
+#	cd $(srcdir); cscope -buq -p4
 
-$(srcdir)/cscope.files:
-	cd $(srcdir); \
-	find $(CSCOPE_DIRS) -name "*.[ch]" -a -type f > $(srcdir)/cscope.files
+#$(srcdir)/cscope.files:
+#	cd $(srcdir); \
+#	find $(CSCOPE_DIRS) -name "*.[ch]" -a -type f > $(srcdir)/cscope.files
 
-cscope-clean:
-	cd $(srcdir)
-	rm -f cscope.files cscope.out cscope.in.out cscope.po.out
+#cscope-clean:
+#	cd $(srcdir)
+#	rm -f cscope.files cscope.out cscope.in.out cscope.po.out
 
 
 
@@ -71,11 +72,16 @@ dist-hook:
 		mkdir $(distdir)/kernel-patches/linux/$$d; \
 		cp $(srcdir)/kernel/linux/$$d/* $(distdir)/kernel-patches/linux/$$d/ ; \
 	done
-	@echo "Pushing version number in packaging scripts" 
-	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/debian/changelog
-	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/redhat/radclock.spec
-	@echo "Move debian copyright file in $(distdir) for Debian packaging"
-	mv $(distdir)/debian/copyright $(distdir)/
+	mkdir $(distdir)/kernel-patches/raspbian
+	for d in `ls $(srcdir)/kernel/raspbian`; do \
+		mkdir $(distdir)/kernel-patches/raspbian/$$d; \
+		cp $(srcdir)/kernel/raspbian/$$d/* $(distdir)/kernel-patches/raspbian/$$d/ ; \
+	done
+#	@echo "Pushing version number in packaging scripts"
+#	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/debian/changelog
+#	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/redhat/radclock.spec
+#	@echo "Move debian copyright file in $(distdir) for Debian packaging"
+#	mv $(distdir)/debian/copyright $(distdir)/
 	@echo ""
 	@echo "------------------------------------------------------"
 	@echo "*         You made a release distribution"

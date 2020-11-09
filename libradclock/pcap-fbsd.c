@@ -35,9 +35,9 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
-#ifdef HAVE_SYS_TIMEFFC_H
-#include <sys/timeffc.h>   // TODO, remove this include kclock.h instead
-#endif
+//#ifdef HAVE_SYS_TIMEFFC_H
+//#include <sys/timeffc.h>   // TODO, remove this include kclock.h instead
+//#endif
 #include <sys/socket.h>
 
 #include <net/ethernet.h>	// ETHER_HDR_LEN
@@ -239,7 +239,7 @@ decode_bpf_tsflags_KV3(u_int bd_tstamp)
 
 
 int
-descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
+descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_int custom)
 {
 	u_int bd_tstamp = 0U;
 	int override_mode = *mode;		// record input mode
@@ -279,6 +279,12 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 		break;
 
 	case 3:
+		/* Initial test of value of BIOCSTSTAMP */
+//		logger(RADLOG_NOTICE, "Checking current tsmode before setting it :");
+//		if (ioctl(pcap_fileno(p_handle), BIOCGTSTAMP, (caddr_t)(&bd_tstamp)) == -1)
+//			logger(RADLOG_ERR, "Getting initial timestamping mode failed: %s", strerror(errno));
+//		decode_bpf_tsflags_KV3(bd_tstamp);
+
 		/* Set FORMAT, FFC, and FLAVOR type components */
 		bd_tstamp = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL;
 		/* Set CLOCK type component*/
@@ -299,16 +305,22 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 			case PKTCAP_TSMODE_FFDIFFCLOCK:
 				bd_tstamp |= BPF_T_FFDIFFCLOCK;
 				break;
+			case PKTCAP_TSMODE_CUSTOM:
+				bd_tstamp = custom;
+				break;
 			default:
 				logger(RADLOG_ERR, "descriptor_set_tsmode: Unknown timestamping mode.");
 				return (1);
 		}
 		*mode = override_mode;	// inform caller of final mode
-		if (ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp) == -1) {
+
+		int pcaprtn = 0;
+		if ( (pcaprtn = ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp)) == -1) {
 			logger(RADLOG_ERR, "Setting capture mode to bd_tstamp = 0x%04x "
 					"failed: %s", bd_tstamp, strerror(errno));
 			return (1);
 		}
+		//logger(RADLOG_NOTICE, "tsmode setting ioctl returned %d\n", pcaprtn); // to be removed
 		break;
 
 	default:
@@ -430,8 +442,7 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 
 
 
-/* XXX Can we clean that ??
- * Redefinition of the BPF header as in bpf.h Just to avoid to have to include
+/* Redefinition of the BPF header as in bpf.h Just to avoid to have to include
  * the file again and define the RADCLOCK symbol at compilation time.  Changed
  * name to avoid redefinition problem. pcap.h includes bpf.h but without the
  * vcount field.
@@ -552,40 +563,61 @@ extract_vcount_stamp_v2(pcap_t *p_handle, const struct pcap_pkthdr *header,
  *     vcounter_t already in radclock language,  but same size as  ffcounter bh_ffcounter
  * ii) given we are finding the bpf_hdr, the bh_tstamp is also available.
  *     For a traditional ts we don't need it as it is already in pcap.ts, otherwise
- *     in the timeval=128 bit case we could extract a NANOTIME from bh_tstamp
- *     by extending the hack. What pcap.ts would equal in that case is unknown.
+ *     in the timeval=128 bit case we could extract a NANOTIME or BINTIME from bh_tstamp
+ *     by casting the ts.
  */
 struct bpf_hdr_hack_v3 {
 	struct timeval bh_tstamp;	/* could be 2*{4,8} bytes {64,128} bits */
-	vcounter_t vcount;			/* raw ts value, vcount is a reminder is a vcounter_t */
 	bpf_u_int32 bh_caplen;		/* length of captured portion */
 	bpf_u_int32 bh_datalen;		/* original length of packet */
 	u_short bh_hdrlen;			/* length of bpf header (this struct plus alignment padding) */
+	//ffcounter	bh_ffcounter;	/* [True FF header member] feed-forward counter stamp */
+	vcounter_t vcount;			/* daemon version for compilation */
 };
 
+struct bpf_xhdr_hack_v3 {
+	struct bpf_ts	bh_tstamp;	/* time stamp */
+	bpf_u_int32	bh_caplen;		/* length of captured portion */
+	bpf_u_int32	bh_datalen;		/* original length of packet */
+	u_short		bh_hdrlen;		/* length of bpf header (this struct plus alignment padding) */
+	//ffcounter	bh_ffcounter;	/* [True FF header member] feed-forward counter stamp */
+	vcounter_t vcount;			/* daemon version for compilation */
+};
 
 //#define DLT_NULL    0   /* BSD loopback encapsulation */
 //#define DLT_EN10MB  1   /* Ethernet (10Mb) */
-
 static int dlt_header_size[] = {
 	[DLT_NULL] = 4,
 	[DLT_EN10MB] = ETHER_HDR_LEN
 };
 
-// Strip trailing compiler padding macro. Same as SIZEOF_BPF_HDR defined in bpf.c
-#define MY_SIZEOF_BPF_HDR(type)	\
-	(offsetof(type, bh_hdrlen) + sizeof(((type *)0)->bh_hdrlen))
+/* Macros for calculating the length of a structure, minus the trailing padding
+ * potentially added by the compiler. This is done to match the same procedure
+ * in bpf defining `bpf alignment`.
+ * MY_SIZEOF_BPF_HDR:  same as SIZEOF_BPF_HDR defined in bpf.c, but using vcount
+ * (last member of locally defined bpf_hdr_hack_* version), instead of actual
+ * last member of bpf_{x}hdr.
+ * Previously the last member in all cases was bh_hdrlen, but moved to end to
+ * avoid ABI issues for applications (like pcap!) compiled against headers
+ * missing the raw member.  Idea is precompiled offsets from the start of the
+ * header will still be correct, so all old members will still work, including
+ * bh_hdrlen, which thanks to the macro use in bpf.c, will contain the true
+ * header size including the raw member at run time.
+ */
 
-// Reproduces calculation of bpf.c:bpf_hdrlen(), in 64bit case, to calculate a
-// length satisfying bpf-alignment rules. Will be  ≤ sizeof(bpf_hdr)
+/* length-endpadding = lengthtolastmember + sizeoflastmember */
+#define MY_SIZEOF_BPF_HDR(type)	\
+	(offsetof(type, vcount) + sizeof(((type *)0)->vcount))
+
+/* Reproduces calculation of bpf.c:bpf_hdrlen(), in 64bit case, to calculate a
+ * length satisfying bpf-alignment rules. Will be  ≤ sizeof(bpf_hdr) */
 #define BPF_HDRLEN_V3(length)		\
 	(BPF_WORDALIGN(MY_SIZEOF_BPF_HDR(struct bpf_hdr_hack_v3) + length) - length)
-
 #define BPF_HDRLEN_XHDR(length)		\
-	(BPF_WORDALIGN(MY_SIZEOF_BPF_HDR(struct bpf_xhdr) + length) - length)
+	(BPF_WORDALIGN(MY_SIZEOF_BPF_HDR(struct bpf_xhdr_hack_v3) + length) - length)
 
 
-/*
+/* Version to support testing, too verbose for user radclocks. To be retired.
  * Test for the presence and type of bpf headers, and ts field correspondence
  * with pcap_hdr.
  * Note, when using under KV2, the KV2 bpf does use (but not exploit) the
@@ -604,7 +636,7 @@ ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
 	int hlen, blen;
 
 	hlen = dlt_header_size[pcap_datalink(p_handle)];
-	blen = BPF_HDRLEN_V3(hlen);			// length of bpf aligned bpf_hdr
+	blen = BPF_HDRLEN_V3(hlen);		// length of bpf aligned bpf_hdr, based on equivalent bpf_hdr_hack_v3
 
 	/* Infer head of bpf_hdr */
 	h = (struct bpf_hdr *)(packet - blen);
@@ -636,38 +668,39 @@ ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
 	}
 		
 	/* Examine actual timestamp values, but limit checks to first few packets */
-	if (checkcnt<=2) {
-		
+	if (checkcnt<=1) {
+		if (checkcnt==1) logger(RADLOG_NOTICE, "Detailed look at first packets: ");
+
 		/* Simply recover ffcount from bpf header */
-		logger(RADLOG_NOTICE, "bh_ffcounter:  %llu", (long long unsigned)h->bh_ffcounter);
+		logger(RADLOG_NOTICE, " bh_ffcounter:  %llu", (long long unsigned)h->bh_ffcounter);
 
 		/* Assuming timeval, compare timestamps */
-		raw = (vcounter_t *) &h->bh_tstamp;
-		logger(RADLOG_NOTICE, "bh_tstamp:  %lld.%06lld and as raw: %llu",
+		raw = (vcounter_t *) &h->bh_tstamp;	// raw only 64bits, so if timeval is 128, will see which half the cast gets
+		logger(RADLOG_NOTICE, " bh_tstamp:  %lld.%06lld and as cast to raw: %llu",
 			h->bh_tstamp.tv_sec, h->bh_tstamp.tv_usec, (long long unsigned) *raw );
 
 		raw = (vcounter_t *) &(header->ts);	// works regardless of size of timeval, no need to test first, nice
-		logger(RADLOG_NOTICE, "pcap ts:    %lld.%06lld and as raw: %llu\n",
+		logger(RADLOG_NOTICE, " pcap ts:    %lld.%06lld and as cast to raw: %llu",
 			header->ts.tv_sec, header->ts.tv_usec, (long long unsigned) *raw );
 
 		/* Smart timeval printing */
 		if (sizeof(struct timeval)==16) {		// 64 bit machines
 			tv = h->bh_tstamp;
-			logger(RADLOG_NOTICE, "bpf  (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
+			logger(RADLOG_NOTICE, " bpf  (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
 			tv = header->ts;
-			logger(RADLOG_NOTICE, "pcap (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
+			logger(RADLOG_NOTICE, " pcap (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
 		} else {		// traditional timeval, 32 machines
 			tv = h->bh_tstamp;
-			logger(RADLOG_NOTICE, "bpf  (tval 2*32):  %ld  %ld"  , tv.tv_sec, tv.tv_usec);
+			logger(RADLOG_NOTICE, " bpf  (tval 2*32):  %ld  %ld"  , tv.tv_sec, tv.tv_usec);
 			tv = header->ts;
-			logger(RADLOG_NOTICE, "pcap (tval 2*32):  %ld  %ld"  , tv.tv_sec, tv.tv_usec);
+			logger(RADLOG_NOTICE, " pcap (tval 2*32):  %ld  %ld"  , tv.tv_sec, tv.tv_usec);
 		}
 
 		/* Translate the sec member to a time and date */
 		struct tm *t;
 		t = localtime(&(tv.tv_sec));
 		const char *months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-		logger(RADLOG_NOTICE, "%s %02d %04d, %02d:%02d:%02d\n", months[t->tm_mon], t->tm_mday,
+		logger(RADLOG_NOTICE, " %s %02d %04d, %02d:%02d:%02d", months[t->tm_mon], t->tm_mday,
 				1900+t->tm_year, t->tm_hour, t->tm_min, t->tm_sec);
 				
 		checkcnt++;
@@ -697,44 +730,162 @@ ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
 }
 
 
-/*
- * Libpcap not yet aware of bpf_xhdr.
- * Must therefore extract the raw ts from the bpf_hdr structure, prepended
- * to the frame data (clear from catchpackets code).
+
+/* Version for user radclocks, KV>2 only.
+ * Test for the presence and type of bpf headers, and ts field correspondence
+ * with pcap_hdr.
+ * Gives detailed verbosity -- in case of error only.
  */
-static inline int
-extract_vcount_stamp_v3(pcap_t *p_handle, const struct pcap_pkthdr *header,
-		const unsigned char *packet, vcounter_t *vcount)
+static void
+header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
+		const unsigned char *packet)
 {
-	struct bpf_hdr_hack_v3 *h;
+	struct bpf_hdr	*h;
+	vcounter_t 	*raw;
+	struct timeval tv;
 	int hlen, blen;
 
-	ts_extraction_tester(p_handle, header, packet, vcount);
+	hlen = dlt_header_size[pcap_datalink(p_handle)];
+	blen = BPF_HDRLEN_V3(hlen);		// length of bpf aligned bpf_hdr, based on equivalent bpf_hdr_hack_v3
+
+	/* Infer head of bpf_hdr */
+	h = (struct bpf_hdr *)(packet - blen);
+	
+	/* Error if header fields common to pcap and bpf disagree */
+	int error = 0;
+	error = (h->bh_hdrlen != blen) || (h->bh_caplen  != header->caplen)
+											 || (h->bh_datalen != header->len) ;
+	
+	/* Perfect once-only checks */
+	/* TODO: make these compiler checks, but retain verbosity if fail somehow */
+	if (error) {
+		/* Check header and member sizes currently accessible */
+		logger(RADLOG_NOTICE, "Performing initial checks of bpf header, timeval and timestamp sizes");
+		logger(RADLOG_NOTICE, " bpf header sizes:   hdr: %d, xhdr: %d", sizeof(struct bpf_hdr), sizeof(struct bpf_xhdr));
+		logger(RADLOG_NOTICE, " bpf aligned sizes:  hdr: %d, xhdr: %d", blen, BPF_HDRLEN_XHDR(hlen));
+		logger(RADLOG_NOTICE, " pcap:  hdr: %d, ts: %d, timeval: %d",
+				sizeof(struct pcap_pkthdr), sizeof(header->ts), sizeof(struct timeval) );
+
+		/* Basic consistency check */
+		if (h->bh_hdrlen != blen)
+			logger(RADLOG_ERR, " bpf_hdr length mismatch: recorded %d , inferred %d", h->bh_hdrlen, blen);
+		else
+			logger(RADLOG_NOTICE, " bpf_hdr length confirmed at %d, bh_tstamp at %d bytes", blen, sizeof(h->bh_tstamp) );
+
+		/* Apply cross-ref checks between bpf and pcap headers */
+		/* Cant just use sizeof, will only get back your own cast, need values of members */
+		if (h->bh_caplen==header->caplen && h->bh_datalen==header->len)
+			logger(RADLOG_NOTICE, " bpf_hdr crossref checks with pcap_hdr passed: caplen=%d , datalen=%d", h->bh_caplen, h->bh_datalen);
+		else
+			logger(RADLOG_ERR, " bpf_hdr crossref checks failed, inferred: caplen=%d , datalen=%d", h->bh_caplen, h->bh_datalen);
+					
+					
+  /* Examine actual timestamp values, but limit checks to first few packets */
+		logger(RADLOG_NOTICE, "Detailed look at first packets: ");
+
+		/* Simply recover ffcount from bpf header */
+		logger(RADLOG_NOTICE, " bh_ffcounter:  %llu", (long long unsigned)h->bh_ffcounter);
+
+		/* Assuming timeval, compare timestamps */
+		raw = (vcounter_t *) &h->bh_tstamp;	// raw only 64bits, so if timeval is 128, will see which half the cast gets
+		logger(RADLOG_NOTICE, " bh_tstamp:  %lld.%06lld and as cast to raw: %llu",
+			h->bh_tstamp.tv_sec, h->bh_tstamp.tv_usec, (long long unsigned) *raw );
+
+		raw = (vcounter_t *) &(header->ts);	// works regardless of size of timeval, no need to test first, nice
+		logger(RADLOG_NOTICE, " pcap ts:    %lld.%06lld and as cast to raw: %llu",
+			header->ts.tv_sec, header->ts.tv_usec, (long long unsigned) *raw );
+
+		/* Smart timeval printing */
+		if (sizeof(struct timeval)==16) {		// 64 bit machines
+			tv = h->bh_tstamp;
+			logger(RADLOG_NOTICE, " bpf  (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
+			tv = header->ts;
+			logger(RADLOG_NOTICE, " pcap (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
+		} else {		// traditional timeval, 32 machines
+			tv = h->bh_tstamp;
+			logger(RADLOG_NOTICE, " bpf  (tval 2*32):  %ld  %ld"  , tv.tv_sec, tv.tv_usec);
+			tv = header->ts;
+			logger(RADLOG_NOTICE, " pcap (tval 2*32):  %ld  %ld"  , tv.tv_sec, tv.tv_usec);
+		}
+
+		/* Translate the sec member to a time and date */
+		struct tm *t;
+		t = localtime(&(tv.tv_sec));
+		const char *months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+		logger(RADLOG_NOTICE, " %s %02d %04d, %02d:%02d:%02d", months[t->tm_mon], t->tm_mday,
+				1900+t->tm_year, t->tm_hour, t->tm_min, t->tm_sec);
+				
+	}
+				
+}
+
+
+
+/*
+ * Libpcap does not give full access to bpf_xhdr, it only extracts the ts.
+ * Must therefore extract the raw ts from the bpf_hdr structure, prepended
+ * to the frame data (this fact clear from catchpackets code).
+ *
+ * ** This version also sanity checks the ts timestamp, and corrects it if it is
+ * wrong by taking it directly from the bpf header (which fully respects the
+ * tsmode we select). Need this as version 9.1.1_1 of pcap breaks the semantics
+ * of tsmode, by assuming a FORMAT of BPF_T_BINTIME in all cases, regardless of
+ * the passed mode. The fix here works for old pcap, the buggy version, and
+ * should be future proof.
+ */
+static inline int
+extract_vcount_stamp_v3(pcap_t *p_handle,  const struct pcap_pkthdr *header,
+		const unsigned char *packet, vcounter_t *vcount, struct pcap_pkthdr *rdhdr)
+{
+	struct bpf_hdr_hack_v3 *h;	// use local hdr defn to get a vcounter_t directly
+	int hlen, blen;
+
+	/* TODO: make a compile time check, or initialization somehow */
+	static int notchecked = 1;		// trigger checks and verbosity once only
+	if (notchecked) {
+		header_match_test(p_handle, header, packet);
+		notchecked = 0;
+	}
 
 	hlen = dlt_header_size[pcap_datalink(p_handle)];	// detect actual LL header
-	blen = BPF_HDRLEN_V3(hlen);			// length of bpf-aligned bpf_hdr
+	blen = BPF_HDRLEN_V3(hlen);		// length of bpf-aligned bpf_hdr
 
 	/* Infer head of bpf_hdr and perform basic consistency check */
 	h = (struct bpf_hdr_hack_v3 *)(packet - blen);
-	if (h->bh_hdrlen != blen) {
-		logger(RADLOG_ERR, "Failed to find bpf hdr: (expected,apparent) header "
-				"length mismatch (%d, %d)", blen, h->bh_hdrlen);
-		return (1);
-	}
 	
-	/* Extra consistency checks between corresponding bpf and pcap hdr fields */
-   if (h->bh_caplen!=header->caplen || h->bh_datalen!=header->len) {
-		logger(RADLOG_ERR, "bpf_hdr caplen or datalen fails to match pcap");
-		return (1);
-	}
-	
-	/* Assuming structures align, are bpf and pcap timestamps identical? */
-	if (memcmp(&h->bh_tstamp, &header->ts, sizeof(struct timeval)) != 0) {
-		logger(RADLOG_ERR, "bpf_hdr and pcap timestamps do not match");
-		return (1);
-	}
-
+	/* Recover the raw ts from the bpf header */
 	*vcount = h->vcount;
+
+//	if (h->bh_hdrlen != blen) {
+//		logger(RADLOG_ERR, "Failed to find bpf hdr: (expected,apparent) header "
+//				"length mismatch (%d, %d)", blen, h->bh_hdrlen);
+//		return (1);
+//	}
+
+	/* Extra consistency checks between corresponding bpf and pcap hdr fields */
+//   if (h->bh_caplen!=header->caplen || h->bh_datalen!=header->len) {
+//		logger(RADLOG_ERR, "bpf_hdr caplen or datalen fails to match pcap");
+//		return (1);
+//	}
+
+	/* Copy the pcap hdr to the rdb, assuming for the moment the ts is good */
+	memcpy(rdhdr, header, sizeof(struct pcap_pkthdr));
+
+	/* Assuming structures align, are bpf and pcap timestamps identical?
+	 * Is likely to occur on 0, or All pkts: limit warning to first occurrence.
+	 */
+	static int tstested = 0;
+	if ( memcmp(&h->bh_tstamp, &header->ts, sizeof(struct timeval)) != 0 ) {
+		if ( !tstested ) {
+			logger(RADLOG_WARNING, "bpf_hdr and pcap timestamps do not match");
+			logger(RADLOG_WARNING, "Overwriting pcap ts with bpf ts (which will "
+					"obey the requested tsmode), silencing future transgressions.");
+			tstested = 1;
+		}
+		/* Could fail if timeval 8 bytes, but shouldnt execute in that case */
+		memcpy(&rdhdr->ts, &h->bh_tstamp, sizeof(struct timeval));
+	}
+	
 	return (0);
 }
 
@@ -747,7 +898,7 @@ extract_vcount_stamp_v3(pcap_t *p_handle, const struct pcap_pkthdr *header,
 int
 extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 		const struct pcap_pkthdr *header, const unsigned char *packet,
-		vcounter_t *vcount)
+		vcounter_t *vcount, struct pcap_pkthdr *rdhdr)
 {
 	int err;
 
@@ -761,26 +912,28 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 	case 0:
 	case 1:
 		err = extract_vcount_stamp_v1(clock->pcap_handle, header, packet, vcount);
+		memcpy(rdhdr, header, sizeof(struct pcap_pkthdr));
 		break;
 	case 2:
 		/* This version supports a single timestamp at a time */
-		if (clock->tsmode == PKTCAP_TSMODE_RADCLOCK)
+		if (clock->tsmode == PKTCAP_TSMODE_RADCLOCK) {
 			err = extract_vcount_stamp_v2(clock->pcap_handle, header, packet, vcount);
-		else {
+			memcpy(rdhdr, header, sizeof(struct pcap_pkthdr));
+		} else {
 			*vcount = 0;
 			logger(RADLOG_ERR, "Timestamping mode should be RADCLOCK");
 			err = 1;
 		}
 		break;
 	case 3:
-		err = extract_vcount_stamp_v3(clock->pcap_handle, header, packet, vcount);
+		err = extract_vcount_stamp_v3(clock->pcap_handle, header, packet, vcount, rdhdr);
 		break;
 	default:
 		err = 1;
 	}
 
 	if (err) {
-		logger(RADLOG_ERR, "Cannot extract raw timestamp from pcap data"
+		logger(RADLOG_ERR, "Cannot extract raw timestamp from pcap data, "
 			"pcap timestamp reads: %ld.%ld", header->ts.tv_sec, header->ts.tv_usec);
 		return (1);
 	}

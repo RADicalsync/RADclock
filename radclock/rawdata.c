@@ -130,9 +130,9 @@ fill_rawdata_pcap(u_char *c_handle, const struct pcap_pkthdr *pcap_hdr,
 
 	/* Return code discarded as can't be processed by pcap */
 	extract_vcount_stamp(handle->clock, handle->clock->pcap_handle,
-			pcap_hdr, packet_data, &(RD_PKT(rdb)->vcount));
+			pcap_hdr, packet_data, &(RD_PKT(rdb)->vcount), &(RD_PKT(rdb)->pcap_hdr));
 
-	memcpy(&(RD_PKT(rdb)->pcap_hdr), pcap_hdr, sizeof(struct pcap_pkthdr));
+	//memcpy(&(RD_PKT(rdb)->pcap_hdr), pcap_hdr, sizeof(struct pcap_pkthdr));
 	memcpy(RD_PKT(rdb)->buf, packet_data, pcap_hdr->caplen * sizeof(char));
 
 	rdb->next = NULL;

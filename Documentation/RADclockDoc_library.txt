@@ -1,6 +1,8 @@
 /*
-* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-*/
+ * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ *
+ * This file is part of the radclock program.
+ */
 
 RADclock documentation.
 Written by Darryl Veitch
@@ -14,6 +16,7 @@ Glossary:
  IPC = Inter-Process Communication
  OS = Operating System
  SHM = SHared Memory
+ FB = FeedBack
  FF = FeedForward
  FFcounter = a FF compatible counter
  algo = algorithm, the RADclock clock synchronization algorithm
@@ -67,32 +70,33 @@ RADclockrepo/radclock/radclock, is referred to as the daemon code or simply the 
 
 By the RADclock library we mean the code in RADclockrepo/radclock/libradclock.
 This library attempts to isolate the elements necessary to use RADclock.
-To use RADclock an external `libprocess` must include radclock.h, the OS kernel
-must have necessary RADclock or FFclock aware components, and the daemon must be running.
+To use RADclock an external `libprocess`, which defines a `user radclock`,
+must include radclock.h, the OS kernel must have necessary RADclock or FFclock
+aware components, and the daemon must be running.
 
 RADclock requires several kinds of IPC capabilities :
-	FFcounter reading  [ typically from kernel, but can be direct if TSC (passthrough mode) ]
+	FFcounter reading  [ typically from kernel, but can be direct if TSC (bypass mode) ]
 		- daemon:			needed by TRIGGER, NTP_SERV, MAIN (spy timestamping), and verbose()
 		- libprocesses:   to timestamp arbitrary events
    Access to radclock parameters [owned by the daemon process]
 	   - libprocesses:   		via a SHM segment (written to by daemon, read by libprocess)
-		- kernel FFclock data:	pushed to kernel by daemon
+		- kernel FFclock data:	pushed to kernel by daemon if conf->adjust_FBclock is ON.
    Access to kernel FFclock data
 		- daemon:			pulled to initialize radclock parameters (clock_init_live, KV>1)
 	   - libprocesses:   to get radclock parameters when SHM segment not available
-   Access to raw packet timestamps make in kernel, via RAD/FFclock modified pcap
+   Access to raw packet timestamps make in kernel, via RAD/FFclock modified bpf, accessed via libpcap
 		- daemon:			to get raw timestamps and pkt data of NTP pkts for stamp creation
 		- libprocesses:	to get raw timestamps and pkt data of monitored pkts
    Access to system clock control parameters, via the sysctl tree
 	   - daemon:			to learn of KV value, set and learn of counter read options like bypass
-		- kernel:			defines and mediates the relevant setting via the sysctl tree
+		- kernel:			defines and mediates the relevant settings via the sysctl tree
 	Standard system clock disciplining  [ optionally if conf->adjust_FBclock ]
 		- daemon:			use system ntp_adjtime and settimeofday to slave system clock
 
-Note that the RADclock adjust_FBclock option uses a traditional system clock
-interface to perform traditional userland based discipling using RADclock,
-in other words to allow the radclockd daemon to replace ntpd in that sense.
-It should not be confused with a full FF based system clock, which if available
+Note that the RADclock  adjust_FBclock  option uses a traditional system clock
+interface to perform traditional userland based discipling of the kernel FB system
+clock using RADclock, in other words to allow the radclockd daemon to replace ntpd in that sense.
+It should not be confused with the full FF based system clock (FFclock), which if available
 is not part of RADclock as such.  Such a clock however does rely on kernel FFclock
 data updating, a task which the RADclock daemon fufills.
 
@@ -150,21 +154,19 @@ struct radclock {			// variables of this type called `clock`
 	// Specifies the kind of timestamp you want from pcap data (details KV dependent)
 	int tsmode;
 	 
-	 
 	// syscall-based pushing of radclock parameters to kernel FFclock data for KV=0,1
 	//  - currently never initialized (except to zero) !!  and never used
 	//  - instead fixedpoint code performs kernel update using direct access pointers above
 	int syscall_set_ffclock;	// appears in kclock-fbsd.c:set_kernel_ffclock, never used
 	 
-	
 	// Read vcounter syscall direct link
 	// Set in ffkernel-{fbsd,linux}.c:radclock_init_vcounter_syscall
 	int syscall_get_vcounter;	//  FBSD: for KV>1, instead use syscall ffclock_getcounter()
 
 	/* Generic function for reading of counter */
 	// Set in radclock_init_vcounter:
-	//				selecting rdtsc passthrough if available	(radclock_get_vcounter_rdtsc)
-	//          else just linking to existing syscall		(radclock_get_vcounter_syscall)
+	//				selecting rdtsc bypass if available		(radclock_get_vcounter_rdtsc)
+	//          else just linking to existing syscall	(radclock_get_vcounter_syscall)
 	// In library radclock_get_vcounter() defined to access this opaquely
 	int (*get_vcounter) (struct radclock *clock, vcounter_t *vcount);
 };
@@ -216,7 +218,8 @@ compilation when kernel support doesnt exist. These should never be executed sin
 would return -1 (no support) when called in:
 	daemon:			clock_init_live
 	libprocess:		radclock_init
-resulting in an early failure of live capture.
+resulting in an early failure of live capture. An exception is the _NONE version
+of found_ffwd_kernel_version() which must be called in radclock_init(clock).
 
 The macros would ideally only appear within the above library files.
 One set of exceptions appear in pthread_dataproc.c, where
@@ -258,7 +261,7 @@ The main features of KV = 0 are:
   - TSC only, no generic counter choice  (originally TSCclock, not RADclock)
   - no explicit in-kernel versioning
   - kernel data a full and simple copy of RADclock parameters - no changes or
-    translations, clock reading in kernel worked using floating point for some reasons
+    translations, clock reading in kernel worked using floating point for some reason
   - most kernel modifications in bpf.c
 	  - bpf handle required for access of parameters :  now stored in clock->bsd_data
 	    This was the `globaldata` as it was how libprocesses could access radclock
@@ -275,12 +278,12 @@ in the language of the modern code, captured by the following type (defined in r
 enum pktcap_tsmode {
 	PKTCAP_TSMODE_NOMODE = 0,			// no FF support in pcap
 	PKTCAP_TSMODE_SYSCLOCK = 1,		// leave normal pcap ts field, hide vcount in padded hdr
-	PKTCAP_TSMODE_FFNATIVECLOCK = 2,		// fill ts with RADclock Abs clock, hide vcount in hdr
-	PKTCAP_TSMODE_FAIRCOMPARE = 3  // as _SYSCLOCK, but ts and raw timestamps back-to-back
+	PKTCAP_TSMODE_FFNATIVECLOCK = 2,	// fill ts with RADclock Abs clock, hide vcount in hdr
+	PKTCAP_TSMODE_FAIRCOMPARE = 3  	// as _SYSCLOCK, but ts and raw timestamps back-to-back
 };
 typedef enum pktcap_tsmode pktcap_tsmode_t ;
 
-The point of _RADCLOCK was to make it more convenient for applications to use
+The point of _FFNATIVECLOCK was to make it more convenient for applications to use
 RADclock by having the absolute timestamp pre-calculated in a standard field and
 format (timeval). In situ calculation also ensured that the RADclock timeval
 corresponded exactly to the captured raw vcount timestamp, using the correct
@@ -300,19 +303,20 @@ available, such as HPET. However, many of these were only 32bits wide.
 The idea of a FeedForward counter was created which means wide enough to not
 wrap even when of small period (<1ns) (64 bits was and remains sufficient),
 and with monotonic advancement impervious to power management.
-The existing FBSD timecounter interface, which exposed available counters to
+The existing FBSD timecounter interface, which exposed (32bit forms of) available counters to
 userspace, was expanded to support FF-compatible versions of counters if needed
 (expanding 32 bits counters to 64 using periodic updates, initially via the FIXEDPOINT thread).
 The FFcounter code was designed to support the needs of FF clocks in general,
-not only the RADclock. To support this the basic vcounter type was created,
-defined in radclock.h:  typedef uint64_t vcounter_t;
+not only the RADclock, though it is highly influenced by RADclock.
+To support this the basic vcounter type was created, defined in radclock.h:
+typedef uint64_t vcounter_t;
 
 KV=1	Added:
 		- explicit versioning and the FFclock label for FFcounter related code
 		- FFcounter extension to the timecounter interface allowing any available
 		  counter to be FF-extended (if needed), accessed and used via a syscall
 			- counter syscall available via  clock->syscall_get_vcounter
-		- a passthrough mode allowing the TSC, if available, to be accessed directly
+		- a bypass mode allowing the TSC, if available, to be accessed directly
 		  via rdtsc-like assembler macros as an option (just like in KV0), rather
 		  than going through the slower userspace<->kernelspace  timecounter interface
 
@@ -334,7 +338,6 @@ KV=2	Removed:
 		  getting the ts field from BPF_T_MICROTIME .
 		  Later FAIRCOMPARE entirely as it was never acted on, not for any KV !
 		  
-		
 		Added:
 			- new semantics for vcount access (which breaks the description under KV=0 above):
 			 the standard ts field is the only timestamp present, and is a timeval
@@ -342,6 +345,7 @@ KV=2	Removed:
 			 Hence the daemon Must now use _RADCLOCK in order to access raw timestamps.
 			
 	      - syscalls for all FF functions:
+	      
 syscall (kernel, kern_ffclock.c)  linked userspace fn		OS-dep wrapper {ffclock,kclock}-{fbsd,,}.c
 ---------------------------------------------------------------------------------------------------
 sys_ffclock_getcounter  		ffclock_getcounter(vcount) radclock_get_vcounter_syscall(clock,vc)
@@ -349,6 +353,10 @@ sys_ffclock_setestimate			ffclock_setestimate(cest)	set_kernel_ffclock(clock, ce
 sys_ffclock_getestimate			ffclock_getestimate(cest)	get_kernel_ffclock(clock, cest)
 
 
+			- many advances on the kernel side, both for the FFclock suppport itsel
+			  and bpf based timestamping, and tsmode processing. However these are
+			  FF changes rather than RAD changes.  See FFclockDoc_FreeBSD for details.
+			  
 Faircompare was removed because:
 i)  this was a research feature not appropriate to the evolution of the kernel
     support towards a generic FF clock, and its use by an actual FF-based system clock.
@@ -368,6 +376,9 @@ KV=3	Added:
 	    (not just a hacked header structure used by RADclock)
 	  - the interaction with the universal sysclock infrastructure and TSMODE needs some
 	    sorting out.
+	  - further expansion, and correct operation of, the bpf timestamp type language.
+	    Again much of this is FF based (see FFclockDoc_FreeBSD) however the development
+	    proceeded in close conjunction with RADclock development.
 
 For KV={2,3}, the definition is really the change in the bpf _T_ timestamp type
 language, and the changes in functionality they then imply/impose.
@@ -381,8 +392,8 @@ which is known through testing existence of the automatically
 generated (by autoheader(configure.in)) associated kernel flag HAVE_SYS_TIMEFFC_H .
 This header, and hence flag, is only defined when KV>1 .
 The flag is used to :
-					 		kclock.h:  ensure struct ffclock_estimate defined to allow compilation
-{ffkernel,kclock,pcap}-fbsd.c:  include timeff.h if available
+					 		kclock.h:  ensures timeffc.h is only included if it is available
+	           ffkernel-fbsd.c:  include timeffc.h if available to gain access to syscalls
 					 kclock-fbsd.c:  provide dummies if KV<2 for {set,get}_kernel_ffclock
 				  ffkernel-fbsd.c:  provide dummy   if KV<2 for ffclock_getcounter
 
@@ -394,13 +405,15 @@ LINUX
 =====
 
 KV = 0,1
-Most of the comments made for FBSD hold in general terms here, except that instead of a bpf descriptor access is obtained through a linux generic netlink id: clock->linux_data
+Most of the comments made for FBSD hold in general terms here, except that instead
+of a bpf descriptor access is obtained through a linux generic netlink id: clock->linux_data
 
 KV = 2
-This version does not yet exist, but the groundwork is layed though the OS and KV dependency structure of the code.
+This version does not yet exist, but the groundwork is layed though the OS and KV
+dependency structure of the code.
 
-Linux has a system for selecting an underlying counter analogous to timecounter, called
-clocksource, which we also expand to allow FFclock compatible counters of
+Linux has a system for selecting an underlying counter analogous to timecounter,
+called clocksource, which we also expand to allow FFclock compatible counters of
 underlying physical counters.
 
 
@@ -420,7 +433,7 @@ which both the library and deamon code obtains a raw timestamp `vcount`.
 
 The function pointer  clock->get_vcounter  is set in radclock_init_vcounter to
 	radclock_get_vcounter_rdtsc		// wrapper for underlying TSC access
-if passthrough is desired and available, otherwise
+if bypass is desired and available, otherwise
    radclock_get_vcounter_syscall		// wrapper for syscall access to existing counter
 
 The FBSD KV dependence of the syscall access in radclock_get_vcounter_syscall is
@@ -444,11 +457,49 @@ required KV-specific function.
 Under FBSD these are  extract_vcount_stamp_v{1,2,3},  and make use of modified
 headers struct bpf_hdr_hack_v{1,2,3} recorded in pcap-fbsd.c  .
 
-The tsmode is set using the KV-generic public functions  radclock_{get,set}_tsmode:
-	daemon:		livepcapstamp_init:  if FBSD & KV=2 _RADCLOCK, else _SYSCLOCK
-	libprocess:	whatever
-which are mainly wrappers for the OS-specific functions  descriptor_{get,set}_tsmode
-which switch on KV and perform the actual work.
+On the RADclock side, the available timestamping modes reflect the RADclock intent,
+however these map closely to the modes currently supported in the _T_ bpf tsmode
+language under KV=3 (with KV=2 supported), including the concept that the
+FFclock may exist in different flavours.  These are best explained by including
+here the comment block and definitions from radclock.h:
+/* View these as presets for bpf's _T_ based timestamp type specification.
+ * Used for convenience by daemon and libprocesses to set all FORMAT, FFCOUNTER, FLAVOR, CLOCK
+ * dimensions of bpf tstype.  All except PKTCAP_TSMODE_NOMODE set FLAVOR = NORMAL
+ * (UTC and !FAST) and FFCOUNTER = FFC.
+ * Descriptions below specify high level intent, whether fully possible given KV or not.
+ * Other bpf tstype dimensions are specified in KV dependent code.
+ * Main use cases:
+ *	  PKTCAP_TSMODE_FBCLOCK:  traditional daemon, to get needed raw + readily
+ *      available FB comparison ts, stored in raw output enable fair comparisons
+ *	  PKTCAP_TSMODE_FFCLOCK:  same as _FBclock but this time to compare against
+ *		  the kernel's monoFF clock
+ *   PKTCAP_TSMODE_FFNATIVECLOCK:  libprocesses, who just want to be able to
+ *      get RADclock timestamps for each pkt, but made already in the kernel
+ *   PKTCAP_TSMODE_FFDIFFCLOCK:  libprocesses measuring small time intervales such
+ *      as RTTs, who want to use the RADclock difference clock, but need to do so
+ *      via an absolute clock read.  This clock is allowed to drift to achieve this.
+ *   PKTCAP_TSMODE_RADCLOCK:  if dont trust the kernel timestamp, prefer to
+ *		  read RADclock (native abs clock) in userland, based off kernel raw ts.
+ *      Also useful in KV=2 when have no choice but to create a ts in the daemon.
+ *   PKTCAP_TSMODE_CUSTOM:  signal that a customized tsmode will be defined and
+ *		  passed.
+ */
+ enum pktcap_tsmode {
+	PKTCAP_TSMODE_NOMODE = 0,			// no FF support in pcap, or very early versions
+	PKTCAP_TSMODE_SYSCLOCK = 1,		// get raw, plus normal timestamp from sysclock
+	PKTCAP_TSMODE_FBCLOCK = 2,			//                "                    FBclock
+	PKTCAP_TSMODE_FFCLOCK = 3,			//                "                    FFclock (mono)
+	PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
+	PKTCAP_TSMODE_FFDIFFCLOCK = 5,	//                "                    FF difference clock
+	PKTCAP_TSMODE_RADCLOCK = 6,		//    "   , plus RADclock timestamp (userland)
+	PKTCAP_TSMODE_CUSTOM = 100			// adopt the customised tsmode
+};
+
+The tsmode is set using the KV-generic public functions  pktcap_{get,set}_tsmode:
+	daemon:		livepcapstamp_init:  pktcap_set_tsmode(clock, .., PKTCAP_TSMODE_FFCLOCK);
+	libprocess:	pktcap_set_tsmode can also be used, or done manually
+(in in radapi-pcap.c) which are mainly wrappers for the OS-specific functions
+descriptor_{get,set}_tsmode which switch on KV and perform the actual work.
 
 Only the latter functions contain the mapping between the daemon and FFkernel
 enhanced _T_ language of bpf.c describing timestamp type :
@@ -456,13 +507,25 @@ enhanced _T_ language of bpf.c describing timestamp type :
 Thus descriptor_get_tsmode has verbosity detailing the BPF_T_ value obtained from
 the kernel, but returns a PKTCAP_TSMODE_ value.
 
+See the "bpf and pcap" heading in FFclockDoc_FreeBSD  for details of the _T_
+language and the interaction with bpf headers, and the KV=3 bpf.{h,c} code.
+
+In the case of FreeBSD, the tsmode setting and testing functions in pcap-fbsd.c have
+useful verbosity which conveniently decodes the requested, and successfully returned,
+timestamp mode.  Checks are also made on the pcap and bpf headers and timestamps
+to ensure the assumptions of the code are satisfied, and detailed debugging
+output is logged in case of error. In extract_vcount_stamp_v3,
+if the timestamps from bpf and pcap disagree (for example due to a buggy pcap
+implementation), then the latter is overwritten by the former for all packets,
+and this fact is flagged on the first instance.
+
 
 
 ==============================================================
 IPC:	Use of SYSCTL for FreeBSD, KV>1
 ======================================
 
-The SYSCTL tree associated with FF components is summarized in FFclockDoc_FreeBSDv4 as:
+The SYSCTL tree associated with FF components is summarized in FFclockDoc_FreeBSD as:
 _kern  							   ""   // defined above kern_tc.c somewhere
 	-> _kern_sysclock	[NODE] 		"System clock related configuration"  // declared in timeffc.h
 		- available [PROC]   			"List of available system clocks" [RO]
@@ -471,7 +534,7 @@ _kern  							   ""   // defined above kern_tc.c somewhere
 		   - version				[INT]			"Feed-forward clock kernel version" [RO]  // KV
 		   - ffcounter_bypass	[INT]	  		"Use reliable hardware timecounter as the feed-forward counter"
 
-as is the underlying timecounter (tc) tree :
+as is the underlying timecounter (tc) tree   [ more complete version in FFclockDoc_FreeBSD ]
 _kern
   - boottime  	"System boottime"
   -> _kern_timecounter
@@ -498,33 +561,46 @@ ffkernel-fbsd.c:
  has_vm_vcounter:
 	sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&passthrough_counter,..) // missing in kernel
  radclock_init_vcounter:
-	sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&passthrough_counter,..)
 	sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)   // look to see if tc there
-
-
+	sysctlbyname("kern.sysclock.available", &nameavail[0], &size_ctl, NULL, 0);
+	sysctlbyname("kern.sysclock.active", &nameavail[0], &size_ctl, NULL, 0);
+	sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&passthrough_counter,..)
 
 
 
 
 ==============================================================
-IPC:	Standard system clock disciplining
+IPC:	Traditional system clock disciplining via the FB interface
 ======================================
 Main files:		pthread_dataproc.c
 
-The RADclock facility for system clock disciplining from the daemon uses only
+The RADclock facility for FB system clock disciplining from the daemon uses only
 standard interfaces, namely the NTP_ADJTIME (actual name is OS dependent) and settimeofday
 functions.   It is engaged optionally via conf->adjust_FBclock , with default:
 	conf->adjust_FBclock = DEFAULT_ADJUST_FBCLOCK; 		// = BOOL_{OFF,ON}
+with the default typically set to OFF.
 
 The disciplining algorithm is contained within
 	int update_FBclock(struct radclock_handle *handle)
 and is a simple, conservative, heavily damped algorithm based on a 1 minute
 calibration cycle of period adjustments involving userland raw timestamping
-based bracketing of system clock reads (via read_clocks), which aims to slave the
+based bracketing of system clock reads (via read_clocks()), which aims to slave the
 system clock to RADclock, preserving monotonicity of the former.
 
-This is a simple, non-optimized and non-ideal approach, motivated by the desire to make the system clock be basically well behaved by following RADclock, thereby avoiding the erratic behaviour of ntpd which can complicate experiments operationally (for example if the host houses a DAG card, it can confuse the `which second is which` setting of the card).
-A second motivation was to provide, operationally, a means to replace nptd by RADclock without having to reengineer the system clock interface in any way, thereby allowing users to benefit from RADclock without having to do anything, in particular without having to compile in the RADclock library. This functionality was how in fact CAIDA was accessing RADclock.  However it still requires an FFkernel, currently, but not if a userland-only version of the daemon were developed. This will be superseded by kernels offering true FFclock support, though use of the difference clock will still require the API to be use directly in most cases, and app developers to be willing to make the effort.
+This is a simple, non-optimized and non-ideal approach, motivated by the desire
+to make the system clock be basically well behaved by following RADclock, thereby
+avoiding the erratic behaviour of ntpd which can complicate experiments
+operationally (for example if the host houses a DAG card, it can confuse the
+`which second is which` setting of the card).
+A second motivation was to provide, operationally, a means to replace nptd by
+RADclock without having to reengineer the system clock interface in any way,
+thereby allowing users to benefit from RADclock without having to do anything,
+in particular without having to compile in the RADclock library.
+However it still requires a FFkernel, currently, but not if a userland-only
+version of the daemon were developed. This will be superceded by kernels
+offering true FFclock support, though use of the difference clock will still
+require the API to be use directly in most cases, and app developers to be
+willing to make the effort.
 
 
 
@@ -533,14 +609,14 @@ IPC:	Access to radclock parameters:  Overview
 ======================================
 
 Each time the RADclock algo (process_bidir_stamp) processes a stamp, the radclock
-data and error stuctures held in  clock_handle->rad_{data,error},  with format :
+data and error structures held in  clock_handle->rad_{data,error},  with format :
 
 struct radclock_data {
 	double phat;				// very stable estimate of long term counter period [s]
 	double phat_err;			// estimated bound on the relative error of phat [unitless]
 	double phat_local;		//	stable estimate on shorter timescale period [s]
 	double phat_local_err;  // estimated bound on the relative error of plocal [unitless]
-	long double ca;			// K_p - thetahat(t) - leapsectotal? [s]
+	long double ca;			// K_p - thetahat(t) [s]  (leaps not included!)
 	double ca_err;				// estimated error (currently minET) in thetahat and ca [s]
 	unsigned int status;		// status word (contains 9 bit fields)
 	vcounter_t last_changed;	// raw timestamp T(tf) of last stamp processed [counter]
@@ -575,7 +651,15 @@ Use of the API enables the fullest possible use of RADclock capabilities.
   							kernel, and can be read back from it.
 							Under FBSD with KV>1 this is done via syscalls.
 
-The kernel copy enables kernel processes to quickly access RADclock time without
+# adjust_FFclock option
+Note that the push to the kernel is disabled if  conf->adjust_FFclock is set to OFF.
+The main usecase for disabling the push of radclock updates to the FFclock is
+to allow a second radclock to run (eg for experimental purposes) without competing
+with an existing radclock already operating as the FFclock's daemon.
+
+	
+The kernel copy enables kernel processes to quickly access RADclock time
+(strictly speaking FFclock time using a RADclock daemon) without
 kernelspace<->userspace overhead, and means RADclock based time will still be
 available to kernel and other processes even if the RADclock daemon dies.
 On launching a new daemon, the (more or less stale) kernel copy can even be used
@@ -613,8 +697,8 @@ For API access the shared memory contains a variable of the following type
 
 struct radclock_shm {
 	int version;				// currently = 1, not tested for anywhere
-	int status;					// meant to be valid/invalid, currently unused
-	int clockid;				// currently unused
+	int status;					// meant to be valid/invalid, currently 0 and unused
+	int clockid;				// currently 0 and unused
 	unsigned int gen;       // generation # to avoid inconsistencies
 	size_t data_off;			// initially offset from top of structure to bufdata[0]
 	size_t data_off_old;		// initially 		"			"			"		   bufdata[1]
@@ -633,23 +717,23 @@ previous values (accessible by pointer members), plus additional information.
 In contrast, for FBSD KV>1 the kernel variable *cest (kclock.h) is defined as a structure :
 struct ffclock_estimate
 {
-	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast). */
-	vcounter_t	update_ffcount;	/* Counter value at last update. */
-	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second. */
+	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) (native, no leaps) */
+	vcounter_t	update_ffcount;	/* Counter value at last update */
+	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second */
 	uint64_t	period;					/* Estimate of current counter period  [2^-64 s] */
-	uint32_t	errb_abs;				/* Bound on absolute clock error [ns]. */
+	uint32_t	errb_abs;				/* Bound on absolute clock error [ns] */
 	uint32_t	errb_rate;				/* Bound on relative counter period error [ps/s] */
-	uint32_t	status;					/* Clock status. */
-	int16_t	leapsec_total;			/* Sum of leap seconds seen since clock start. */
-	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}). */
-	uint8_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
+	uint32_t	status;					/* Clock status */
+	uint16_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
+	int8_t	leapsec_total;			/* Sum of leap secs seen since clock start */
+	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
 };
 
 which does not quite preserve all the original rad_data and the additional
 fields are more complex.  This is partly because the kernel FFclock data must offer generic
 support to any FFclock, not only RADclock. In particular, the phat_local concept
 and parameter is specific to RADclock.
-Full details of the correspondance is provided in FFclockDoc_FreeBSDv4 under
+Full details of the correspondance is provided in FFclockDoc_FreeBSD under
 "FF algo data kernel <--> daemon translation".
 
 
@@ -674,11 +758,13 @@ Simplified Code:
 		  set_kernel_fixedpoint(handle->clock, &fpdata))  // OS-dependent implementations
 			  ioctl(PRIV_DATA(clock)->dev_fd, BIOCSRADCLOCKFIXED, fpdata);
   else
-	  if HAVE_SYS_TIMEFFC_H_FBSD		//	FBSD, KV>1
+	  if HAVE_SYS_TIMEFFC_H			//	FBSD, KV>1
 	  		check for hw_counter change;
 	  fill_ffclock_estimate				// transform rad_data to FFclock format
 	  set_kernel_ffclock					// wrapper for syscall
 		  ffclock_setestimate(cest)  	// links to syscall sys_ffclock_setestimate
+
+The push to the kernel is disabled if  conf->ajust_FFclock is set to OFF.
 
 
 Pulling FFclock data from the kernel is only well supported under FBSD, KV>1
@@ -709,13 +795,15 @@ Also defined in  radclock_private.h  are the SHM relevant macros:
 
 The relevant configuration variable (config_mgr.c) is
 	clock_handle->conf->server_ipc		= DEFAULT_SERVER_IPC;
-and is one of the variables can be reset to on or off during restarts.
-This variable is a misnomer as there is no server (or thread, except MAIN) as such
-associated to the SHM underlying the IPC.
+and is one of the variables can be reset to on or off during reloads.
+This variable is a misnomer as there is no server (or thread, except MAIN) as
+such associated to the SHM underlying the IPC.
 
 Note that the command line option -x turns the ipc server off, but there is no
-option to turn it on. Thus for the IPC to work, it MUST be set on in the
-conf file!
+command line option to turn it on. Thus for the IPC to work, it MUST be set on
+in the conf file!   An easy way to achieve this to use the run the script (in
+repo/tests/)
+	SHMset on
 
 
 
@@ -730,7 +818,7 @@ struct radclock * radclock_create(void)    // create clock, init to trivial valu
 int shm_init_writer(struct radclock *clock)// create shm segment for read/write
 int shm_detach(struct radclock *clock)		 // detach segment from calling process
 
-which make use of the following raw SHM functions from #include <sys/shm.h> :
+which make use of the following raw SHM functions included from <sys/shm.h> :
 
             Called in
   ftok:		shm_init_{reader,writer}   create unique key given filename and user key
@@ -765,11 +853,28 @@ able to locate and attach to the same segment.
 	shm_detach				// detach shm segment from RADclock
 
 
-Note that the SHM segment, once created, is NEVER deleted/removed, not just under restarts, but even when RADclock exits completely. This is because external processes may still be attached to it. By keeping it alive these processes can continue to function (using the kernel copy fallback as described below), and once a new deamon is finally launched, it will pick up the same segment, thereby establishing the IPC without any need for signaling or other checks.
-Libprocesses can always keep track of the freshness of the SHM data through the last_changed field of radclock_data.
+Note that the SHM segment, once created, is NEVER deleted/removed, not just under
+restarts, but even when RADclock exits completely. This is because external
+processes may still be attached to it. By keeping it alive these processes
+can continue to function (using the kernel copy fallback as described below),
+and once a new deamon is finally launched, it will pick up the same segment,
+thereby establishing the IPC without any need for signaling or other checks.
+Libprocesses can always keep track of the freshness of the SHM data through
+the last_changed field of radclock_data.
 
 Multiple independent and non-conflicting daemons are possible if distinguished by
 different RADCLOCK_RUN_DIRECTORY values, which will result in separate SHM segments.
+This however is not tested and is not recommended!
+Running multiple daemons (with or without terminal) with the same RADCLOCK_RUN_DIRECTORY
+may result in more than one radclock updating the same segment.
+Even if only one daemon is configured to update the SHM segment, each may still
+update the FFdata in the kernel, which is a dangerous situation.
+
+// TODO: should there be a conf parameter to control if update FF or not??
+  there used to be one, but it was tangled with the FB clock updating so I separated
+  it out and dumped the general one.    Should probably reinstate this now..
+  Allow FF and FB updating to be independent?   or have one `sysclock`, plus the separate FB ?
+// TODO: check if existing controls in fact prevent this
 
 
 --------------------------------
@@ -779,8 +884,8 @@ SHM: libprocess side (external)
 For an external process `libprocess` to use RADclock it must include
 #include <radclock.h>
 Note that this declares a struct radclock but does not define it, the libprocess
-does not know about its internal organisation of the clock type, it is an opaque type as
-far as it is concerned.
+does not know about the internal organisation of the clock type, it is an opaque
+type as far as it is concerned.
 
 It can create its private (rad)clock by calling:
 
@@ -793,7 +898,10 @@ It can create its private (rad)clock by calling:
 	radclock_destroy		// destroy private clock, detach SHM
 
 These create/initialize/destroy functions are again defined in radapi-base.c .
-Note that shm_init_{reader,writer} behave symmetrically: each will create a segment if it does not already exist, or otherwise use the existing one. As explained above, this allows both private radclocks and daemons to come and go without risk of losing an ability to reconnect, and without any signalling complexities.
+Note that shm_init_{reader,writer} behave symmetrically: each will create a
+segment if it does not already exist, or otherwise use the existing one.
+As explained above, this allows both private radclocks and daemons to come and
+go without risk of losing an ability to reconnect, and without any signalling complexities.
 
 
 
@@ -812,13 +920,14 @@ typedef uint64_t vcounter_t;
 
 Next, STAtus words for RADclock are defined, which provide the big picture of
 RADclock''s view of its status and the quality of its estimates:
+A status of 0x0000 indicates a radclock out of warmup, well served with packets, and all is well.
 
 #define STARAD_UNSYNC			0x0001	// not sync'ed (just started, server not reachable)
 #define STARAD_WARMUP			0x0002	// in warmup phase, error estimates unreliable
 #define STARAD_KCLOCK			0x0004	// RADclock kernel time is reliable
 #define STARAD_SYSCLOCK			0x0008	// system clock (if RADclock controlled) is accurate
 #define STARAD_STARVING			0x0010	// stamps lacking (pkts lost, server unavailable, match failure)
-#define STARAD_RTT_UPSHIFT		0x0020	// Quality of the RADclock period estimate is poor
+#define STARAD_RTT_UPSHIFT		0x0020	// Upward Shift Detected
 #define STARAD_PHAT_UPDATED	0x0040   // phat updated on this stamp (not adopted if sanity triggered)
 #define STARAD_PHAT_SANITY		0x0080   // phat update seems impossible, suspect server error or path asym change
 #define STARAD_PLOCAL_QUALITY	0x0100	// Quality of new plocal estimate below level acceptable for adoption
@@ -842,13 +951,13 @@ We now turn to those functions which are defined in radapi-getset.c .
 
 Out of the 9 fields stored in the current rad_data within clock-ipc_shm,
 7 functions are devoted to simply extracting them individually:
-int radclock_get_last_changed	(clock, vcounter_t *last_vcount)	//			 = last_changed
-int radclock_get_next_expected	(clock, vcounter_t *till_vcount)	// 	 = next_expected
-int radclock_get_period			(clock, double *period)				// period = phat_local
-int radclock_get_bootoffset			(clock, long double *offset)		// offset = ca
-int radclock_get_period_error	(clock, double *err_period)		//			 = phat_err
-int radclock_get_bootoffset_error	(clock, double *err_offset)		//			 = ca_err
-int radclock_get_status			(clock, unsigned int *status)		// status = status
+int radclock_get_last_changed		(clock, vcounter_t *last_vcount)	//			 = last_changed
+int radclock_get_next_expected	(clock, vcounter_t *till_vcount)	// 	 	 = next_expected
+int radclock_get_period				(clock, double *period)				// period = phat_local
+int radclock_get_bootoffset		(clock, long double *offset)		// offset = ca
+int radclock_get_period_error		(clock, double *err_period)		//			 = phat_err
+int radclock_get_bootoffset_error(clock, double *err_offset)		//			 = ca_err
+int radclock_get_status				(clock, unsigned int *status)		// status = status
 
 For each of these functions, if the SHM segment does not exist, the data is taken from
 the kernel copy instead via:
@@ -856,7 +965,7 @@ the kernel copy instead via:
 		 fill_radclock_data(&cest, &rad_data);		// extract rad_data from it
 		 *desiredparam = rad_data.relevantfield
 where cest is of type ffclock_estimate .
-That that if the daemon has died, the SHM segment will exist and be used, but,
+If the daemon has died, the SHM segment will exist and be used, but,
 like the kernel copy, will not be updated.
 
 The 2 missing fields are phat_local{,_err}, which are more for expert use, and
@@ -872,7 +981,7 @@ int radclock_get_clockerror_bound_std	(clock, double *error_bound_std)
 int radclock_get_min_RTT					(clock, double *min_RTT)
 however in this case there is no fallback to kernel data (yet).
 
-Finally, the functions (which currently are placeholders only) :
+Finally, the functions :
 int radclock_set_local_period_mode(clock, radclock_local_period_t *local_period_mode)
 int radclock_get_local_period_mode(clock, radclock_local_period_t *local_period_mode)
 allow the selection of the local_period_mode (see algo documentation for details),
@@ -935,6 +1044,7 @@ because, if such a TSC reading function is available it represents the best
 system call overhead and works equally well from user or kernel space.
 Of course for this to be useful, the daemon must also be using the TSC so the
 rad_data shared via the SHM will be relevant to that choice of counter.
+See the documentation on bypass mode in RADclockDoc_algo.
 
 
 The above functions concerned timing of arbitrary events. When timestamping

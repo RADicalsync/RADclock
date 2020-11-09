@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux, Darryl Veitch
+ * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
  * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  * All rights reserved.
  *
@@ -217,10 +217,18 @@ shm_detach(struct radclock *clock)
 {
 	int err;
 
-	err = shmdt(clock->ipc_shm);
-	if (err < 0)
-		return (1);
-
+/* TODO: cut back verbosity and convert to logger after testing */
+	fprintf(stdout, "Trying to detach SHM ...");
+	if (clock->ipc_shm != NULL) {
+		err = shmdt(clock->ipc_shm);
+		if ( err == -1 ) {
+			logger(RADLOG_ERR, "shmdt failed: %s\n", strerror(errno));
+			return (1);
+		} else
+			fprintf(stdout, " Done.\n");
+	} else
+			fprintf(stdout, " nothing there to detach.\n");
+	
 	/* shmctl(handle->ipc_shm_id, IPC_RMID, NULL); */
 	return (0);
 }
@@ -262,7 +270,7 @@ void
 radclock_destroy(struct radclock *clock)
 {
 	/* Detach IPC shared memory */
-	shm_detach(clock->ipc_shm);
+	shm_detach(clock);
 
 	/* Free the clock and set to NULL, useful for partner software */
 	free(clock);
@@ -291,7 +299,7 @@ fill_ffclock_estimate(struct radclock_data *rad_data,
 	vcounter_t Tlast;
 	long double time;
 	uint64_t period;
-	uint64_t frac;
+	//uint64_t frac;
 
 	do { // check for asynchronous update for safety, but shouldnt be possible
 		Tlast = rad_data->last_changed;
@@ -308,25 +316,27 @@ fill_ffclock_estimate(struct radclock_data *rad_data,
 			(rad_data->next_expected - rad_data->last_changed) * rad_data->phat + 0.5;
 			
 		/* Would like:  cest->time.frac = (time - (time_t) time) * (1LLU << 64);
-		* but cannot push '1' by 64 bits, does not fit in LLU. So push 63 bits,
-		* multiply for best resolution and lose resolution of 1/2^64.
-		*/
+		 * but cannot push '1' by 64 bits, does not fit in LLU. So push 63 bits,
+		 * multiply for best resolution and lose resolution of 1/2^64.
+		 */
 		//read_RADabs_native(rad_data, &Tlast, &time, 0);  // phat only
-		time = Tlast * (long double)rad_data->phat + rad_data->ca; // native clock
+		time = Tlast * (long double)rad_data->phat + rad_data->ca; // faster manually
 
-		cest->update_time.sec = (time_t) time;
-		frac = (time - (time_t) time) * (1LLU << 63);
-		cest->update_time.frac = frac << 1;
+//		cest->update_time.sec = (time_t) time;
+//		//frac = (time - (time_t) time) * (1LLU << 63);
+//		//cest->update_time.frac = frac << 1;
+//		cest->update_time.frac = (time - (time_t) time) * TWO32 * TWO32;
+		ld_to_bintime(&cest->update_time, &time);
 
 		if ( PLOCAL_ACTIVE )
-			period = ((long double) rad_data->phat_local) * (1LLU << 63);
+			period = ((long double) rad_data->phat_local) * TWO32 * TWO32;
 		else
-			period = ((long double) rad_data->phat) * (1LLU << 63);
+			period = ((long double) rad_data->phat) * TWO32 * TWO32;
 		
-		cest->period = period << 1;
+		cest->period = period;
 
 		//cest->errb_abs = (uint32_t) rad_err->error_bound_avg * 1e9;
-		cest->errb_abs = (uint32_t) (rad_data->ca_err * 1e9);
+		cest->errb_abs  = (uint32_t) (rad_data->ca_err * 1e9);
 		cest->errb_rate = (uint32_t) (rad_data->phat_local_err * 1e12);
 
 	} while (Tlast != rad_data->last_changed);
@@ -349,6 +359,7 @@ fill_ffclock_estimate(struct radclock_data *rad_data,
 /*
  * Map the FFclock data to the radclock data structure.
  * Conversion based on  cest->update_time = Cabs(tlast) = phat*T(tlast) + ca
+ * since is exactly at an update (no extrapolation forward from that point).
  */
 void
 fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data)
@@ -362,7 +373,6 @@ fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data
 	rad_data->leapsec_total		= cest->leapsec_total;
 	rad_data->leapsec_next 		= cest->leapsec_next;
 	rad_data->leapsec_expected = cest->leapsec_expected;
-	
 
 	tmp = ((long double) cest->period) / (1LLU << 32);
 	rad_data->phat_local = (double) (tmp / (1LLU << 32));
@@ -373,11 +383,16 @@ fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data
 	rad_data->ca_err = (double) cest->errb_abs / 1e9;
 	
 	/* Cannot push 64 times in a LLU at once. Push twice 32 instead. In this
-	 * direction (get and not set), it is ok to do it that way.
+	 * direction (get, not set), is ok to do it that way.
 	 */
 	/* Want ca = Cabs(tlast) - phat*T(tlast), but phat not in cest, use plocal */
-	rad_data->ca = (long double) cest->update_time.sec;
-	tmp = ((long double) cest->update_time.frac) / (1LL << 32);
-	rad_data->ca += tmp / (1LL << 32);
-	rad_data->ca -= (long double) rad_data->phat_local * rad_data->last_changed;
+//	rad_data->ca = (long double) cest->update_time.sec;
+//	tmp = ((long double) cest->update_time.frac) / (1LL << 32);
+//	rad_data->ca += tmp / (1LL << 32);
+	bintime_to_ld(&rad_data->ca, &cest->update_time);
+	
+	/* need long double version of phat here */
+	tmp = ((long double) cest->period) / (1LLU << 32);
+	tmp = tmp / (1LLU << 32);
+	rad_data->ca -= tmp * rad_data->last_changed;
 }

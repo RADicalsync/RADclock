@@ -65,12 +65,13 @@ struct _key {
 static struct _key keys[] = {
 	{ "radclock_version",		CONFIG_RADCLOCK_VERSION},
 	{ "verbose_level",			CONFIG_VERBOSE},
-	{ "synchronisation_type",	CONFIG_SYNCHRO_TYPE},
+	{ "synchronization_type",	CONFIG_SYNCHRO_TYPE},
 	{ "ipc_server",				CONFIG_SERVER_IPC},
 	{ "ntp_server",				CONFIG_SERVER_NTP},
 	{ "vm_udp_server",			CONFIG_SERVER_VM_UDP},
 	{ "xen_server",				CONFIG_SERVER_XEN},
 	{ "vmware_server",			CONFIG_SERVER_VMWARE},
+	{ "adjust_FFclock",			CONFIG_ADJUST_FFCLOCK},
 	{ "adjust_FBclock",			CONFIG_ADJUST_FBCLOCK},
 	{ "polling_period",			CONFIG_POLLPERIOD},
 	{ "temperature_quality", 	CONFIG_TEMPQUALITY},
@@ -136,8 +137,9 @@ config_init(struct radclock_config *conf)
 	strcpy(conf->logfile, "");
 	strcpy(conf->radclock_version, PACKAGE_VERSION);
 	conf->server_ipc			= DEFAULT_SERVER_IPC;
-	conf->synchro_type			= DEFAULT_SYNCHRO_TYPE;
+	conf->synchro_type		= DEFAULT_SYNCHRO_TYPE;
 	conf->server_ntp			= DEFAULT_SERVER_NTP;
+	conf->adjust_FFclock		= DEFAULT_ADJUST_FFCLOCK;
 	conf->adjust_FBclock		= DEFAULT_ADJUST_FBCLOCK;
 	
 	/* Virtual Machine */
@@ -153,15 +155,15 @@ config_init(struct radclock_config *conf)
 	conf->phyparam.BestSKMrate	= BEST_SKM_RATE_GOOD;
 	conf->phyparam.offset_ratio	= OFFSET_RATIO_GOOD;
 	conf->phyparam.plocal_quality	= PLOCAL_QUALITY_GOOD;
-	conf->phat_init				= DEFAULT_PHAT_INIT;
-	conf->asym_host				= DEFAULT_ASYM_HOST;
+	conf->phat_init			= DEFAULT_PHAT_INIT;
+	conf->asym_host			= DEFAULT_ASYM_HOST;
 	conf->asym_net				= DEFAULT_ASYM_NET;
 
 	/* Network level */
 	strcpy(conf->hostname, "");
 	strcpy(conf->time_server, "");
-        conf->ntp_upstream_port = DEFAULT_NTP_PORT;
-        conf->ntp_downstream_port = DEFAULT_NTP_PORT;
+	conf->ntp_upstream_port	= DEFAULT_NTP_PORT;
+	conf->ntp_downstream_port = DEFAULT_NTP_PORT;
 
 	/*
 	 * Input/Output files and devices. Must set to empty string to not confuse
@@ -248,7 +250,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 	fprintf(fd, "# Verbosity level of the radclock daemon.\n");
 	fprintf(fd, "#\tquiet : only errors and warnings are logged\n");
 	fprintf(fd, "#\tnormal: adaptive logging of events\n");
-	fprintf(fd, "#\thigh  : include debug messages\n");
+	fprintf(fd, "#\thigh  : include debug messages (is very high, expert use)\n");
 	if (conf == NULL)
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_VERBOSE), labels_verb[DEFAULT_VERBOSE]);
 	else
@@ -257,13 +259,13 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 
 	fprintf(fd, "\n\n\n");
 	fprintf(fd, "#----------------------------------------------------------------------------#\n");
-	fprintf(fd, "# Synchronisation Client parameters\n");
+	fprintf(fd, "# Synchronization Client parameters\n");
 	fprintf(fd, "#----------------------------------------------------------------------------#\n");
 	fprintf(fd, "\n");
 
 
-	/* Specify the type of synchronisation to use*/
-	fprintf(fd, "# Specify the type of underlying synchronisation used.\n"
+	/* Specify the type of synchronization to use*/
+	fprintf(fd, "# Specify the type of underlying synchronization used.\n"
 			"# Note that piggybacking requires an ntp daemon running and is then\n"
 			"# incompatible with the RADclock serving clients over the network or \n"
 			"# adjusting the system FBclock. Piggybacking disables these functions.\n");
@@ -295,8 +297,8 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 
 
 	/* Hostname */
-   	fprintf(fd, "# Hostname or IP address (uses lookup name resolution).\n");
-   	fprintf(fd, "# Automatic detection will be attempted if not specified.\n");
+	fprintf(fd, "# Hostname or IP address (uses lookup name resolution).\n");
+	fprintf(fd, "# Automatic detection will be attempted if not specified.\n");
 	if ( (conf) && (strlen(conf->hostname) > 0) )
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_HOSTNAME), conf->hostname);
 	else
@@ -314,15 +316,15 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 
 	fprintf(fd, "\n\n\n");
 	fprintf(fd, "#----------------------------------------------------------------------------#\n");
-	fprintf(fd, "# Synchronisation Server parameters\n");
+	fprintf(fd, "# Synchronization Server parameters\n");
 	fprintf(fd, "#----------------------------------------------------------------------------#\n");
 	fprintf(fd, "\n");
 
 
 	/* Serve other processes and kernel update */
 	fprintf(fd, "# IPC server.\n");
-	fprintf(fd, "# Serves time to the kernel and other processes.\n");
-	fprintf(fd, "#\ton : Start service - makes the RADclock available to other programs\n");
+	fprintf(fd, "# Serves time to the Shared Memory Segment for use by user radclocks.\n");
+	fprintf(fd, "#\ton : Start service - makes RADclock available to other programs\n");
 	fprintf(fd, "#\toff: Stop service  - useful when replaying traces\n");
 	if (conf == NULL)
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_IPC),
@@ -380,7 +382,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 				labels_bool[conf->server_vmware]);
 
 
-	/* Specify the type of synchronisation server we run */
+	/* Specify the type of synchronization server we run */
 	fprintf(fd, "# NTP server.\n");
 	fprintf(fd, "# Serves time to radclock clients over the network.\n");
 	fprintf(fd, "#\ton : runs a NTP server for remote clients\n");
@@ -391,9 +393,23 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_NTP), labels_bool[conf->server_ntp]);
 
 
+	/* Adjust the system FFclock */
+	fprintf(fd, "# System FFclock.\n"
+				"# Let the RADclock daemon adjust the system FFclock. The main usecase for disabling\n"
+				"# the push of radclock updates to the FFclock is to allow a second radclock\n"
+				"# to run (eg for experimental purposes) without competing with an\n"
+				"# existing radclock already operating as the FFclock's daemon.\n"
+				"#\ton : adjust the system FFclock\n"
+				"#\toff: does not adjust the FFclock\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_ADJUST_FFCLOCK), labels_bool[DEFAULT_ADJUST_FFCLOCK]);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_ADJUST_FFCLOCK), labels_bool[conf->adjust_FFclock]);
+
+
 	/* Adjust the system FBclock */
 	fprintf(fd, "# System FBclock.\n"
-				"# Let the RADclock adjust the system FBclock, make sure no other FB synchronisation\n"
+				"# Let the RADclock adjust the system FBclock, make sure no other FB synchronization\n"
 				"# daemon is running, especially the ntp daemon.\n"
 				"# Note that this feature relies on standard kernel calls to adjust the time and\n"
 				"# is completely different from the IPC server provided. It is also independent \n"
@@ -401,10 +417,10 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 				"# provided to maintain FB system time as an alternative to ntpd when the latter\n"
 				"# is causing problems, or when access to RADclock absolute time is needed on older\n"
 				"# systems whose calling code cannot be changes.\n"
-				"# If you care about synchronisation, either use the FFclock, or turn the IPC\n"
+				"# If you care about synchronization, either use the FFclock, or turn the IPC\n"
 				"# server on and use the libradclock API.\n"
 				"# Also note that system clock time causality may break since the system clock will\n"
-				"# be set on RADclock restart. The system clock will tick monotically afterwards.\n"
+				"# be set on RADclock restart. The system clock will tick monotonically afterwards.\n"
 				"#\ton : adjust the system FBclock\n"
 				"#\toff: does not adjust the FBclock (to use with NTP piggybacking)\n");
 	if (conf == NULL)
@@ -529,7 +545,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 
 
 	/* RAW Input */
-	fprintf(fd, "# Synchronisation data input file (modified pcap format).\n");
+	fprintf(fd, "# Synchronization data input file (modified pcap format).\n");
 	fprintf(fd, "# Replay mode requires a file produced by the RADclock.\n");
 	if ( (conf) && (strlen(conf->sync_in_pcap) > 0) )
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SYNC_IN_PCAP), conf->sync_in_pcap);
@@ -537,7 +553,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 		fprintf(fd, "#%s = %s\n\n", find_key_label(keys, CONFIG_SYNC_IN_PCAP), DEFAULT_SYNC_IN_PCAP);
 
 	/* Stamp Input */
-	fprintf(fd, "# Synchronisation data input file (ascii format).\n");
+	fprintf(fd, "# Synchronization data input file (ascii format).\n");
 	fprintf(fd, "# Replay mode requires a file produced by the RADclock.\n");
 	if ( (conf) && (strlen(conf->sync_in_ascii) > 0) )
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SYNC_IN_ASCII), conf->sync_in_ascii);
@@ -545,14 +561,14 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 		fprintf(fd, "#%s = %s\n\n", find_key_label(keys, CONFIG_SYNC_IN_ASCII), DEFAULT_SYNC_IN_ASCII);
 
 	/* RAW Output */
-	fprintf(fd, "# Synchronisation data output file (modified pcap format).\n");
+	fprintf(fd, "# Synchronization data output file (modified pcap format).\n");
 	if ( (conf) && (strlen(conf->sync_out_pcap) > 0) )
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SYNC_OUT_PCAP), conf->sync_out_pcap);
 	else
 		fprintf(fd, "#%s = %s\n\n", find_key_label(keys, CONFIG_SYNC_OUT_PCAP), DEFAULT_SYNC_OUT_PCAP);
 
 	/* Stamp output */
-	fprintf(fd, "# Synchronisation data output file (ascii format).\n");
+	fprintf(fd, "# Synchronization data output file (ascii format).\n");
 	if ( (conf) && (strlen(conf->sync_out_ascii) > 0) )
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SYNC_OUT_ASCII), conf->sync_out_ascii);
 	else
@@ -691,9 +707,8 @@ switch (codekey) {
 			verbose(LOG_WARNING, "verbose_level value incorrect. Fall back to default.");
 			conf->verbose_level = DEFAULT_VERBOSE;
 		}
-		else {
+		else
 			conf->verbose_level = ival;
-		}
 		break;
 
 
@@ -796,6 +811,23 @@ switch (codekey) {
 			conf->server_vmware = ival;
 		break;
 
+
+	case CONFIG_ADJUST_FFCLOCK:
+		// If value specified on the command line
+		if (HAS_UPDATE(*mask, UPDMASK_ADJUST_FFCLOCK))
+			break;
+		ival = check_valid_option(value, labels_bool, 2);
+		// Indicate changed value
+		if (conf->adjust_FFclock != ival)
+			SET_UPDATE(*mask, UPDMASK_ADJUST_FFCLOCK);
+		if (ival < 0) {
+			verbose(LOG_WARNING, "adjust_FFclock parameter incorrect."
+					"Fall back to default.");
+			conf->adjust_FFclock = DEFAULT_ADJUST_FFCLOCK;
+		}
+		else
+			conf->adjust_FFclock = ival;
+		break;
 
 
 	case CONFIG_ADJUST_FBCLOCK:
@@ -1169,14 +1201,17 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 	if (strlen(conf->logfile) == 0)
 	{
 		if ( is_daemon )
-			strcpy(conf->conffile, DAEMON_CONFIG_FILE);
+			strcpy(conf->logfile, DAEMON_LOG_FILE);
 		else
-			strcpy(conf->conffile, BIN_CONFIG_FILE);
+			strcpy(conf->logfile, BIN_LOG_FILE);
 	}
 
 
 
-	// The file can't be opened. Ether it doesn't exist yet or I/O error.
+	/* The file can't be opened. Ether it doesn't exist yet or I/O error.
+	 * Note: this writes the file, but doesn't update handle->conf with the
+	 * values in it!
+	 */
 	fd = fopen(conf->conffile, "r");
 	if (!fd) {
 
@@ -1193,13 +1228,15 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 		write_config_file(fd, keys, NULL);
 		fclose(fd);
 		verbose(LOG_NOTICE, "Writing configuration file.");
-		
+		//verbose(LOG_NOTICE, "    Time server          : %s", conf->time_server);
+
 		// Reposition umask
 		umask(027);
 		return 1;
 	}
-	// The configuration file exist, parse it and update default values
-	have_all_tmpqual = 0; //ugly 
+	
+	// The configuration file exists, parse it and update default values
+	have_all_tmpqual = 0; // ugly
 	while ((c=fgets(line, MAXLINE, fd))!=NULL) {
 
 		// Start with a reset of the value to avoid mistakes
@@ -1222,7 +1259,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 			update_data(conf, mask, codekey, value);
 	}
 	fclose(fd);
-	
+
 
 	/* Ok, the file has been parsed, but may the version may be outdated. Since
 	 * we just parsed the configuration, we can produce an up-to-date version
@@ -1281,6 +1318,7 @@ void config_print(int level, struct radclock_config *conf)
 	verbose(level, "Server VMWARE        : %s", labels_bool[conf->server_vmware]);
 	verbose(level, "Upstream NTP port    : %d", conf->ntp_upstream_port);
 	verbose(level, "Downstream NTP port  : %d", conf->ntp_downstream_port);
+	verbose(level, "Adjust system FFclock: %s", labels_bool[conf->adjust_FFclock]);
 	verbose(level, "Adjust system FBclock: %s", labels_bool[conf->adjust_FBclock]);
 	verbose(level, "Polling period       : %d", conf->poll_period);
 	verbose(level, "TSLIMIT              : %.9lf", conf->phyparam.TSLIMIT);

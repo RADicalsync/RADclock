@@ -71,8 +71,8 @@ struct radclock_ntp_server {
 	int burst;
 	uint32_t refid;
 	unsigned int stratum;
-	double serverdelay; 	/* RTThat to the server we sync to */
-	double rootdelay;		/* Cumulative RTThat from top of stratum hierarchy */
+	double minRTT; 			/* RTThat to the server we sync to */
+	double rootdelay;			/* Cumulative RTThat from top of stratum hierarchy */
 	double rootdispersion;	/* Cumulative clock error from top of stratum hierarchy */
 };
 
@@ -128,16 +128,13 @@ struct radclock_handle {
 	/* Virtual Machine management */
 	struct radclock_vm rad_vm;
 
-	/* Protocol related stuff on the client side (NTP, 1588, ...) */
+	/* Protocol related state on the daemon client side (NTP case) */
 	struct radclock_ntp_client		*ntp_client;
 	
-	/* Protol related stuff (NTP, 1588, ...) */
+	/* Protocol related state on the daemon's server side (NTP case) */
 	struct radclock_ntp_server		*ntp_server;
 	
 	/* Raw data capture buffer for libpcap */
-//	struct raw_data_bundle *rdb_start;
-//	struct raw_data_bundle *rdb_end;
-//	pthread_mutex_t rdb_mutex;
 	struct raw_data_queue *pcap_queue;
 
 	/* Raw data capture buffer for 1588 error queue */
@@ -146,6 +143,7 @@ struct radclock_handle {
 	/* Common data for the daemon */
 	int is_daemon;
 	radclock_runmode_t 		run_mode;
+	char hostIP[16];		// IP address of the host
 
 	/* UNIX signals */
 	unsigned int unix_signal;

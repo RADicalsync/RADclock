@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2006-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2006-2012, Julien Ridoux
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -368,7 +369,7 @@ void init_peer( struct radclock_handle *handle, struct radclock_phyparam *phypar
 
 	/* K now determined.  For now C(t) = t_init */
 	peer->K = stamp->Tb - (long double) (stamp->Ta * peer->phat);
-	verbose(VERB_SYNC, "i=%lu: After initialisation: (far,near)=(%lu,%lu), "
+	verbose(VERB_SYNC, "i=%lu: After initialisation: (far,near) = (%lu,%lu), "
 			"phat = %.10lg, perr = %5.3lg, K = %7.4Lf",
 			peer->stamp_i, 0, 0, peer->phat, peer->perr, peer->K);
 
@@ -596,14 +597,14 @@ void end_warmup_phat(struct bidir_peer *peer, struct bidir_stamp *stamp)
 	 */
 	stamp_near	= history_find(&peer->stamp_hist, peer->near_i);
 	stamp_far	= history_find(&peer->stamp_hist, peer->far_i);
-	RTT_near	= history_find(&peer->RTT_hist, peer->near_i);
+	RTT_near		= history_find(&peer->RTT_hist, peer->near_i);
 	RTT_far		= history_find(&peer->RTT_hist, peer->far_i);
-	peer->perr	= (double) ((*RTT_far - peer->RTThat) + (*RTT_near - peer->RTThat)) 
+	peer->perr	= ((double)(*RTT_far + *RTT_near) - 2*peer->RTThat)
 						* peer->phat / (stamp_near->Tb - stamp_far->Tb);
 
 	/* Reinitialise sanity count at the end of warmup */
 	peer->phat_sanity_count = 0;
-	verbose(VERB_CONTROL, "i=%lu: Initializing full phat algo, pstamp_i=%lu, perr= %10.3lg",
+	verbose(VERB_CONTROL, "i=%lu: Initializing full phat algo, pstamp_i = %lu, perr = %6.3lg",
 		   	peer->stamp_i, peer->pstamp_i, peer->perr);
 }
 
@@ -774,7 +775,7 @@ void print_stats_peer(struct bidir_peer *peer)
 
 	verbose(VERB_SYNC, "i=%lu: Timekeeping summary:",
 		peer->stamp_i); 
-	verbose(VERB_SYNC, "i=%lu:   Period = %.10g, Period errorr = %.10g",
+	verbose(VERB_SYNC, "i=%lu:   Period = %.10g, Period error = %.10g",
 		peer->stamp_i, peer->phat, peer->perr);
 		
 	if (peer->RTThat > peer->pstamp_RTThat)
@@ -782,11 +783,12 @@ void print_stats_peer(struct bidir_peer *peer)
 	else
 		basediff = peer->pstamp_RTThat - peer->RTThat;
 		
+	/* TODO check near and far what we want */
 	verbose(VERB_SYNC, "i=%lu:   Tstamp pair = (%lu,%lu), base err = %.10g, "
 		"DelTb = %.3Lg [hrs]",
-		peer->stamp_i, 
+		peer->stamp_i, peer->far_i, peer->near_i,
 		peer->phat * basediff,
-		peer->stamp.Tb - peer->pstamp.Tb);
+		(peer->stamp.Tb - peer->pstamp.Tb)/3600);
 
 	verbose(VERB_SYNC, "i=%lu:   Thetahat = %5.3lf [ms], minET = %.3lf [ms], "
 		"RTThat = %.3lf [ms]", 
@@ -811,12 +813,42 @@ void print_stats_peer(struct bidir_peer *peer)
 void
 process_RTT_warmup(struct bidir_peer *peer, vcounter_t RTT)
 {
+	/* Rough threshold during warmup TODO: set this up properly */
+//	if (peer->stamp_i == 10) {		// prior to this is zero I think
+//		peer->RTThat_shift_thres = (vcounter_t) ceil(peer->Eshift/4/peer->phat);
+//		verbose(VERB_SYNC, "i=%lu: Restricting alerts for downward shifts exceeding %3.0lf [mus]",
+//				peer->stamp_i, 1.e6 * peer->Eshift/3);
+//	}
+
+	/* Downward Shifts.
+	 * Informational only, reaction is automatic and already achieved.
+	 * Shift location is simply the current stamp.
+	 */
+//	if ( peer->RTThat > (RTT + peer->RTThat_shift_thres) ) {
+	if ( peer->RTThat > RTT ) {		// flag all shifts, no matter how small
+		verbose(VERB_SYNC, "i=%lu: Downward shift of %5.1lf [mus]", peer->stamp_i,
+				(peer->RTThat - RTT) * peer->phat * 1.e6);
+	}
+	
 	/* Record the minimum of RTT
 	 * Record corresponding index for full phat processing */
 	if (RTT < peer->RTThat) {
 		peer->RTThat = RTT;
 		peer->pstamp_i = peer->stamp_i;
 	}
+	
+	
+	/* Upward Shifts.  Information only.
+	 * This checks for detection over window of width shift_win prior to stamp i
+	 * lastshift is the index of first known stamp after shift
+	 */
+//	if ( peer->RTThat_shift > (peer->RTThat + peer->RTThat_shift_thres) ) {
+//		lastshift = peer->stamp_i - peer->shift_win + 1;
+//		verbose(VERB_SYNC, "Upward shift of %5.1lf [mus] triggered when i = %lu ! "
+//				"shift detected at stamp %lu",
+//				(peer->RTThat_shift - peer->RTThat)*peer->phat*1.e6,
+//				peer->stamp_i, lastshift);
+
 }
 
 
@@ -835,8 +867,9 @@ void process_RTT_full(struct bidir_peer *peer, struct radclock_handle* handle, v
 	index_t j;				// loop index, needs to be signed to avoid problem when j hits zero
 	index_t jmin = 0;		// index that hits low end of loop
 	vcounter_t* RTThat_ptr;	// points to a given RTThat in RTThat_hist
-	vcounter_t next_RTT;		// points to a given RTThat in RTThat_hist
+	vcounter_t next_RTT, last_RTT;
 
+	last_RTT = peer->RTThat;
 	peer->RTThat = MIN(peer->RTThat, RTT);
 	history_add(&peer->RTThat_hist, peer->stamp_i, &peer->RTThat);
 	peer->next_RTThat = MIN(peer->next_RTThat, RTT);
@@ -867,26 +900,27 @@ void process_RTT_full(struct bidir_peer *peer, struct radclock_handle* handle, v
 	 */
 	if ( peer->RTThat_shift > (peer->RTThat + peer->RTThat_shift_thres) ) { 
 		lastshift = peer->stamp_i - peer->shift_win + 1;
-		verbose(VERB_SYNC, "Upward shift of %5.1lf [mus] triggered when i = %lu ! "
-				"shift detected at stamp %lu",
-				(peer->RTThat_shift - peer->RTThat)*peer->phat*1.e6,
-				peer->stamp_i, lastshift);   // DV:  bug?  is stamp_i my "i" ? in fact triggered at stamp_i + 1 ?
+		verbose(VERB_SYNC, "i=%lu: Upward shift of %5.1lf [mus], detected at stamp %lu",
+				peer->stamp_i, (peer->RTThat_shift - peer->RTThat)*peer->phat*1.e6, lastshift);
+				// DV:  bug?  is stamp_i my "i" ? in fact triggered at stamp_i + 1 ?
 	
 		/* Recalc from [i-lastshift+1 i]
 		 * - note by design, won't run into last history change 
 		 */
 		peer->RTThat = peer->RTThat_shift;
 		peer->next_RTThat = peer->RTThat;
+
 		/* Recalc necessary for phat
 		 * - note pstamp_i must be before lastshift by design
 		 * - note that phat not the same as before, but that's ok
 		 */
 		if ( peer->next_pstamp_i >= lastshift) {
 			next_RTT = peer->next_pstamp.Tf - peer->next_pstamp.Ta;
-			verbose(VERB_SYNC, "Recalc necessary for next_pstamp_i = %lu", peer->next_pstamp_i);
-			peer->next_pstamp_perr 	= peer->phat*(double)(next_RTT - peer->RTThat); 
-			peer->next_pstamp_RTThat 	= peer->RTThat;
+			verbose(VERB_SYNC, "       Recalc necessary for next_pstamp_i = %lu", peer->next_pstamp_i);
+			peer->next_pstamp_perr = peer->phat*((double)(next_RTT) - peer->RTThat);
+			peer->next_pstamp_RTThat = peer->RTThat;
 		}
+
 		/* Recalc necessary for offset 
 		 * typically shift_win >> offset_win, so lastshift won't bite
 		 * correct RTThat history back as far as necessary or possible
@@ -899,8 +933,7 @@ void process_RTT_full(struct bidir_peer *peer, struct radclock_handle* handle, v
 			jmin = 0;
 		jmin = MAX(lastshift, jmin);
 
-		for ( j=peer->stamp_i; j>=jmin; j--)
-		{
+		for ( j=peer->stamp_i; j>=jmin; j--) {
 			RTThat_ptr = history_find(&peer->RTThat_hist, j);
 			*RTThat_ptr = peer->RTThat;
 		}
@@ -909,6 +942,17 @@ void process_RTT_full(struct bidir_peer *peer, struct radclock_handle* handle, v
 		ADD_STATUS(handle, STARAD_RTT_UPSHIFT);
 	} else
 		DEL_STATUS(handle, STARAD_RTT_UPSHIFT);
+
+	/* Downward Shifts.
+	 * Informational only, reaction is automatic and already achieved.
+	 * Shift location is simply the current stamp.
+	 * TODO: establish a dedicated downward threshold parameter and setting code
+	 */
+	if ( last_RTT > (peer->RTThat + (peer->RTThat_shift_thres)/4) ) {
+		verbose(VERB_SYNC, "i=%lu: Downward shift of %5.1lf [mus]", peer->stamp_i,
+				(last_RTT - peer->RTThat) * peer->phat * 1.e6);
+	}
+
 }
 
 
@@ -992,12 +1036,12 @@ int process_phat_warmup (struct bidir_peer* peer, vcounter_t RTT,
 
 	if ( peer->stamp_i%warmup_winratio ) {
 		peer->near_i = history_min_slide(&peer->RTT_hist, peer->near_i, 
-				peer->stamp_i-peer->wwidth, peer->stamp_i-1);
+				peer->stamp_i - peer->wwidth, peer->stamp_i - 1);
 	}
 	else {
-		RTT_tmp = history_find(&peer->RTT_hist, peer->wwidth);
+		RTT_tmp  = history_find(&peer->RTT_hist, peer->wwidth);
 		RTT_near = history_find(&peer->RTT_hist, peer->near_i);
-		RTT_far = history_find(&peer->RTT_hist, peer->far_i);
+		RTT_far  = history_find(&peer->RTT_hist, peer->far_i);
 		if ( *RTT_tmp < *RTT_far )
 			peer->far_i = peer->wwidth;
 		if ( RTT < *RTT_near )
@@ -1007,7 +1051,7 @@ int process_phat_warmup (struct bidir_peer* peer, vcounter_t RTT,
 
 	/* Compute time intervals between NTP timestamps of selected stamps */
 	stamp_near = history_find(&peer->stamp_hist, peer->near_i);
-	stamp_far = history_find(&peer->stamp_hist, peer->far_i);
+	stamp_far  = history_find(&peer->stamp_hist, peer->far_i);
 
 	phat = compute_phat(peer, stamp_far, stamp_near);
 	if ( phat == 0 )
@@ -1025,16 +1069,16 @@ int process_phat_warmup (struct bidir_peer* peer, vcounter_t RTT,
 	if ( (near_i != peer->near_i) || (far_i != peer->far_i) )
 	{
 		peer->K += peer->stamp.Ta * (long double) (peer->phat - phat);
-		verbose(VERB_SYNC, "i=%lu: phat update (far,near)=(%lu,%lu), "
+		verbose(VERB_SYNC, "i=%lu: phat update (far,near) = (%lu,%lu), "
 				"phat = %.10g, rel diff = %.10g, perr = %.10g, K = %7.4Lf",
 				peer->stamp_i, peer->far_i, peer->near_i,
 				phat, (phat - peer->phat)/phat, peer->perr, peer->K);
 		peer->phat = phat;
-		RTT_far = history_find(&peer->RTT_hist, peer->far_i);
+		RTT_far  = history_find(&peer->RTT_hist, peer->far_i);
 		RTT_near = history_find(&peer->RTT_hist, peer->near_i);
 		DelTb = stamp_near->Tb - stamp_far->Tb;
-		peer->perr = peer->phat * (double)((*RTT_far - peer->RTThat) 
-				+ (*RTT_near - peer->RTThat)) / DelTb;
+		//peer->perr = peer->phat * (double)((*RTT_far - peer->RTThat) + (*RTT_near - peer->RTThat)) / DelTb;
+		peer->perr = peer->phat * ((double)(*RTT_far + *RTT_near) - 2*peer->RTThat) / DelTb;
 	}
 	return 0;
 }
@@ -1059,7 +1103,7 @@ void record_packet_j (struct bidir_peer* peer, vcounter_t RTT,
 		if ( RTT < next_RTT ) {
 			peer->next_pstamp_i 	= peer->stamp_i;
 			peer->next_pstamp_RTThat 	= peer->RTThat;
-			peer->next_pstamp_perr 	= peer->phat * (double)(RTT - peer->RTThat);
+			peer->next_pstamp_perr 	= peer->phat * ((double)(RTT) - peer->RTThat);
 			copystamp(stamp, &peer->next_pstamp);
 		}
 	}
@@ -1099,7 +1143,7 @@ int process_phat_full(struct bidir_peer* peer, struct radclock_handle* handle,
 	 * sufficient to update phat
 	 * if error smaller than Ep, quality pkt, proceed, else do nothing
 	 */
-	perr_i = peer->phat * (double)(RTT - peer->RTThat);
+	perr_i = peer->phat * ((double)(RTT) - peer->RTThat);
 
 	if ( perr_i >= peer->Ep )
 		return 0;
@@ -1249,7 +1293,7 @@ process_plocal_full(struct bidir_peer* peer, struct radclock_handle* handle,
 
 	/* Compute time intervals between NTP timestamps of selected stamps */
 	stamp_near = history_find(&peer->stamp_hist, peer->near_i);
-	stamp_far = history_find(&peer->stamp_hist, peer->far_i);
+	stamp_far  = history_find(&peer->stamp_hist, peer->far_i);
 
 	plocal = compute_phat(peer, stamp_far, stamp_near);
 	/*
@@ -1263,16 +1307,19 @@ process_plocal_full(struct bidir_peer* peer, struct radclock_handle* handle,
 	RTT_far  = history_find(&peer->RTT_hist, peer->far_i);
 	RTT_near = history_find(&peer->RTT_hist, peer->near_i);
 	DelTb = stamp_near->Tb - stamp_far->Tb;
-	plocalerr = peer->phat * (double)((*RTT_far  - peer->RTThat)
-					+ (*RTT_near - peer->RTThat)) / DelTb;
+	plocalerr = peer->phat * ((double)(*RTT_far + *RTT_near) - 2*peer->RTThat) / DelTb;
 	peer->plocalerr = plocalerr;  // this was omitted, a bug, stopping true quality variation being seen
 
-	/* if quality looks bad, retain previous value */
+	/* If quality looks bad, retain previous value */
 	if ( fabs(plocalerr) >= peer->Eplocal_qual ) {
-		verbose(VERB_QUALITY, "i=%lu: plocal quality low,  (far_i,near_i) = "
+		verbose(VERB_QUALITY, "i=%lu: plocal quality low,  (far,near) = "
 				"(%lu,%lu), not updating plocalerr = %5.3lg, "
-				"Eplocal_qual = %5.3lg ", peer->stamp_i, peer->far_i,
-				peer->near_i, peer->plocalerr, peer->Eplocal_qual);
+				"Eplocal_qual = %5.3lg, RTT (near,far,hat) = (%5.3lg, %5.3lg, %5.3lg) ",
+				peer->stamp_i, peer->far_i,
+				peer->near_i, peer->plocalerr, peer->Eplocal_qual,
+				peer->phat * (double)(*RTT_near),
+				peer->phat * (double)(*RTT_far),
+				peer->phat * (double)(peer->RTThat)	);
 		ADD_STATUS(handle, STARAD_PLOCAL_QUALITY);
 		return 0;
 	}
@@ -1331,7 +1378,7 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 	double *thnaive_tmp;
 	double gapsize;		// size in seconds between pkts, used to track widest gap in offset_win
 
-	index_t adj_win;					// adjusted window
+	index_t adj_win;		// adjusted window
 	index_t j;				// loop index, needs to be signed to avoid problem when j hits zero
 	index_t jmin  = 0;		// index that hits low end of loop
 	index_t jbest = 0;		// record best packet selected in window
@@ -1350,16 +1397,17 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 	if ( (stamp->Te - stamp->Tb) >= RTT*peer->phat*0.95 ) {
 		verbose(VERB_SYNC, "i=%d: Apparent server timestamping error, RTT<SD: "
 				"RTT = %6.4lg [ms], SD= %6.4lg [ms], SD/RTT= %6.4lg.",
-				peer->stamp_i, 1000*RTT*peer->phat, 1000*(double)(stamp->Te-stamp->Tb), (double)(stamp->Te-stamp->Tb)/RTT/peer->phat );
+				peer->stamp_i, 1000*RTT*peer->phat, 1000*(double)(stamp->Te-stamp->Tb),
+				(double)(stamp->Te-stamp->Tb)/RTT/peer->phat );
 	}
 	/* Calculate naive estimate at stamp i
 	 * Also track last element stored in thnaive_end
 	 */
-	th_naive = (peer->phat*((long double)stamp->Ta + (long double)stamp->Tf) + (2*peer->K - (stamp->Tb + stamp->Te)))/2.0;
+	th_naive = (peer->phat*((long double)stamp->Ta + (long double)stamp->Tf) +
+				(2*peer->K - (stamp->Tb + stamp->Te)))/2.0;
 	history_add(&peer->thnaive_hist, peer->stamp_i, &th_naive);
 
 
-// TODO computing jmin code can be factored
 	/* Calculate weighted sum */
 	wsum = 0;
 	thetahat = 0;
@@ -1382,12 +1430,8 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 		peer->poll_transition_th--;
 	}
 	else {
-		/* ensure don't go past 1st stamp, and don't use 1st, as thnaive set to
-		 * zero there 
-		 */
-		// Former code which requires to cast into signed variables. This macro
-		// is dangerous because it does not check the sign of the variables (if
-		// unsigned rolls over, it gives the wrong result
+		/* ensure don't go past 1st stamp, and don't use 1st, as thnaive set to zero there */
+		// Former code which requires to cast into signed variables.
 		// jmin = MAX(1, peer->stamp_i-peer->offset_win+1);
 		if ( peer->stamp_i > (peer->offset_win - 1 ))
 			jmin = peer->stamp_i - (peer->offset_win - 1);
@@ -1395,10 +1439,10 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 			jmin = 0;
 		jmin = MAX (1, jmin);
 	}
+	
 	/* find history constraint */
-	RTT_end = history_end(&peer->RTT_hist);
+	RTT_end 		= history_end(&peer->RTT_hist);
 	thnaive_end = history_end(&peer->thnaive_hist);
-
 	jmin = MAX(jmin, MAX(RTT_end, thnaive_end));
 
 	for ( j = peer->stamp_i; j >= jmin; j-- ) {
@@ -1406,9 +1450,9 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 		 * Errors due to phat errors are small
 		 * then add aging with pessimistic rate (safer to trust recent)
 		 */
-		RTT_tmp = history_find(&peer->RTT_hist, j);
+		RTT_tmp   = history_find(&peer->RTT_hist, j);
 		stamp_tmp = history_find(&peer->stamp_hist, j);
-		ET  = peer->phat * (double)( *RTT_tmp - peer->RTThat );
+		ET  = peer->phat * ((double)(*RTT_tmp) - peer->RTThat );
 		ET += peer->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
 
 		/* Per point bound error is simply ET in here */
@@ -1421,10 +1465,8 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 		if ( j == peer->stamp_i ) {
 			minET = ET;
 			jbest = j;
-			Ebound_min = Ebound;
-		}
-		else {
-			if ( ET < minET) {
+		} else {
+			if ( ET < minET ) {
 				minET = ET;
 				jbest = j;
 				Ebound_min = Ebound;    // could give weighted version instead
@@ -1438,6 +1480,40 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 		thnaive_tmp = history_find(&peer->thnaive_hist, j);
 		thetahat = thetahat + wj * *thnaive_tmp;
 	}
+
+
+
+//	/* If a RTCreset, must adopt the most recent UTC available: normal quality
+//	 * weighting or checks, and sanity checks, don't apply.
+//	 * TODO: check settings for other variables not used in this branch, and for
+//	 *		any other impacts of having the counter frozen, effectively an invisible jump backward
+//	 *    check phat as well, other copies?  if change K, must change it IMMediately
+//	 */
+//	if (RTCreset) {
+//		verbose(VERB_QUALITY, "i=%lu: RTCreset (warmup): setting to current stamp, "
+//			"disabling window, quality may be poor until window refills.\n"
+//			"      Jumping rAdclock by = %5.3lf [s]", peer->stamp_i, - th_naive);
+//
+//		peer->K -= th_naive;				// absorb current apparent error into K
+//		thetahat = 0;						// error is zero wrt new K
+//		//peer->phat -= 2 * (peer->thetahat - th_naive) / (double)(stamp->Ta + stamp->Tf);   // check this!!
+//		peer->thetahat = thetahat;
+//		jbest = peer->stamp_i;
+//
+//		/* Overwrite thetahats in window to ensure reset value is adopted.
+//		 * This resets the already stored th_naive also. Retain th_naive variable
+//		 * for verbosity and output to preserve original data and mark event.
+//		 */
+//		for ( j = peer->stamp_i; j >= jmin; j-- )
+//			*(double *)(history_find(&peer->thnaive_hist, j)) = 0;
+//
+//		DEL_STATUS(handle, STARAD_OFFSET_QUALITY);	// since accepted stamp, even though quality likely poor
+//		DEL_STATUS(handle, STARAD_OFFSET_SANITY);
+//
+//		PEER_ERROR(peer)->Ebound_min_last = Ebound_min;
+//		copystamp(stamp, &peer->thetastamp);
+//	}
+//	else {
 
 	/* Check Quality
 	 * quality over window looks good, continue otherwise log quality warning
@@ -1465,7 +1541,7 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 		if ( fabs(peer->thetahat - thetahat) > (peer->Eoffset_sanity_min + peer->Eoffset_sanity_rate * gapsize) ) {
 			verbose(VERB_SANITY, "i=%lu: thetahat update fails sanity check: "
 					"difference is: %5.3lg [ms], estimated error was  %5.3lg [ms]",
-					peer->stamp_i, 1000*(thetahat-peer->thetahat), 1000*minET);
+					peer->stamp_i, 1000*(thetahat - peer->thetahat), 1000*minET);
 			peer->offset_sanity_count++;
 			ADD_STATUS(handle, STARAD_OFFSET_SANITY);
 		} else
@@ -1475,32 +1551,36 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 		peer->thetahat = thetahat;
 
 	} else {
-		verbose(VERB_QUALITY, "i=%lu: thetahat quality over offset window very poor "
-				"(%5.3lg [ms]), repeating current value", peer->stamp_i, 1000*minET);
+		verbose(VERB_QUALITY, "i=%lu: thetahat quality over offset window poor "
+				"(minET %5.3lg [ms], thetahat = %5.3lg [ms]), repeating current value",
+				peer->stamp_i, 1000*minET, 1000*thetahat);
 		ADD_STATUS(handle, STARAD_OFFSET_QUALITY);
 	}
+
+//	}	// RTCreset hack
+	
+	
 
 // TODO should we check causality if peer->thetahat has not been updated?
 // TODO also behaviour different in warmup and full algo
 
-	/* errTa - thetahat should be -ve */
+	/* errTa - thetahat  should be -ve */
 	errTa = (double)((long double)stamp->Ta * peer->phat + peer->K - (long double) stamp->Tb);
 	if ( errTa > peer->thetahat ) {
-		verbose(VERB_CAUSALITY, "i=%lu: causality error on C(Ta), errTa = %5.3lf [ms], "
+		verbose(VERB_CAUSALITY, "i=%lu: causality breach on C(Ta), errTa = %5.3lf [ms], "
 				"thetahat = %5.3lf [ms], diff = %5.3lf [ms] ",
 				peer->stamp_i, 1000*errTa, 1000*peer->thetahat, 1000*(errTa-peer->thetahat));
 	}
 
-	/* errTf - thetahat should be +ve */
-	errTf = (double)((long double)stamp->Tf * peer->phat + peer->K -
-			(long double) stamp->Te);
+	/* errTf - thetahat  should be +ve */
+	errTf = (double)((long double)stamp->Tf * peer->phat + peer->K - (long double) stamp->Te);
 	if ( errTf < peer->thetahat ) {
-		verbose(VERB_CAUSALITY, "i=%lu: causality error on C(Tf), errTf = %5.3lf [ms], "
+		verbose(VERB_CAUSALITY, "i=%lu: causality breach on C(Tf), errTf = %5.3lf [ms], "
 				"thetahat = %5.3lf [ms], diff = %5.3lf [ms] ",
 				peer->stamp_i, 1000*errTf, 1000*peer->thetahat, 1000*(errTf-peer->thetahat));
 	}
 
-	/* warmup to warmup is to pass offset_win */
+	/* Warmup to warmup is to pass offset_win */
 	if ( (peer->stamp_i < peer->offset_win*2) || !(peer->stamp_i%50) )
 	{
 		verbose(VERB_SYNC, "i=%lu: th_naive = %5.3lf [ms], thetahat = %5.3lf [ms], "
@@ -1515,13 +1595,14 @@ process_thetahat_warmup(struct bidir_peer* peer, struct radclock_handle* handle,
 	errTf -= peer->thetahat;
 	OUTPUT(handle, errTa) 		= errTa;
 	OUTPUT(handle, errTf) 		= errTf;
-	OUTPUT(handle, th_naive) 		= th_naive;
+	OUTPUT(handle, th_naive) 	= th_naive;
 	OUTPUT(handle, minET) 		= minET;
 	OUTPUT(handle, minET_last)	= peer->minET;
-	OUTPUT(handle, wsum) 			= wsum;
+	OUTPUT(handle, wsum) 		= wsum;
 	stamp_tmp = history_find(&peer->stamp_hist, jbest);
-	OUTPUT(handle, best_Tf) 		= stamp_tmp->Tf;
+	OUTPUT(handle, best_Tf) 	= stamp_tmp->Tf;
 }
+
 
 
 void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* handle,
@@ -1660,7 +1741,7 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 		RTT_tmp = history_find(&peer->RTT_hist, j);
 		RTThat_tmp = history_find(&peer->RTThat_hist, j);
 		stamp_tmp = history_find(&peer->stamp_hist, j);
-		ET  = peer->phat * (double) ( *RTT_tmp - *RTThat_tmp );
+		ET  = peer->phat * ((double)(*RTT_tmp) - *RTThat_tmp);
 		ET += peer->phat * (double) ( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
 
 		/* Per point bound error is ET without the SD penalty */
@@ -1686,7 +1767,7 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 			if (ET < minET) { minET = ET; jbest = j; }
 			if (Ebound < Ebound_min) { Ebound_min = Ebound; } // dont assume min index same here
 		}
-		/* calculate weight, is <=1 note: Eoffset initialised to non-0 value, safe to divide */
+		/* Calculate weight, is <=1 Note: Eoffset initialised to non-0 value, safe to divide */
 		wj = exp(- ET * ET / peer->Eoffset / peer->Eoffset); wsum += wj;
 
 		/* Correct phat already used by difference with more locally accurate plocal */
@@ -1735,7 +1816,7 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 			(long double) stamp->Tb);
 
 	if (errTa > peer->thetahat)
-		verbose(VERB_CAUSALITY, "i=%lu: causality error uncorrected on C(Ta), "
+		verbose(VERB_CAUSALITY, "i=%lu: causality breach uncorrected on C(Ta), "
 				"errTa = %5.3lf [ms], thetahat = %5.3lf [ms], diff = %5.3lf [ms]",
 				peer->stamp_i, 1000*errTa, 1000*thetahat, 1000*(errTa-thetahat));
 	
@@ -1744,7 +1825,7 @@ void process_thetahat_full (struct bidir_peer* peer, struct radclock_handle* han
 			(long double) stamp->Te);
 
 	if (errTf < peer->thetahat)
-		verbose(VERB_CAUSALITY, "i=%lu: causality error uncorrected on C(Tf), "
+		verbose(VERB_CAUSALITY, "i=%lu: causality breach uncorrected on C(Tf), "
 				"errTf = %5.3lf [ms], thetahat = %5.3lf [ms], diff = %5.3lf [ms]",
 				peer->stamp_i, 1000*errTf, 1000*thetahat,1000*(errTf-thetahat));
 
@@ -1847,7 +1928,7 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 
 	JDEBUG
 
-	stamp = input_stamp;
+	stamp = input_stamp;		// why bother?  input_stamp is a local var anyway..
 	phyparam = &(handle->conf->phyparam);
 	conf = handle->conf;
 	poll_period = conf->poll_period;
@@ -1917,7 +1998,6 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 	 * quality gets good. 
 	 */
 	if (peer->stamp_i == NTP_BURST) {
-		/* Set the status of the clock to STARAD_UNSYNC */
 		DEL_STATUS(handle, STARAD_UNSYNC);
 	}
 
@@ -1934,8 +2014,6 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 	/* Current RTT - universal!
 	 * Avoids zero or negative values in case of corrupted stamps
 	 */
-	// TODO: this should not happen since stamps would not be passed to the
-	// algo ... remove the MAX operation
 	RTT = MAX(1,stamp->Tf - stamp->Ta);
 
 	/* Store history of basics
@@ -1943,8 +2021,7 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 	 * copy stamp i into history immediately, will be used in loops
 	 */
 	history_add(&peer->stamp_hist, peer->stamp_i, stamp);
-
-	history_add(&peer->RTT_hist, peer->stamp_i, &RTT);
+	history_add(&peer->RTT_hist,   peer->stamp_i, &RTT);
 
 
 
@@ -1977,7 +2054,7 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 		peer->jcount = 1;
 		peer->next_pstamp_i = peer->stamp_i;
 		peer->next_pstamp_RTThat = peer->RTThat;
-		peer->next_pstamp_perr = peer->phat*(double)(RTT - peer->RTThat);
+		peer->next_pstamp_perr = peer->phat*((double)(RTT) - peer->RTThat);
 		copystamp(stamp, &peer->next_pstamp);
 		/* Now DelTb >= top_win/2,  become fussier */
 		peer->Ep_qual /= 10;
@@ -2010,12 +2087,12 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
 		*/
 		peer->pstamp_i 		= peer->next_pstamp_i;
 		peer->pstamp_RTThat	= peer->next_pstamp_RTThat;
-		peer->pstamp_perr	= peer->next_pstamp_perr;
+		peer->pstamp_perr		= peer->next_pstamp_perr;
 		copystamp(&peer->next_pstamp, &peer->pstamp);
 		peer->jcount = 1;
 		peer->next_pstamp_i			= peer->stamp_i;
 		peer->next_pstamp_RTThat	= peer->RTThat;
-		peer->next_pstamp_perr		= peer->phat*(double)(RTT - peer->RTThat);
+		peer->next_pstamp_perr		= peer->phat*((double)(RTT) - peer->RTThat);
 		copystamp(stamp, &peer->next_pstamp);
 
 		/* Background error bounds taking over and restart all over again */
@@ -2226,7 +2303,7 @@ output_results:
 
 	/* NTP server specific data */
 	// TODO this is a bit dodgy to have this here ... 
-	NTP_SERVER(handle)->serverdelay = peer->RTThat * peer->phat;
+	NTP_SERVER(handle)->minRTT = peer->RTThat * peer->phat;
 
 	/* Unlock Global Data */
 	pthread_mutex_unlock(&handle->globaldata_mutex);

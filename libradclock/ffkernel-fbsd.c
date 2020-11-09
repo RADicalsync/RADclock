@@ -36,7 +36,7 @@
 #include <sys/sysctl.h>
 #include <sys/time.h>
 #ifdef HAVE_SYS_TIMEFFC_H
-#include <sys/timeffc.h>
+#include <sys/timeffc.h>	// this instead of kclock.h, as need syscalls only
 #endif
 #include <sys/socket.h>
 
@@ -122,6 +122,10 @@ found_ffwd_kernel_version (void)
 
 	case -1:
 	default:
+#if defined (__FreeBSD__) && defined (HAVE_SYS_TIMEFFC_H)
+		// not sure when this would ever run, typically WITH_FFKERNEL_FBSD would fail
+		logger(RADLOG_NOTICE, "sys/timeffc.h present, but ");
+#endif
 		logger(RADLOG_NOTICE, "No Feed-Forward kernel support detected");
 		break;
 	}
@@ -316,6 +320,17 @@ radclock_init_vcounter(struct radclock *clock)
 	}
 	logger(RADLOG_NOTICE, "Timecounter used is %s", clock->hw_counter);
 
+	/* Retrieve available and current sysclock [a reasonable place to do this] */
+	char nameavail[32];
+	size_ctl = sizeof(nameavail);
+	sysctlbyname("kern.sysclock.available", &nameavail[0], &size_ctl, NULL, 0);
+	logger(RADLOG_NOTICE, "\t Available sysclocks: %s", nameavail);
+
+	size_ctl = sizeof(nameavail);
+	sysctlbyname("kern.sysclock.active", &nameavail[0], &size_ctl, NULL, 0);
+	logger(RADLOG_NOTICE, "\t Active sysclock: %s", nameavail);
+	//logger(RADLOG_NOTICE, "\t Active sysclock: %s [sn = %u]", nameavail, strlen(nameavail));
+
 
 	/* Retrieve value of kernel PT mode */
 	bypass_active = 0;
@@ -355,7 +370,7 @@ radclock_init_vcounter(struct radclock *clock)
 	 *  If want to make a config parameter later, must read it in clock_init_live
 	 *  where handle->conf is available and pass here as 2nd argument.
 	 */
-	int activatePT = 0;		// user's intention regardline passthrough=bypass
+	int activatePT = 0;		// user's intention regarding passthrough=bypass
 
 	if ( (bypass_active == 0 && activatePT == 0) || clock->kernel_version<3) {
 		clock->get_vcounter = &radclock_get_vcounter_syscall;

@@ -2,7 +2,7 @@
 .\" First parameter, NAME, should be all caps
 .\" Second parameter, SECTION, should be 1-8, maybe w/ subsection
 .\" other parameters are allowed: see man(7), man(1)
-.TH RADCLOCK.CONF 5 "July 18, 2007" "" "The radclock daemon configuration file"
+.TH RADCLOCK.CONF 5 "October 23, 2020" "" "The radclock daemon configuration file"
 .\" Please adjust this date whenever revising the manpage.
 .\"
 .\" Some roff macros, for reference:
@@ -16,122 +16,158 @@
 .\" .sp <n>    insert n+1 empty lines
 .\" for manpage-specific macros, see man(7)
 .SH NAME
-radclock.conf \- The radclock daemon configuration file 
+radclock.conf \- The radclock daemon configuration file
 .SH DESCRIPTION
 .I radclock.conf
 is the configuration file for the \fBradclock\fP daemon and binary. For testing and
-replay purposes different configuration files can be created and edited. If the
-\fBradclock\fP is run as a daemon (using the -d option), the radclock looks for the 
-.I /etc/radclock.conf
-configuration file. If not running as a daemon, the radclock binary is looking for a 
+replay purposes, different configuration files can be created and edited. If
+\fBradclock\fP is run as a daemon (using the -d option), it looks for
+.I /etc/radclock.conf.
+If not running as a daemon, the radclock binary looks for a
 .I radclock.conf
 configuration file in the current directory.
 .PP
-If none configuration file is found a new one is created with default values for all
-parameters. If an existing but outdated (version-wise) configuration file is found it
+If no configuration file is found a new one is created with default values for all
+parameters, and comment blocks explaining them. If an existing but outdated (version-wise) configuration file is found it
 is updated while keeping existing values.
-Finally, any command line option overwrites values specified in the configuration file.
+Command line options overwrite values specified in the configuration file.
+Finally, the configuration file can be edited, and the binary then triggered to
+reparse it to update parameters on the fly (for example using service radclock reload).
+Only compatible parameter changes will be actioned.
 .PP
-The configuration file is organized in sections that have no impact except making it
-easier to understand the different options..
-.PP
-.SH THE PACKAGE VERSION SECTION 
+The configuration file is organized in sections to aid understanding.
+
+.SH PACKAGE VERSION
 .P
 .B package_version
-This option specifies the version of the package currently installed. It is also used
-to check if the configuration file is outdated or not. This should not be modified.
-.SH THE RUNNING PARAMETERS SECTION
-Indicates 
+Specifies the version of the package currently installed. It is also used
+to check if the configuration file is outdated. This should not be modified.
+
+The section also includes
 .P
 .B verbose_level
-This option specifies how verbose the radclock should be. Possible values are 0 
-(no verbose), 1 (normal verbose), 2 (maximum verbose).
+Possible values are quiet, normal, and high. High is very high, and should only be used for expert
+troubleshooting. Verbosity level can be changed on the fly.
+.SH SYNCHRONIZATION CLIENT PARAMETERS
 .P
-.B update_clock
-If set to 1, this specifies that the radclock binaries attempt to update the structures
-maintained in the kernel and opens a socket for serving time information to other running
-processes. This option is usually reserved to the radclock running as a daemon.
-.P 
-.SH THE CLOCK INTERNAL PARAMETERS SECTION
-.B poll_period Specifies the poll period used by the process generating NTP packets 
-(ntpd or ntpdate for example).
+.B synchronization_type
+Specifies the type of underlying synchronization exchange used. The typical value is "ntp",
+meaning the standard bidirectional exchange of NTP request response packets, initiated by
+radclock. See the configuration file for more details.
 .P
-.B temperature_quality
-Uses predefined parameters to fit your environment. This takes into account the hardware 
-quality and age as well as some temperature environment. Recent hardware in a temperature
-controlled environment should be set to excellent. An old machine nearby a window should
-define a poor environment. If in doubt, set to good. 
+.B polling_period
+Specifies the poll period used by the process generating NTP packets
+(typically the radclock daemon itself, but could be ntpd).
 .P
-.B ts_limit
-Experimental. Ask the maintainer. This settings are over-written by the temperature_quality keyword.
-.P
-.B skm_scale
-Experimental. Ask the maintainer.This settings are over-written by the temperature_quality keyword.
-.P
-.B rate_error_bound
-Experimental. Ask the maintainer. This settings are over-written by the temperature_quality keyword.
-.P
-.B best_skm_rate
-Experimental. Ask the maintainer. This settings are over-written by the temperature_quality keyword.
-.P
-.B offset_ratio
-Experimental. Ask the maintainer. This settings are over-written by the temperature_quality keyword.
-.P
-.B start_local_phat
-Triggers the use of the local rate refinement. States are stop (0), start (1) or restart (2).
-Restart is actually useful if the configuration is reloaded after the radclock caught a 
-SIGHUP signal.
-.P
-.B use_sync_saved
-Experimental. Uses previously stored values of the oscillator period and bypass warmup phase.
-Better be patient and not use this feature (set it to 0).
-.P
-.B delta_host
-Experimental. Estimated value of host asymmetry.
-.P
-.B delta_net
-Experimental. Estimated value of network asymmetry.
-.P
-
-.SH THE NETWORK LEVEL PARAMETERS SECTION
-.B src_host
-This is the current host running the radclock. The radclock attempts to detect host name and
-address but this may fail. To avoid confusion and ensure the correct NTP packets are captured
+.B hostname
+The host running radclock. RADclock attempts to detect the hostname and
+address, but this may fail. To avoid confusion and ensure the correct NTP packets are captured,
 it is strongly recommended to specify the host name or IP address here.
 .P
-.B time_server 
-The stratum-1 reference clock used to synchronize the host over the network. Again, strongly
-recommended to ensure correct NTP packets are captured.
-.P
+.B time_server
+The time server radclock will query and try to synchronize to. It can be a network host name
+or an IP address.
 
-.SH THE IN/OUT PARAMETERS SECTION
+.SH SYNCHRONIZATION SERVER PARAMETERS
+Each of these parameters are binary, taking values "on" or "off".
+Each can be adjusted on the fly.
+.P
+.B ipc_server
+If on, pushes RADclock parameter updates to a Shared Memory Segment for use by
+user processes accessing RADclock via the radclock API.
+.P
+.B vm_udp_server
+If on, pushes RADclock parameter updates to radclock clients over UDP, for use by
+guest operating systems in a VM environment.
+.P
+.B xen_server
+If on, pushes RADclock parameter updates to the zen store for guests.
+.P
+.B vmware_server
+If on, pushes RADclock parameter updates to the VWware server for guests.
+.P
+.B ntp_server
+If on, radclock serves time over the network, by responding to standard NTP
+request packets. Other NTP modes not currently supported.
+.P
+.B adjust_FFclock
+If on, pushes RADclock parameter updates to the kernel's FFclock, thereby synchronizing it.
+This option is usually reserved to the radclock running as a daemon.
+.P
+.B adjust_FBclock
+If on, pushes RADclock parameter updates to the kernel's traditional system clock
+interface (for the kernel FB clock), thereby acting as an alternative to ntpd.
+This option is usually reserved to the radclock running as a daemon.
+
+.SH ENVIRONMENT AND TUNING PARAMETERS
+.P
+.B temperature_quality
+Select a preset specifying parameters to match the host running RADclock.
+These take into account hardware quality, age, and temperature environment.
+Recent hardware in a temperature
+controlled environment should be set to "excellent". For an old machine nearby a window
+set to "poor". If in doubt, set to "good".
+.P
+The following six parameters offer more customized environmental tuning, and are
+experimental (ask the maintainer). They are over-written by the temperature_quality keyword.
+.P
+.B ts_limit
+.P
+.B skm_scale
+.P
+.B rate_error_bound
+.P
+.B best_skm_rate
+.P
+.B offset_ratio
+.P
+.B plocal_quality
+
+.B init_period_estimate
+An initial estimate (in seconds) of the counter period. This improves output during early startup
+before the first timestamp exchanges are processed. It is not critical.
+.P
+.B host_asymmetry
+Estimate (in seconds) of the in-host component of underlying round-trip path asymmetry.
+Typically this is unavailable and is set to zero.
+.P
+.B network_asymmetry
+Estimate (in seconds) of the network component of underlying round-trip path asymmetry.
+Typically this is unavailable and is set to zero.
+
+.SH INPUT /OUTPUT PARAMETERS
+.P
 .B network_device
 If the host has several network interfaces it could be useful to specify which one should be
 used. The interface will be chosen first regardless of other settings.
 .P
-.B alt_device
-Instead capturing NTP packets on a live interface, a raw data file in pcap format captured 
-previously by the radclock can be replayed using this option.
+.B sync_input_pcap
+Instead of capturing NTP packets on a live interface, a raw data file in pcap format captured
+previously by radclock can be replayed using this option.
 .P
-.B input_stamp_file
-Instead of obtaining timestamps from NTP packets captured on a live interface, timestamps 
-previously extracted by the radclock can be replayed using this option.
+.B sync_input_ascii
+Instead of obtaining timestamps from NTP packets captured on a live interface, timestamps
+previously extracted and saved by radclock can be replayed using this option.
 .P
-.B out_device
-Specify a pcap file to which dump raw NTP packets. This file is in pcap format and can be
+.B sync_output_pcap
+Specify a file in which to dump raw NTP packets. This file is in pcap format and can be
 parsed by tcpdump for example. Some fields have been slightly abused however.
 .P
-.B output_stamp_file
-Dump timestamps extracted from NTP packets captured on a live interface.
+.B sync_output_ascii
+Dump the timestamp 4tuples assessed as valid by RADclock preprocessing to this file,
+one per line, in ascii format.
 .P
-.B output_matlab_file
-Dump clock performances parameters for post-processing.
+.B clock_output_ascii
+Dump internal clock state parameters for analysis in post-processing (expert debugging
+use only).
 
 .SH SEE ALSO
 .BR radclock (8),
 .br
 .SH AUTHOR
-Configuration file and processing written by Julien Ridoux. See AUTHORS file for a list of 
+Configuration file and processing written by Julien Ridoux and Darryl Veitch. See AUTHORS file for a list of
 all contributors to the code.
 .PP
-This manual page was written by Julien Ridoux <julien@synclab.org>.
+This manual page was written by Darryl Veitch
+.br
+(darryl.veitch@uts.edu.au).

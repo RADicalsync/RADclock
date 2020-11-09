@@ -1,6 +1,8 @@
 /*
-* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-*/
+ * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ *
+ * This file is part of the radclock program.
+ */
 
 RADclock documentation.
 Written by Darryl Veitch
@@ -16,7 +18,8 @@ Glossary:
  unidir = unidirectional
  algo = algorithm, the RADclock clock synchronization algorithm
  {c,s}-halfstamp = {client,source}-halfstamp
-
+ FB = FeedBack
+ FF = FeedForward
 
 ==============================================================
 Summary
@@ -47,8 +50,8 @@ different sources. Not all (type,source) combinations make sense or are currentl
 The conceptual types are enumerated in rawdata.h as
 typedef enum { 
 	RD_UNKNOWN,			// placeholder
-	RD_TYPE_SPY,		// data obtained by `spying on' the host's own (non-RADclock) system clock
-	RD_TYPE_NTP,		// the main case, getting NTP pkt data via pcap
+	RD_TYPE_SPY,		// data obtained by `spying on' the host's own FB system clock
+	RD_TYPE_NTP,		// the main case, getting NTP pkt data from bpf via pcap
 	RD_TYPE_1588,		// 1588 data from the kernel: not yet fully implemented
 	RD_TYPE_PPS,		// PPS data from the kernel:  not yet fully implemented
 } rawdata_type_t;
@@ -140,8 +143,8 @@ It gives these to the callback fn fill_rawdata_pcap, which copies these as well
 as the vcounter value into a rd_pcap_pkt structure within a raw data bundle (rdb)
 structure, given below.
 
-Note that the vcounter value is itself returned (or even hidden, thanks to the
-RADclock kernel code) inside the data provided by pcap, and needs to be extracted.
+Note that the vcounter value is itself accessible (thanks to the
+FFclock bpf code) from the data provided by pcap, and needs to be extracted.
 For this purpose fill_rawdata_pcap calls the libradclock function extract_vcount_stamp.
 Exactly how this works is a kernel specific issue lying below the rd level described here.
 
@@ -150,7 +153,7 @@ regardless of incoming/outgoing direction (thus the structure remains useful for
 based unidir).
 
 struct rd_pcap_pkt {           // defined in rawdata.h
-	vcounter_t vcount;				/* Raw vcount */
+	vcounter_t vcount;				/* Raw timestamp */
 	struct pcap_pkthdr pcap_hdr;	/* PCAP header */
 	void* buf;							/* Points to packet_data, ie the frame */
 };
@@ -265,15 +268,17 @@ be used to open, read, write and close a file containing the raw data.
 Since pcap_loop provides a "pcap_hdr", and the packet: "packet_data", it seems that
 we could simply push these to file using a call to pcap_dump as soon as we get them
 from pcap, say within rawdata.c:fill_rawdata_pcap .
-The problem with this is that the vcount value is hidden within the pcap data,
-and the details of exactly how depend on the kernel raw timestamping implementation,
-and potentially the link layer used and other factors.
+The problem is that the vcount value is Accessible from the original
+pcap data (thanks to the bpf header held in contiguous memory), but is not
+actually in it, and so would not be accessible from a copy of the pcap data only.
+Furthermore, the details of exactly how to access it depends on the kernel raw
+timestamping implementation, and potentially the link layer used and other factors.
 
 In order to provide a standardized storage format that is still pcap-legal we
 proceed as follows.  First, we wait until the raw data, including the vcount have
 already been extracted. We then replace the original frame header within the packet
 with a Linux SLL which has a convenient 16 byte size including an 8 byte address field,
-and place the vcount value within this address field.   This modified packet data,
+and place the vcount value within this address field.  This modified packet data,
 and the unaltered pcap_hdr data, can then be stored via pcap_dump.
 The other fields in the SLL header are populated with useful? and legal values
 to avoid any red flags from pcap.
@@ -284,7 +289,7 @@ The functions involved are all in stampinput_livepcap.c. The simplified calls ar
     	deliver_rawdata_pcap(handle, radpkt, &vcount); // get the pre-extracted data
         insert_sll_header(radpkt)            	// replace original frame header
         set_vcount_in_sll(radpkt, vcount)    	// put the vcount into fake header
-		pcap_dump(traceoutput, pcap_hdr, radpkt)  // param names changed for clarity
+		pcap_dump(traceoutput, pcap_hdr, radpkt)  // param names changed for clarity here
 
 Raw files are used when RADclock is invoked using a "running dead from pcap" source,
 also known as reading from a tracefile.  In this case the pcap data is read
@@ -310,12 +315,12 @@ Accessing stamps
 ================
 
 To obtain stamps a stampsource variable is first created, then made available
-to the global radclock handle. This is done by the lines
+to the global radclock handle. This is done by
 	stamp_source = create_source(handle);    // returns a (struct stampsource *)
 	handle->stamp_source = (void *) stamp_source;
 within init_handle(), called by main.
 
-Along with create_source, the top level stamp functions are defined in stampinput.c:
+Along with create_source, the top level stamp functions are defined in stampinput.c :
 
   int get_next_stamp(struct radclock_handle *handle, struct stampsource *source, struct stamp_t *stamp)
   void       destroy_source(struct radclock_handle *handle, struct stampsource *source)
@@ -386,7 +391,7 @@ get_network_stamp function (see below), but it passes the actual workhorse funct
 stampinput-livepcap.c:get_packet_livepcap to it, thereby making it source specific.
 (the same trick applies to the other source types).
 
-Finally, get_packet_livepcap  gets packet data using the rd to stamp bridging
+Finally, get_packet_livepcap  gives packet data using the rd to stamp bridging
 function deliver_rawdata_pcap  described under the rd documentation above.
 Like it, it returns a radpcap_packet_t, not a stamp.
 
@@ -478,11 +483,14 @@ Matching is based on the use of a key, held by the id field in a stamp, that
 should be unique to every client-server pair.   The key used is the
 timestamp inserted into the xmt field of the client NTP header by the NTP sending client
 (this could be a system clock, or RADclock based timestamp, depending on circumstances),
-which is replicated into the org field of the returning server packet.
+which is replicated into the org field of the returning server response packet.
 It should be unique in practice as it it 64 bits wide, and the system clock
 (even if inaccurate) is typically non-decreasing, with a period smaller than
 the time to transmit UDP packets back-to-back.  However, the system clock can
 sometimes jump backwards, so that id-order may not be the same as true temporal order.
+The matching therefore does not use id-based ordering.
+Full details of the approach used and how different scenarios are handled is
+given in the comment blocks for these functions.
 
 The following operations are performed on half-stamps passed to insertandmatch_halfstamp :
  - if the id of the half-stamp is new,
@@ -496,7 +504,7 @@ The following operations are performed by get_fullstamp_from_queue_andclean :
  - scans the list from tail to head, if no complete stamps, return 1
  - if find one, return it, then remove it as well as all dangerous halfstamps
 
-A dangerous halfstamp is one which could result in an out of order return of a
+A dangerous halfstamp is one which could result in an out-of-order return of a
 fullstamp at some later time.  Here the time-ordering of a stamp is given by the
 Ta field (the vcount raw timestamp of the outgoing client packet).
 This can occur, for example, due to the network reordering client or server timestamps.
@@ -512,7 +520,7 @@ The top level stamp accessing function (generic across live or dead pcap) is
  Simplified code:
  ----------------
   get_packet_livepcap  // (get_packet set to this), get new radpcap_packet_t, write to .raw file
-  stats->ref_count++;  // count them
+  stats->ref_count++;  // count them [currently about the only use of stats]
 
   update_stamp_queue(peer->q, packet, stats);	// convert to half stamp, enqueue/match/vett
     get_valid_ntp_payload                       // get NTP data at last
@@ -537,6 +545,5 @@ A final level of stamp vetting is performed by insane_bidir_stamp within process
 which acts on the stamp pulled from the queue by get_fullstamp_from_queue_andclean
 (via get_next_stamp).
 
-
-
-
+Note that the  push_{client,server}_halfstamp  functions are where needed fields
+from the NTP packets are actually extracted and transferred to a stamp structure.

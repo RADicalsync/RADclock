@@ -1,6 +1,8 @@
 /*
-* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-*/
+ * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ *
+ * This file is part of the radclock program.
+ */
 
 RADclock documentation.
 Written by Darryl Veitch
@@ -51,7 +53,7 @@ struct radclock_data {
 	double phat_err;			// estimated bound on the relative error of phat [unitless]
 	double phat_local;		//	stable estimate on shorter timescale period [s]
 	double phat_local_err;  // estimated bound on the relative error of plocal [unitless]
-	long double ca;			// K_p - thetahat(t) - leapsectotal? [s]
+	long double ca;			// K_p - thetahat(t) [s]  (leaps not included!)
 	double ca_err;				// estimated error (currently minET) in thetahat and ca [s]
 	unsigned int status;		// status word (contains 9 bit fields)
 	vcounter_t last_changed;	// raw timestamp T(tf) of last stamp processed [counter]
@@ -95,11 +97,64 @@ Leap second treatment
 ============================
 
 All leapsecond processing is contained within process_stamp(), which owns and sets
-the rad_data member of the handle which defines the RADclock.  To be clear, the
-RADclock absolute clock Ca is a UTC clock!
+the rad_data member of the handle which defines the RADclock.
+The algo itself sets peer variables, but does not update rad_data.
+The RADclock absolute clock Ca(t) is effectively the UTC clock in vogue at the
+counter origin epoch, not updated by subsequent leaps, which we term the `native RADclock'.
+In radclock-private.h, the functions  read_RADabs_{native,UTC} make the
+distinction clear.
 
-The algo itself sets peer variables, but does not update rad_data. Moreover it
-operates natively, that is without any knowledge of leap seconds that have occurred since boot.
+process_stamp(handle, peer)
+	get_next_stamp(handle, stamp_source, &stamp);
+	leap second processing
+	process_bidir_stamp(handle, peer, &stamp_noleap, ..)); // update native RADclock
+	update handle->rad_data                 					// update UTC RADabsclock
+	push updates as needed (kernel, SHM..)
+		  
+There are several issues involved in managing leap seconds, which is a vexed issue
+prone to errors, many servers running FB system clocks fail to get this right.
+The issues include :
+  - finding out that a leap is coming up, and making sure this is reliable
+  - ensuring the leap occurs exactly when it should
+  - ensuring the actions taken at a leap are correct
+  - arranging for different copies of parameters underlying the clock are
+    updated/actioned synchronously so that the leap occurs consistently across
+    the daemon, libprocess, and the kernel.
+  - ensuring the FFclock has the right leap information and can act on it with
+    minimal computation
+    
+    
+
+----------------------- Work in progress
+
+	int leapsec_total;				// sum of leap seconds seen since clock start
+	int leapsec_next;					// value of the expected next leap second {-1 0 1}
+	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none coming
+
+
+- Do need leap awareness in both
+     daemon:  - gets UTC timestamps, must subtract out leaps for algo as usual
+				  - gets LI bits
+					 - best to send info to leap decision maker only, not take on this role!
+				  - reads leapsec file?  how coordinate with LI info to make final decision?
+				  - API: option to return time without leap info if asked?
+	  kernel:  - how execute the jump at exactly the right time?
+
+- ffclock_info.leapsec_adjustment logic: since counter set, can precalculate the correct
+ leapsec information  ( same calculation as in ffclock_windup )
+ PROVided this info doesnt change due to a FFdata update
+
+
+Leap issues:
+  - what to pass to algo, what else the kernel needs
+  - how to handle historical conversions, ie if passed a vcounter before a leap, to a clock that already built in the leap..
+  - how much in kernel compared to in daemon, duplicate functionality? complementary
+  - do the leap fields in ffclock_estimate  get updated inbetween daemon updates?
+    - nice to keep the daemon structure of updates only at stamps
+	 - but what if daemon dies?  still want to pick up extra leaps to add into clock reading.
+  - in bpf.c:bpf_bintime2ts   UTC is obtained by adding a constant to the monotonic (uptime)
+    FB default, but this implies leaps must be built into  bootimebin !
+
 
 
 
@@ -125,19 +180,29 @@ plocal Selection Control
 
 	  C_a(t) = p*T(t) + K_p  - thetahat  +  (T(t) - T(tlast))*(plocal-p)    (1)
 
+The plocal algorithm is always running, although in warmup, the actual value of
+plocal to set to that of pbar.
 
-This has now been sorted:  write text based on DISCUSSoion in RADclock_notepad
+Whether or not the plocal refinement will be actually used or not is configurable.
+The actual clock read functions, used by both the daemon and user radclocks, are
+  	read_RADabs_native  leap-free absolute clock of the algo
+ 	read_RADabs_UTS	  UTC absolute clock, which includes leaps
+The clocks can be read into the future or past wrt the rad_data used.
 
+Each takes a plocal flag, which controls if the plocal variable is used.
+For most purposes, including the time sent in client or server NTP packets,
+and the value pushed to the kernel, the flag is set to PLOCAL_ACTIVE, with a typical default  1 = active = using plocal.
+The radclock library routines instead use clock->local_period_mode  to select
+per-clock preferences passed to read_RADabs_{native,UTC} .
+Thus all instance of radclock (user(s) or daemon), can set this independently.
+ 
+For the daemon, currently PLOCAL_ACTIVE is hardwired in radapi_getset.c :
+/* Global setting for use of plocal refinement for in-daemon timestamping */
+# define PLOCAL_ACTIVE	0		//  {0,1} = {inactive, active}
+as typically the algorithm should be used, and this is a expert-level decision.
 
-radclock.h:
-typedef enum { RADCLOCK_LOCAL_PERIOD_ON, RADCLOCK_LOCAL_PERIOD_OFF }	radclock_local_period_t;
-
-
-
-
-
-
-
+For the user radclocks running in libprocesses, it can be set as described under
+the Library functions  section of RADclockDoc_library.
 
 
 
@@ -168,7 +233,7 @@ pthread_raw.c:process_stamp
   - comments indicate a work in Progress
   - verbose says  "Reinitializing radclock"  but I see no re-start !
 
-On kernel side, see FFclockDoc_FreeBSDv4 under  windup calls.
+On kernel side, see FFclockDoc_FreeBSD under  windup calls.
 
 // From kernel doc:
 The current tc is accessible via
@@ -200,11 +265,11 @@ FFcounter timestamping bypass/passthrough mode
 ======================================
 
 Bypass mode enables a TSC counter, if available, to be accessed more directly
-that its recreated FFcounter form within the tc mechanism.
-See the FreeBSD doc for an introduction.
+than its recreated FFcounter form within the tc mechanism.
+See the FFclockDoc_FreeBSD for an introduction.
 
 The goal of the daemon side code is to take advantage of the bypass mode if possible.
-The logic is performed within ffkernk-*.c:radclock_init_vcounter ,
+The logic is performed within ffkernel-*.c:radclock_init_vcounter ,
 currently only supported properly for FreeBSD.
 
 Taking advantage means setting the clock->get_vcounter  fn pointer to either
@@ -215,7 +280,8 @@ The code first echos the current counter and the mode taken from the kernel.
 If the mode is active, this implies that the TSC is the counter, and so the daemon
 can select rdtsc() (but this assumption is tested).
 If not, but if TSC is the tc counter and an internal configuration
-variable  activatePT  indicates bypass is desirable, then the daemon first activates the mode.
+variable  activatePT  indicates bypass is desirable, then the daemon first activates
+the mode.
 
 If activatePT=0, it is still easy to activate bypass at any time using
 	sysctl kern.sysclock.ffclock.ffcounter_bypass=1
@@ -228,18 +294,14 @@ at some point after the daemon was launched, eg just before the
 libprocess was launched via sysctl, or within some related research program.
 
 
-// TODO: determin if the term passthrough should be abandoned everywhere for bypass
-
-
 
 
 ==============================================================
 Packet Timestamp Mode Selection and Testing
 ============================
 
-See the FreeBSD Doc for details on the _T_ timestamp type language, header size issues,
+See the FFclockDoc_FreeBSD for details on the _T_ timestamp type language, header size issues,
 and the bpf -> pcap mapping.
-
 
 
   - Tests in extract_vcount_stamp_v3  are being performed per-pkt,

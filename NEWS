@@ -1,2 +1,7 @@
-Up-to-date installation instructions and configuration can be found by contacting
-Darryl.Veitch@uts.edu.au
+##
+## RADCLOCK NEWS
+##
+
+After being dormant for a number of years, RADclock is back with V0.4,
+incorporating many bug fixes and new features, building on and fully
+compatible with improved and corrected FFclock kernel support in FreeBSD.

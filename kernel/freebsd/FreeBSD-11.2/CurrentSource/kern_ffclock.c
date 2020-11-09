@@ -62,8 +62,10 @@ extern struct mtx ffclock_mtx;
  * various flavours of absolute time (e.g. with or without leap seconds taken
  * into account). If valid pointers are provided, the ffcounter value and an
  * upper bound on clock error associated with the bintime are provided.
- * NOTE: use ffclock_convert_abs() to differ the conversion of a ffcounter value
- * read earlier.
+ * NOTE: since FFCLOCK_LEAPSEC pertains to a UTC clock only, this function
+ *      should never be called with both FFCLOCK_LEAPSEC and FFCLOCK_UPTIME set.
+ * NOTE: ffclock_convert_abs() is used to allow the the safe conversion of a
+ *      ffcounter value read before the current FFdata update.
  */
 void
 ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
@@ -85,11 +87,11 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 	/* Current ffclock estimate, use update_ffcount as generation number. */
 	do {
 		update_ffcount = ffclock_estimate.update_ffcount;
-		bcopy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
+		memcpy(&cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
 	} while (update_ffcount != ffclock_estimate.update_ffcount);
 
 	/*
-	 * Leap second adjustment. Total as seen by synchronisation algorithm
+	 * Leap second adjustment. Total as seen by synchronization algorithm
 	 * since it started. cest.leapsec_expected is the ffcounter prediction of
 	 * when the next leapsecond occurs.
 	 */
@@ -101,15 +103,24 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 
 	/* Boot time adjustment, for uptime/monotonic clocks. */
 	if ((flags & FFCLOCK_UPTIME) == FFCLOCK_UPTIME) {
-		bintime_sub(bt, &ffclock_boottime);
+		if ( bintime_cmp(&ffclock_boottime, bt, >) ) {	// would go -ve !
+			printf("** Uptime going -ve !  bt:  %llu.%lu  ffclock_boottime: %llu.%lu\n",
+					(unsigned long long)bt->sec,
+					(long unsigned)(bt->frac / MUS_AS_BINFRAC),
+					(unsigned long long)ffclock_boottime.sec,
+					(long unsigned)(ffclock_boottime.frac / MUS_AS_BINFRAC) );
+			bt->sec = 1;				// ensure Uptime >= 1 second
+			bt->frac = 0;
+		}
+			bintime_sub(bt, &ffclock_boottime);
 	}
 
 	/* Compute error bound if a valid pointer has been passed. */
 	if (error_bound) {
 		ffdelta_error = ffc - cest.update_ffcount;
 		ffclock_convert_diff(ffdelta_error, error_bound);
-		bintime_mul(error_bound, cest.errb_rate * PS_IN_BINFRAC);	// errb_rate ps/s
-		bintime_addx(error_bound, cest.errb_abs * NS_IN_BINFRAC);	// errb_abs [ns]
+		bintime_mul(error_bound, cest.errb_rate * PS_AS_BINFRAC);	// errb_rate ps/s
+		bintime_addx(error_bound, cest.errb_abs * NS_AS_BINFRAC);	// errb_abs [ns]
 	}
 
 	if (ffcount)
@@ -138,7 +149,7 @@ ffclock_difftime(ffcounter ffdelta, struct bintime *bt,
 		} while (update_ffcount != ffclock_estimate.update_ffcount);
 
 		ffclock_convert_diff(ffdelta, error_bound);
-		bintime_mul(error_bound, err_rate * PS_IN_BINFRAC);	// err_rate in [ps/s]
+		bintime_mul(error_bound, err_rate * PS_AS_BINFRAC);	// err_rate in [ps/s]
 	}
 }
 
@@ -153,13 +164,13 @@ SYSCTL_NODE(_kern, OID_AUTO, sysclock, CTLFLAG_RW, 0,
 SYSCTL_NODE(_kern_sysclock, OID_AUTO, ffclock, CTLFLAG_RW, 0,
     "Feed-forward clock configuration");
 
-static char *sysclocks[] = {"feedback", "feed-forward"};
+static char *sysclocks[] = {"FBclock", "FFclock"};
 #define	MAX_SYSCLOCK_NAME_LEN 16
 #define	NUM_SYSCLOCKS nitems(sysclocks)
 
 static int ffclock_version = 3;
 SYSCTL_INT(_kern_sysclock_ffclock, OID_AUTO, version, CTLFLAG_RD,
-    &ffclock_version, 0, "Feed-forward clock kernel version");
+    &ffclock_version, 0, "FFclock kernel version");
 
 /* List available sysclocks. */
 static int
@@ -189,10 +200,10 @@ SYSCTL_PROC(_kern_sysclock, OID_AUTO, available, CTLTYPE_STRING | CTLFLAG_RD,
     "List of available system clocks");
 
 /*
- * Return the name of the active system clock if read, or attempt to change
- * the active system clock to the user specified one if written to. The active
- * system clock is read when calling any of the [get]{bin,nano,micro}[up]time()
- * functions.
+ * Return the name of the active system clock class if read, or attempt to change
+ * the active class to the user specified one if written to. The default clock
+ * in the active system clock class is read when reading time using any of the
+ * [get]{bin,nano,micro}[up]time()  functions.
  */
 static int
 sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
@@ -200,17 +211,11 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 	char newclock[MAX_SYSCLOCK_NAME_LEN];
 	int error;
 	int clk=0;
-	struct bintime bt;
-	ffcounter ffcount;
-	static int ccc = 0;
+	int origclk=0;
 
 	/* Return the name of the current active sysclock. */
 	strlcpy(newclock, sysclocks[sysclock_active], sizeof(newclock));
 	error = sysctl_handle_string(oidp, newclock, sizeof(newclock), req);
-	
-	ffclock_last_tick(&ffcount, &bt, 0);
-	printf(" %d\t Callback sys_active start  %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   	ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
 
 	/* Check for error or no change */
 	if (error != 0 || req->newptr == NULL)
@@ -218,23 +223,17 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 
 	/* Change the active sysclock to the user specified one */
 	error = EINVAL;
+	origclk = sysclock_active;
 	for (clk = 0; clk < NUM_SYSCLOCKS; clk++) {
-		if (strncmp(newclock, sysclocks[clk], MAX_SYSCLOCK_NAME_LEN - 1)) {
-			ffclock_last_tick(&ffcount, &bt, 0);
-			printf(" %d\t                    inloop %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   			ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
+		if (strncmp(newclock, sysclocks[clk], MAX_SYSCLOCK_NAME_LEN - 1))
 			continue;
-		}
+			
 		sysclock_active = clk;
 		error = 0;
-		ffclock_last_tick(&ffcount, &bt, 0);
-		printf(" %d\t                    afloop %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   		ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
 		break;
 	}
-	ffclock_last_tick(&ffcount, &bt, 0);
-	printf(" %d\t                    atend  %llu: clk=%d sysclock_active= %d, newclock= %s  error= %d\n",
-   	ccc++, (long long unsigned)ffcount,  clk, sysclock_active, newclock, error);
+	if (sysclock_active != origclk)
+		printf("Active sysclock changed to %s \n", sysclocks[sysclock_active] );
 	
 	return (error);
 }

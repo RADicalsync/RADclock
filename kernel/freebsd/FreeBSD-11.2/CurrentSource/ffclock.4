@@ -27,7 +27,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd December 1, 2011
+.Dd October 24, 2020
 .Dt FFCLOCK 4
 .Os
 .Sh NAME
@@ -38,7 +38,7 @@
 .Sh DESCRIPTION
 The
 .Xr ntpd 8
-daemon has been the dominant solution for system clock synchronisation for many
+daemon has been the dominant solution for system clock synchronization for many
 years, which has in turn influenced the design of the system clock.
 The ntpd daemon implements a feedback control algorithm which has been
 demonstrated to perform poorly in common use cases.
@@ -47,19 +47,21 @@ Feed-forward clock synchronisation algorithms implemented by an appropriate
 daemon, in concert with the
 .Nm
 kernel support, have been shown to provide highly robust and accurate clock
-synchronisation.
+synchronization.
 In addition to time keeping, the
 .Nm
 kernel mechanism provides new timestamping capabilities and the ability to
-use specialised clocks.
-Feed-forward synchronisation is also very well suited for virtualised
+use specialised clocks. This includes one designed for the
+measurement of time differences which is extremely robust and accurate, for
+example offering nanosecond accuracy and below for packet round-trip times.
+Feed-forward synchronization is also very well suited for virtualised
 environments, reducing the overhead of timekeeping in guests and ensuring
 continued smooth operation of the system clock during guest live migration.
 .Pp
 The
 .Nm
 kernel support provides feed-forward timestamping functions within the kernel
-and system calls to support feed-forward synchronisation daemons
+and system calls to support feed-forward synchronization daemons
 .Po see
 .Xr ffclock 2
 .Pc .
@@ -73,23 +75,30 @@ Enable feed-forward clock support.
 .El
 .Ss Configuration
 When feed-forward clock support is compiled into the kernel, multiple system
-clocks become available to choose from.
+clock families become available to choose from.
 System clock configuration is possible via the
 .Va kern.sysclock
 .Xr sysctl 8
 tree which provides the following variables:
 .Bl -tag -width "    " -offset indent
 .It Va kern.sysclock.active
-Name of the current active system clock which is serving time.
+Name of the current active system clock family which is serving time.
 Set to one of the names in
 .Va kern.sysclock.available
-in order to change the default active system clock.
+in order to change the default active system clock families.
 .It Va kern.sysclock.available
 Lists the names of available system clocks
 .Po
 read only
 .Pc .
 .El
+.Pp
+Within each clock family, variants of the underlying clock may be available. In
+the case of the feed-forward family there are three: the clock corresponding to
+the FFclock daemon, a monotonized version of it
+.Po
+the default, used in common timestamping functions
+.Pc , and the associated difference clock.
 .Pp
 Feed-forward system clock configuration is possible via the
 .Va kern.sysclock.ffclock
@@ -101,10 +110,13 @@ Feed-forward clock kernel version
 read only
 .Pc .
 .It Va kern.sysclock.ffclock.ffcounter_bypass
-Use reliable hardware timecounter as the feed-forward counter.
-Will eventually be useful for virtualised environment like
-.Xr xen 4 ,
-but currently does nothing.
+Use direct reads of the chosen hardware timecounter when timestamping for
+latency reduction, rather than using the timecounter mechanism's
+re-synthesized version of the counter. This only applies when the native
+hardware counter is suitable for feed-forward use, and direct access is
+available. It is currently supported only in the case of an invariant TSC.
+The origins of the native and timecounter-based versions of the counter are
+guaranteed to align.
 .El
 .Sh SEE ALSO
 .Xr clock_gettime 2 ,
@@ -121,8 +133,12 @@ The feed-forward clock support was written by
 in collaboration with
 .An Darryl Veitch Aq dveitch@unimelb.edu.au
 at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+It was later revised and extended by Darryl Veitch at the University of
+Technology Sydney.
 .Pp
 This manual page was written by
-.An Julien Ridoux Aq jridoux@unimelb.edu.au
+.An Julien Ridoux
 and
-.An Lawrence Stewart Aq lstewart@FreeBSD.org .
+.An Lawrence Stewart Aq lstewart@FreeBSD.org ,
+and updated by
+.An Darryl Veitch Aq darryl.veitch@uts.edu.au .

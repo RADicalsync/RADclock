@@ -103,22 +103,20 @@ struct rusage jdbg_rusage;
 /*** Guide to input parameters of radclock ***/
 static void usage(void) {
 	fprintf(stderr, "usage: radclock [options] \n"
-		"\t-x do not serve radclock time/data (IOCTL / Netlink socket to kernel, "
-			"IPC to processes)\n"
+		"\t-x do not serve radclock time/data (to kernel or processes)\n"
 		"\t-d run as a daemon\n"
 		"\t-c <filename> path to alternative configuration file\n"
 		"\t-l <filename> path to alternative log file\n"
 		"\t-i <interface>\n"
-		"\t-n <hostname> we, the host sending queries\n"
-		"\t-t <hostname> the timeserver replying to queries\n"
+		"\t-n <hostname> the host running radclock\n"
+		"\t-t <hostname> the timeserver radclock will query\n"
 		"\t-p <poll_period> [sec] default is DEFAULT_NTP_POLL_PERIOD=16\n"
-		"\t-L do not use local rate refinement\n"
-		"\t-r <filename> read sync input from pcap file (\"-\" for stdin)\n"
+		"\t-r <filename> read raw sync input from pcap file (\"-\" for stdin)\n"
 		"\t-s <filename> read sync input from ascii file (header comments and "
 				"extra columns skipped)\n"
-		"\t-w <filename> write sync output to file (modified pcap format)\n"
+		"\t-w <filename> write raw sync output to file (modified pcap format)\n"
 		"\t-a <filename> write sync output to file (ascii)\n"
-		"\t-o <filename> write clock data output to file (ascii)\n"
+		"\t-o <filename> write radclock algo output to file (ascii)\n"
 		"\t-P <filename> write pid lockfile to file\n"
 		"\t-U <port_number> NTP upstream port\n"
 		"\t-D <port_number> NTP downstream port\n"
@@ -142,16 +140,16 @@ static void usage(void) {
 /*-------------------------------------------------------------------------*/
 
 /*
- * Reparse the configuration file when receiving SIGHUP
- * Reason for most of the global variables
- * The update of the following parameters either requires no action,
- * or it has to be handled by the algo only:
- * UPDMASK_DELTA_HOST
- * UPDMASK_DELTA_NET
- * UPDMASK_POLLPERIOD
- * UPDMASK_TEMPQUALITY
- * UPDMASK_VERBOSE
- * UPDMASK_ADJUST_FBCLOCK
+ * Reparse the configuration file when receiving SIGHUP, and take
+ * special initialization actions if needed, and print out updated parameters.
+ * Parameter changes handled directly by PROC:
+ * 	UPDMASK_ADJUST_FFCLOCK
+ * 	UPDMASK_ADJUST_FBCLOCK
+ * Parameter changes handled by the algo only:
+ * 	UPDMASK_DELTA_HOST
+ * 	UPDMASK_DELTA_NET
+ * 	UPDMASK_POLLPERIOD
+ * 	UPDMASK_TEMPQUALITY
 */
 
 // TODO : Reload of individual physical parameters is not handled
@@ -165,32 +163,37 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 
 	conf = handle->conf;
 
-	verbose(LOG_NOTICE, "Update of configuration parameters");
-	/* Parse the configuration file */
+	verbose(LOG_NOTICE, "Rereading configuration and acting on allowed changes");
+	/* Parse the configuration file, update all conf values */
 	if (!(config_parse(conf, &param_mask, handle->is_daemon))) {
-		verbose(LOG_ERR, "Error: Rehash of configuration file failed");
+		verbose(LOG_ERR, " Error: Rehash of configuration file failed");
 		return (1);
 	}
-	
+
 	if (HAS_UPDATE(param_mask, UPDMASK_SYNCHRO_TYPE))
-		verbose(LOG_WARNING, "It is not possible to change the type of client "
+		verbose(LOG_WARNING, " It is not possible to change the type of client "
 				"synchronisation on the fly!");
-	
+
 	//XXX Should check we have only one input selected
 	if (HAS_UPDATE(param_mask, UPDMASK_NETWORKDEV) ||
 			HAS_UPDATE(param_mask, UPDMASK_SYNC_IN_PCAP) ||
 			HAS_UPDATE(param_mask, UPDMASK_SYNC_IN_ASCII))
 	{
-		verbose(LOG_WARNING, "It is not possible to change the type of input "
+		verbose(LOG_WARNING, " It is not possible to change the type of input "
 				"on the fly!");
-		verbose(LOG_WARNING, "Parameter is parsed and saved but not taken "
+		verbose(LOG_WARNING, " Parameter is parsed and saved but not taken "
 				"into account");
 		CLEAR_UPDATE(param_mask, UPDMASK_NETWORKDEV);
 		CLEAR_UPDATE(param_mask, UPDMASK_SYNC_IN_PCAP);
 		CLEAR_UPDATE(param_mask, UPDMASK_SYNC_IN_ASCII);
 	}
 
-// TODO The old naming convention for server IPC could be changed for clarity.
+	if (HAS_UPDATE(param_mask, UPDMASK_VERBOSE)) {
+		set_verbose(handle, conf->verbose_level, 1);
+		//verbose(LOG_NOTICE, " Verbose level reset to %d", conf->verbose_level);
+	}
+		
+// TODO: The old naming convention for server IPC could be changed for clarity.
 // Would require an update of config file parsing.
 	if (HAS_UPDATE(param_mask, UPDMASK_SERVER_IPC)) {
 		switch (conf->server_ipc) {
@@ -198,11 +201,11 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 			err = shm_init_writer(handle->clock);
 			if (err)
 				return (1);
-			verbose(LOG_NOTICE, "IPC Shared Memory ready");
+			verbose(LOG_NOTICE, " IPC Shared Memory ready and updating");
 			break;
 		case BOOL_OFF:
-			/* Detach for SHM segment, but do not destroy it */
-			shm_detach(handle->clock);
+			verbose(LOG_NOTICE, " IPC Shared Memory no longer updating");
+			shm_detach(handle->clock);		// detach segment, but do not destroy!
 			break;
 		}
 	}
@@ -210,14 +213,12 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	if (HAS_UPDATE(param_mask, UPDMASK_SERVER_NTP)) {
 		switch (conf->server_ntp) {
 		case BOOL_ON:
-			/* We start NTP server */
-			start_thread_NTP_SERV(handle);
+			verbose(LOG_NOTICE, " RADserver will be activated");
+			//start_thread_NTP_SERV(handle);   // now done in start_live
 			break;
 		case BOOL_OFF:
-			/* We stop the NTP server */
 			handle->pthread_flag_stop |= PTH_NTP_SERV_STOP;
-// TODO should we join the thread in here ... requires testing
-//			pthread_join(handle->threads[PTH_NTP_SERV], &thread_status);
+			verbose(LOG_NOTICE, " RADserver has been shut down");
 			break;
 		}
 	}
@@ -225,12 +226,10 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	if (HAS_UPDATE(param_mask, UPDMASK_SERVER_VM_UDP)) {
 		switch (conf->server_vm_udp) {
 		case BOOL_ON:	
-			/* We start NTP server */
-			start_thread_VM_UDP_SERV(handle);
+			//start_thread_VM_UDP_SERV(handle);
 			break;
 		case BOOL_OFF:
-			/* We stop the NTP server */
-			clock_handle->pthread_flag_stop |= PTH_VM_UDP_SERV_STOP; 
+			clock_handle->pthread_flag_stop |= PTH_VM_UDP_SERV_STOP;
 // TODO should we join the thread in here ... requires testing
 //			pthread_join(clock_handle->threads[PTH_VM_UDP_SERV], &thread_status);
 			break;
@@ -253,7 +252,7 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	if (HAS_UPDATE(param_mask, UPDMASK_SYNC_OUT_PCAP)) {
 		err = update_dumpout_source(handle, (struct stampsource *)handle->stamp_source);
 		if (err != 0) {
-			verbose(LOG_ERR, "Things are probably out of control. Bye !");
+			verbose(LOG_ERR, " Things are probably out of control. Bye !");
 			exit (1);
 		}
 		CLEAR_UPDATE(param_mask, UPDMASK_SYNC_OUT_PCAP);
@@ -268,7 +267,7 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	{
 		err = update_filter_source(handle, (struct stampsource *)handle->stamp_source);
 		if (err != 0)  {
-			verbose(LOG_ERR, "Things are probably out of control. Bye !");
+			verbose(LOG_ERR, " Things are probably out of control. Bye !");
 			exit (1);
 		}
 		CLEAR_UPDATE(param_mask, UPDMASK_TIME_SERVER);
@@ -277,9 +276,6 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 
 	/*  Print configuration actually used */
 	config_print(LOG_NOTICE, conf);
-
-	/* Reinit rehash flag */
-//	handle->unix_signal = 0;
 
 	/* Push param_mask into the config so that the algo sees it,
 	 * since only algo related thing should be remaining
@@ -465,6 +461,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->clock = radclock_create();
 
 	handle->is_daemon = is_daemon;
+	strcpy(handle->hostIP, "");
 	handle->conf= conf;
 
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
@@ -612,14 +609,14 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	 * This is a hack, need to move to kern dep code, or just ultimately remove
 	 */
 	#define	MAX_SYSCLOCK_NAME_LEN 16
-	int inttopass, intold;
-	char currname[32];		// maps to 'old' input
-	char nametopass[32];
-	char nameavail[32];
-	size_t sn;
-	size_t si = sizeof inttopass;
-	
-	verbose(LOG_NOTICE, "clock_init_live:  testing sysctl interface");
+//	int inttopass, intold;
+//	char currname[32];		// maps to 'old' input
+//	char nametopass[32];
+//	char nameavail[32];
+//	size_t sn;
+//	size_t si = sizeof inttopass;
+//
+//	verbose(LOG_NOTICE, "clock_init_live:  testing sysctl interface");
 
 //	// Check current hardware counter
 //	sn = sizeof(currname);
@@ -648,15 +645,15 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 //	verbose(LOG_NOTICE, "  FFcounter bypass state: (old,new) = (%d,%d)", intold, inttopass); // was set as expected
 //
 	
-	sn = sizeof(nameavail);
-	err = sysctlbyname("kern.sysclock.available", &nameavail[0], &sn, NULL, 0);
-	verbose(LOG_NOTICE, "\t Available sysclocks: %s", nameavail);
-	
-
-	/* Get the active sysclock */
-	sn = sizeof(currname);
-	err = sysctlbyname("kern.sysclock.active", &currname[0], &sn, NULL, 0);
-	verbose(LOG_NOTICE, "\t Active sysclock: %s [sn = %u]", currname, strlen(currname));
+/* Migrated this to ffkernel-fbsd.c to have KV protection */
+//	sn = sizeof(nameavail);
+//	err = sysctlbyname("kern.sysclock.available", &nameavail[0], &sn, NULL, 0);
+//	verbose(LOG_NOTICE, "\t Available sysclocks: %s", nameavail);
+//
+//	/* Get the active sysclock */
+//	sn = sizeof(currname);
+//	err = sysctlbyname("kern.sysclock.active", &currname[0], &sn, NULL, 0);
+//	verbose(LOG_NOTICE, "\t Active sysclock: %s [sn = %u]", currname, strlen(currname));
 
 //	/* Change to feed-forward */
 //	sn = sizeof(nametopass);
@@ -669,7 +666,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 //	memset(currname,0,sn); currname[0] = '\0';
 //	err = sysctlbyname("kern.sysclock.active", &currname[0], &sn, NULL, 0);
 //	verbose(LOG_NOTICE, "\t Active sysclock: %s [sn = %u]", currname, strlen(currname));
-//
+
 //	// Change it back !
 //	sn = sizeof(currname);
 //	strlcpy(nametopass,"feedback",sn);  // userland doesnt understand SYSCLOCK_{FFWD,FBCK}
@@ -682,7 +679,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 //	memset(currname,0,sn); currname[0] = '\0';
 //	err = sysctlbyname("kern.sysclock.active", &currname[0], &sn, NULL, 0);
 //	verbose(LOG_NOTICE, "\t Active sysclock: %s [sn = %u]", currname, strlen(currname));
-
+//
 
 
 	/* Get the value of the interface's timestamp default setting */
@@ -761,6 +758,7 @@ init_handle(struct radclock_handle *handle)
 }
 
 
+
 int
 start_live(struct radclock_handle *handle)
 {
@@ -786,7 +784,7 @@ start_live(struct radclock_handle *handle)
 		}
 	}
 
-	/*
+	/* TRIGGER
 	 * This thread triggers the processing of data. It could be a dummy sleeping
 	 * loop, an NTP client, a 1588 slave  ...
 	 */
@@ -796,18 +794,12 @@ start_live(struct radclock_handle *handle)
 			return (1);
 	}
 
-	/*
-	 * This thread is in charge of processing the raw data collected, magically
-	 * transform the data into stamps and give them to the sync algo for
-	 * processing.
+	/* PROC
+	 * In the case of a restart following a SIGHUP triggering a rehash, PROC
+	 * is still running, so simply clear the flag.
 	 */
-	if (handle->unix_signal == SIGHUP) {
-		/*
-		 * This is not start, but HUP, the algo thread is still running
-		 * Simply clear the flag and bypass
-		 */
+	if (handle->unix_signal == SIGHUP)
 		handle->unix_signal = 0;
-	}
 	else {
 		if (VM_SLAVE(handle) || VM_MASTER(handle)) {
 			err = init_vm(handle);
@@ -824,7 +816,7 @@ start_live(struct radclock_handle *handle)
 	   
 	}
 
-	/* Are we running an NTP server for network clients ? */
+	/* NTP_SERV */
 	switch (handle->conf->server_ntp) {
 	case BOOL_ON:
 		err = start_thread_NTP_SERV(handle);
@@ -833,11 +825,10 @@ start_live(struct radclock_handle *handle)
 		break;
 	case BOOL_OFF:
 	default:
-		/* do nothing */
 		break;
 	}
 
-	/* Are we running a VM UDP server for network guests ? */
+	/* VM_UDP_SERV */
 	switch (handle->conf->server_vm_udp) {
 	case BOOL_ON:
 		err = start_thread_VM_UDP_SERV(handle);
@@ -849,6 +840,7 @@ start_live(struct radclock_handle *handle)
 		/* do nothing */
 		break;
 	}
+
 
 	/*
 	 * To be able to provide the RADCLOCK timestamping mode, we need to refresh
@@ -867,21 +859,21 @@ start_live(struct radclock_handle *handle)
 	else
 		have_fixed_point_thread = 0;
 
+
 	/*
-	 * That's our main capture loop, it does not return until the end of
+	 * Main infinite capture loop, it does not return until the end of
 	 * input or if we explicitely break it
-	 * XXX TODO XXX: a unique source is assumed !!
+	 * TODO: a unique source is assumed !!
 	 */
 	err = capture_raw_data(handle);
 
 	if (err == -1) {
-		/* Yes, we abuse this a bit ... */
-		handle->unix_signal = SIGTERM;
+		handle->unix_signal = SIGTERM;	// some abuse here, not a true signal
 		verbose(LOG_NOTICE, "Reached end of input");
 	}
-	if (err == -2) {
+	if (err == -2 && handle->unix_signal == SIGHUP)
 		verbose(LOG_NOTICE, "Breaking current capture loop for rehash");
-	}
+
 
 	/*
 	 * pcap_break_loop() has been called or end of input. In both cases kill the
@@ -890,7 +882,7 @@ start_live(struct radclock_handle *handle)
 	verbose(LOG_NOTICE, "Send killing signal to threads. Wait for stop message.");
 	handle->pthread_flag_stop = PTH_STOP_ALL;
 
-	/* Do not stop sync algo thread if we HUP */
+	/* Do not stop PROC in HUP case (owns sync algo state) */
 	if (handle->unix_signal == SIGHUP)
 		handle->pthread_flag_stop &= ~PTH_DATA_PROC_STOP;
 
@@ -914,12 +906,10 @@ start_live(struct radclock_handle *handle)
 		/* Reinitialise flags */
 		handle->pthread_flag_stop = 0;
 		verbose(LOG_NOTICE, "Threads are dead.");
-		/* We received a SIGTERM, we exit the loop. */
 		return (1);
 	}
-	else {
+	else
 		handle->pthread_flag_stop = 0;
-	}
 
 	return (0);
 }
@@ -977,8 +967,8 @@ main(int argc, char *argv[])
 
 	sigaction(SIGHUP,  &sig_struct, NULL); /* hangup signal (1) */
 	sigaction(SIGTERM, &sig_struct, NULL); /* software termination signal (15) */
-	sigaction(SIGUSR1, &sig_struct, NULL); /* user signal 1 (30) */
-	sigaction(SIGUSR2, &sig_struct, NULL); /* user signal 2 (31) */
+	sigaction(SIGUSR1, &sig_struct, NULL); /* user signal 1 (30 on FreeBSD) */
+	sigaction(SIGUSR2, &sig_struct, NULL); /* user signal 2 (31 on FreeBSD) */
 
 
 	/* Initialise verbose data to defaults */
@@ -1017,6 +1007,10 @@ main(int argc, char *argv[])
 		case 'x':
 			SET_UPDATE(param_mask, UPDMASK_SERVER_IPC);
 			conf->server_ipc = BOOL_OFF;
+			SET_UPDATE(param_mask, UPDMASK_ADJUST_FFCLOCK);
+			conf->adjust_FFclock = BOOL_OFF;
+			SET_UPDATE(param_mask, UPDMASK_ADJUST_FBCLOCK);
+			conf->adjust_FBclock = BOOL_OFF;
 			break;
 		case 'c':
 			strcpy(conf->conffile, optarg);
@@ -1186,7 +1180,9 @@ main(int argc, char *argv[])
 	 * Retrieve configuration from the config file (write it down if it does not
 	 * exist) That should be the only occasion when get_config() is called and
 	 * the param_mask is not positioned to UPDMASK_NOUPD !!!  Only the
-	 * parameters not specified on the command line are updated
+	 * parameters not specified on the command line are updated.
+	 * TODO: in case file doesnt exist, handle->conf not updated to the values
+	 *    written. Eg, Time server is left blank, requiring a 2nd run to pick up.
 	 */
 	if (!config_parse(handle->conf, &param_mask, handle->is_daemon))
 		return (0);
@@ -1246,7 +1242,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	/* Init radclock specific stuff */
+	/* Create and initialize the source, create SHM */
 	err = init_handle(handle);
 	if (err) {
 		verbose(LOG_ERR, "Radclock process specific init failed.");
@@ -1285,7 +1281,7 @@ main(int argc, char *argv[])
 	 */
 	else {
 		while (err == 0) {
-			err = start_live(handle);
+			err = start_live(handle);	// SIG{HUP,TERM} map to err={0,1}
 			if (err == 0) {
 				if (rehash_daemon(handle, param_mask))
 					verbose(LOG_ERR, "SIGHUP - Failed to rehash daemon !!.");

@@ -93,14 +93,11 @@ thread_trigger(void *c_handle)
 		handle->pthread_flag_stop = PTH_STOP_ALL;
 	
 	while ((handle->pthread_flag_stop & PTH_TRIGGER_STOP) != PTH_TRIGGER_STOP) {
-		/*
-		 * Check if processing thread did grab the lock, we don't want to lock
-		 * repeatedly for ever. If we marked data ready to be processed, then
-		 * the processing thread has to do his job. We signal again in case the
-		 * processing thread hadn't be listening before (at startup for
-		 * example), then we sleep a little and probably get rescheduled.
-		 * Stay in signal-then-sleep loop until PROC resets wakeup_checkfordata after
-		 * all raw data is exhausted. No further requests will leave until then.
+	
+		/* Check if PROC did grab the lock (since now wakeup_checkfordata=0)
+		 * and hence has processed available data.
+		 * Signal repeatedly in case somehow it was missed (eg at startup), sleep
+		 * for efficiency and probably get rescheduled.
 		 */
 		if (handle->wakeup_checkfordata == 1 && !VM_SLAVE(handle)) {
 			pthread_cond_signal(&handle->wakeup_cond);
@@ -108,26 +105,21 @@ thread_trigger(void *c_handle)
 			continue;
 		}
 
-		/* Lock the pthread_mutex we share with the processing thread */
+		/* Now we know PROC has the lock, can block on it until PROC is done */
 		pthread_mutex_lock(&handle->wakeup_mutex);
 
-		/* Do our job */
+		/* Deal with this grid point: send request on time, wait for response */
 		trigger_work(handle);
 
 		/* Raise wakeup_checkfordata flag.
-		 * Signal the processing thread, and unlock mutex to give the processing
-		 * thread a chance at it. To be sure it grabs the lock we sleep for a
-		 * little while ...
+		 * Signal PROC and release mutex to enable it to awaken and grab wakeup_mutex.
 		 */
 		handle->wakeup_checkfordata = 1;
 		pthread_cond_signal(&handle->wakeup_cond);
 		pthread_mutex_unlock(&handle->wakeup_mutex);
 	}
 
-	/* Thread exit
-	 * In case we pass into the continue statement but then ordered to die, make
-	 * sure we release the lock (and maybe silently fail)
-	 */
+	/* Thread exit */
 	verbose(LOG_NOTICE, "Thread trigger is terminating.");	
 	pthread_exit(NULL);
 }
@@ -162,23 +154,21 @@ thread_data_processing(void *c_handle)
 
 	while ((handle->pthread_flag_stop & PTH_DATA_PROC_STOP) != PTH_DATA_PROC_STOP)
 	{
-		/* Block until we acquire the lock first, then release it and wait */
+		/* Reacquire lock to continue (TRIGGER is not blocking on it) */
 		pthread_mutex_lock(&handle->wakeup_mutex);
 
 		/* Loosely signal this thread did lock the mutex */
 		handle->wakeup_checkfordata = 0;
 	
-		/* We may have been waiting for acquiring the lock, but the trigger
-		 * thread has been gone dying, so it will never signal again. So we need
-		 * to die
+		/* If we are meant to die but TRIGGER is already dead, it will never signal
+		 * again and we will block forever, so better die immediately.
 		 */
-		if ((handle->pthread_flag_stop & PTH_DATA_PROC_STOP) ==
-				PTH_DATA_PROC_STOP) {
+		if ((handle->pthread_flag_stop & PTH_DATA_PROC_STOP) == PTH_DATA_PROC_STOP) {
 			pthread_mutex_unlock(&handle->wakeup_mutex);
 			break;
 		}
 
-		/* Only during this wait is wakeup_mutex released, enabling trigger_work */
+		/* Allows TRIGGER to do its work, will signal when done */
 		pthread_cond_wait(&handle->wakeup_cond, &handle->wakeup_mutex);
 
 		/* Process rawdata until there is nothing more to process */
@@ -193,7 +183,8 @@ thread_data_processing(void *c_handle)
 			}
 		} while (err == 0);
 
-		pthread_mutex_unlock(&handle->wakeup_mutex); // allows TRIGGER to acquire
+		/* Must release lock in case thread told to STOP */
+		pthread_mutex_unlock(&handle->wakeup_mutex);
 	}
 
 	destroy_peer_stamp_queue(&peer);

@@ -212,7 +212,8 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp)
 	/* Store generated stamp values */
 	if (handle->stampout_fd != NULL) {
 		err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu\n",
-				BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te, BST(stamp)->Tf,
+				(long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+				(long long unsigned)BST(stamp)->Tf,
 				(long long unsigned)stamp->id);
 		if (err < 0)
 			verbose(LOG_ERR, "Failed to write data to timestamp file");
@@ -229,15 +230,15 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp)
 		"%"VC_FMT" %"VC_FMT" %"VC_FMT" %.9lg %.9lg %.9lg %.11Lf "
 		"%.11Lf %.10lf %.10lf %.6lg %.6lg %.6lg %"VC_FMT" %u\n",
 		BST(stamp)->Tb,
-		BST(stamp)->Tf,
-		OUTPUT(handle, RTT),
+		(unsigned long long)BST(stamp)->Tf,
+		(unsigned long long)OUTPUT(handle, RTT),
 		OUTPUT(handle, phat),
 		OUTPUT(handle, plocal),
 		OUTPUT(handle, K),
 		OUTPUT(handle, thetahat),
-		OUTPUT(handle, RTThat),
-		OUTPUT(handle, RTThat_new),
-		OUTPUT(handle, RTThat_shift),
+		(unsigned long long)OUTPUT(handle, RTThat),
+		(unsigned long long)OUTPUT(handle, RTThat_new),
+		(unsigned long long)OUTPUT(handle, RTThat_shift),
 		OUTPUT(handle, th_naive),
 		OUTPUT(handle, minET),
 		OUTPUT(handle, minET_last),

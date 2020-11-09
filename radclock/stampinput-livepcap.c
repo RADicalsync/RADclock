@@ -239,7 +239,7 @@ set_vcount_in_sll(radpcap_packet_t *packet, vcounter_t vcount)
  * This is the callback passed to get_network_stamp().
  * It takes a radpcap_packet_t and fills this structure with the actual packet
  * read from the live interface.
- * The first trick here is to use radpcap_get_packet() that actually retrieves
+ * The first trick here is to use deliver_rawdata_pcap() that actually retrieves
  * the BPF header, the packet captured and the vcount value padded in between.
  * The second trick, is to write all data retrieved to the output raw file (if
  * any) before passing the data to the sync algo. The link layer header is
@@ -283,7 +283,7 @@ get_packet_livepcap(struct radclock_handle *handle, void *userdata,
 	assert(vcount == vcount_debug);
 
 	/* If prefer a radclock timestamp over kernel options, generate and
-	 * overwrite existing ts in pcap header
+	 * overwrite existing ts in copied pcap header
 	 */
 	if (handle->clock->tsmode == PKTCAP_TSMODE_RADCLOCK) {
 		read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
@@ -449,7 +449,7 @@ int get_address_by_name(char* addr, char* hostname)
 	// Retrieve the host IP address (even if hostname is effectively an IP addr)
 	he = gethostbyname(hostname);
 	if ( he == NULL ) {
-		verbose(LOG_INFO, "Could not retrieve IP address based on hostname %s", hostname);
+		verbose(LOG_NOTICE, "Could not retrieve IP address based on hostname %s", hostname);
 		return (1);
 	}
 
@@ -486,32 +486,33 @@ int get_address_by_name(char* addr, char* hostname)
 }
 
 
-/** Create a BPF filter expression
+/* Create a BPF filter expression
  * Filter appends additional rules passed in pattern qualifier
- * (port number, remote host name, etc)
+ * (port number, remote host name, etc).
+ * Currently the string "host" could be an IP address or a hostname.
+ * TODO: should accept IP addresses only, and make it IPv6 friendly
  */
-// XXX TODO: should accept IP addresses only, and make it IPv6 friendly
 int
 build_BPFfilter(struct radclock_handle *handle, char *fltstr, int maxsize,
-		char *hostname, char *ntp_host)
+		char *host, char *ntp_host)
 {
 	int strsize;
 	char ntp_filter[150];
 	
-	if (strlen(hostname) == 0) {
+	if (strlen(host) == 0) {
 		verbose(LOG_ERR, "No host info, no BPF filter");
 		return (-1);
 	}
 	if (strlen(ntp_host) == 0) {
-		verbose(LOG_WARNING, "No NTP server specified, the BPF filter is not tight enough !!!");
+		verbose(LOG_WARNING, "No NTP server specified, BPF filter not tight enough !!");
 		sprintf(ntp_filter, ") or (");
 	}
 	else
 		sprintf(ntp_filter, "and dst host %s) or (src host %s and", ntp_host, ntp_host);
 
 	strsize = snprintf(fltstr, maxsize, "(src host %s and dst port %d %s "
-			"dst host %s and src port %d)", hostname,
-			handle->conf->ntp_upstream_port, ntp_filter, hostname,
+			"dst host %s and src port %d)", host,
+			handle->conf->ntp_upstream_port, ntp_filter, host,
 			handle->conf->ntp_upstream_port);
 
 	return (strsize);
@@ -524,14 +525,14 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 {
 	pcap_t* p_handle = NULL;
 	struct bpf_program filter;
-	char fltstr[MAXLINE];               // bpf filter string
+	char fltstr[MAXLINE];		// bpf filter string
 	int strsize = 0;
 	int promiscuous = 0;
-	int bpf_timeout = 5;		// waiting time on BPF before exporting packets (in [ms])
+	int bpf_timeout = 5;			// waiting time on BPF before exporting pkts [ms]
 	struct radclock_config *conf;
 	char errbuf[PCAP_ERRBUF_SIZE];
-	char addr_name[16] = "";
-	char addr_if[16] = "";
+	char addr_name[16] = "";		// IP address from a hostname
+	char addr_if[16] = "";			// IP address from an interface
 	int err = 0;
 
 	conf = handle->conf;
@@ -565,24 +566,11 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	/*
 	 * Ok, so now we may have two different IP addresses due to the name and
 	 * interface resolution. We need to match packets on the open interface, so
-	 * in any cases, favour the address from the interface to build the BPF
-	 * filter.
+	 * in any cases, favour the address from the interface to build the filter.
 	 */
 	verbose(LOG_NOTICE, "Using host name %s and address %s", conf->hostname, addr_if);
 	verbose(LOG_NOTICE, "Opening device %s", conf->network_device);
-	
-	// TODO: drop this once clear that if-level ts types won't be reappearing
-	//       Only works on BSD anyway, will break under Linux
-	/* Check global timestamp configuration on interface */
-	if (handle->clock->kernel_version == 2) {
-		char str[80] = "net.bpf.tscfg.";	strcat(str, handle->conf->network_device);
-		char nameavail[32];
-		size_t sn;
-		nameavail[0] = '\0';	sn = sizeof(nameavail);
-		err = sysctlbyname(str, &nameavail[0], &sn, NULL, 0);
-		verbose(LOG_NOTICE, " %s's global timestamp configuration=%s  (cmd=%s)",
-					handle->conf->network_device, nameavail, str);
-	}
+	strcpy(handle->hostIP, addr_if);		//  record the daemon's IP address
 
 	/* Build the BPF filter string */
 	strcpy(fltstr, "");
@@ -594,7 +582,7 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	verbose(LOG_NOTICE, "Packet filter: %s", fltstr);
 
 	/*
-	 * We got the parameters, open the live device Set the timeout to 2ms before
+	 * We got the parameters, open the live device. Set the timeout to 2ms before
 	 * waking up the userland process, no IMMEDIATE mode!
 	 */
 	if ((p_handle = pcap_open_live(conf->network_device, BPF_PACKET_SIZE,
@@ -687,7 +675,7 @@ livepcapstamp_init(struct radclock_handle *handle, struct stampsource *source)
 	 * TODO:  set pktcap_tsmode up as conf param, if need to change ever arises.
 	 */
 	err = pktcap_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
-			PKTCAP_TSMODE_FFCLOCK);
+			PKTCAP_TSMODE_FFNATIVECLOCK, 0);
 	if (err) {
 		verbose(LOG_WARNING, "Could not set requested pkt capture timestamping mode");
 		return (-1);
@@ -791,8 +779,7 @@ livepcapstamp_update_filter(struct radclock_handle *handle, struct stampsource *
 	char fltstr[MAXLINE];               // bpf filter string
 	int strsize;
 
-// TODO XXX: should pass IP addresses only to libpcap and not hostnames!
-	strsize = build_BPFfilter(handle, fltstr, MAXLINE, handle->conf->hostname,
+	strsize = build_BPFfilter(handle, fltstr, MAXLINE, handle->hostIP,
 			handle->conf->time_server);
 
 	if ((strsize < 0) || (strsize > MAXLINE-2) ) {
@@ -803,12 +790,12 @@ livepcapstamp_update_filter(struct radclock_handle *handle, struct stampsource *
 
 	// Compile and set up the BPF filter
 	// no need to test broadcast addresses
-	if ( pcap_compile(LIVEPCAP_DATA(source)->live_input, &filter, fltstr, 0, 0) == -1 ) {
+	if (pcap_compile(LIVEPCAP_DATA(source)->live_input, &filter, fltstr, 0, 0) == -1) {
 		verbose(LOG_ERR, "pcap filter compiling failure, pcap says: %s",
 				pcap_geterr(LIVEPCAP_DATA(source)->live_input));
 		goto pcap_err;
 	}
-	if (pcap_setfilter( LIVEPCAP_DATA(source)->live_input,&filter) == -1 ) {
+	if (pcap_setfilter( LIVEPCAP_DATA(source)->live_input, &filter) == -1) {
 		verbose(LOG_ERR, "pcap filter setting failure, pcap says: %s",
 				pcap_geterr(LIVEPCAP_DATA(source)->live_input));
 		goto pcap_err;

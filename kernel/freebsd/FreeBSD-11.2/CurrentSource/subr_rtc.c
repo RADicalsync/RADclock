@@ -355,12 +355,9 @@ inittodr(time_t base)
 		ts.tv_nsec = 0;
 	}
 
-	if (ts.tv_sec >= 0) {
+	if (ts.tv_sec >= 0)
 		tc_setclock(&ts);
-#ifdef FFCLOCK
-		ffclock_setto_rtc(&ts);
-#endif
-	}
+
 }
 
 /*

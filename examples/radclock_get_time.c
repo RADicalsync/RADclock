@@ -27,7 +27,7 @@
  * defined in the RADclock API. These functions:
  * - retrieve the RADclock internal parameters
  * - access the RAW vcounter
- * - give access to absolute time based on the RADclock
+ * - give access to absolute   time based on the RADclock
  * - give access to difference time baed on the RADclock.
  *
  * The RADclock daemon should be running for this example to work correctly.
@@ -42,9 +42,9 @@
 
 /* Needed for accessing the RADclock API */
 #include <radclock.h>
-/* needed to access types for printout_{rad,FF}data */
-#include "radclock-private.h"		// needed for struct radclock_data 		defn
-#include "kclock.h"              //            struct ffclock_estimate
+/* needed to access types for printout_{rad,FF}data, shm internals */
+#include "radclock-private.h"		// needed for struct radclock_data, clock defn defn
+#include "kclock.h"              // struct ffclock_estimate, get_kernel_ffclock
 
 
 
@@ -66,7 +66,7 @@ main (int argc, char *argv[])
 	long double currtime;
 	time_t currtime_t;
 
-	/* Raw vcounter stamps */
+	/* Raw vcounter timestamps */
 	vcounter_t vcount1, vcount2, vcount3;   //
 
 	int j;
@@ -76,12 +76,19 @@ main (int argc, char *argv[])
 	/* Initialize the clock handle */
 	clock = radclock_create();
 	if (!clock) {
-		fprintf(stderr, "Could not create clock handle");
+		fprintf(stderr, "Could not create a radclock.");
 		return (-1);
 	}
 	printf("----------------------------------------------------------------\n");
-	radclock_init(clock);	// initializes shm in here
-
+	
+	
+	/* This function checks on the counter selected
+	 * by the kernel, and determines how it will be accessed,
+	 * gives some details of current FFclock settings.
+	 * It then initializes the shm.
+	 */
+	printf("------------------- Initializing your radclock  ----------------\n");
+	radclock_init(clock);
 
 	/* radclock_get_*
 	 *
@@ -120,6 +127,7 @@ main (int argc, char *argv[])
 
 	if (clock->ipc_shm) {
 		shm = (struct radclock_shm *) clock->ipc_shm;
+		printf("Got RADdata from the SHM  (gen = %u).\n", shm->gen);
 		printout_raddata(SHM_DATA(shm));
 	} else
 		printf("SHM is down, can''t print daemon''s raddata\n\n");
@@ -127,13 +135,26 @@ main (int argc, char *argv[])
 	if (get_kernel_ffclock(clock, &cest))
 		printf("kernel FFdata unreachable, can''t print it\n\n");
 	else {
+		printf("Got FFdata from the kernel.\n");
 		// fill_radclock_data(&cest, &rad_data);
 		printout_FFdata(&cest);
-		printf("\n\n");
+		printf("\n");
 	}
 	
+	if ( SHM_DATA(shm)->last_changed < cest.update_ffcount ) {
+		printf("SHM data seems older than kernel data by %5.3lf [s], IPC server running? \n\n",
+		(cest.update_ffcount - SHM_DATA(shm)->last_changed)*SHM_DATA(shm)->phat );
+	}
+	if ( SHM_DATA(shm)->last_changed > cest.update_ffcount ) {
+		printf("SHM data seems fresher than kernel data by %5.3lf [s], is the "
+				 "kernel refusing updates? daemon or FFclock have unsyn'd status?\n\n",
+		-(cest.update_ffcount - SHM_DATA(shm)->last_changed)*SHM_DATA(shm)->phat );
+	}
+	if ( SHM_DATA(shm)->last_changed == cest.update_ffcount )
+		printf("SHM data seems to match the kernel data, as it should. \n\n");
 	
-
+	
+	
 	/* radclock_get_vcounter
 	 *
 	 * Quick test to check the routine can access the RAW vcounter
@@ -144,8 +165,8 @@ main (int argc, char *argv[])
 	for ( j=0; j<3; j++ ) {
 		err = radclock_get_vcounter(clock, &vcount2);
 		radclock_duration(clock, &vcount1, &vcount2, &currtime);
-		printf(" Delta(vcount) from previous vcount = %llu (%9.4Lg [ms]) error=%d\n",
-				(long long unsigned)(vcount2 - vcount1), currtime * 1e3, err);
+		printf(" Delta(vcount) from previous vcount = %llu (%9.4Lg [mus]) error=%d\n",
+				(long long unsigned)(vcount2 - vcount1), currtime * 1e6, err);
 		vcount1 = vcount2;
 	}
 	printf("\n");
@@ -166,12 +187,12 @@ main (int argc, char *argv[])
 			ctime(&currtime_t), currtime);
 
 
-	/* radclock_vcount_to_abstime and radclock_vcount_to_abstime
+	/* radclock_vcount_to_abstime
 	 *
 	 * This allows to quickly read the counter, store the value and
-	 * convert it to time information later on.
+	 * convert it to UTC time later on.
 	 * Since the RADclock is updated every poll_period seconds, the conversion
-	 * should be done within that interval.
+	 * should, ideally, be done within that interval.
 	 */
 	printf("----------------------------------------------------------------\n");
 	err = radclock_get_vcounter(clock, &vcount1);
@@ -190,26 +211,24 @@ main (int argc, char *argv[])
 	 * between a past event and now.
 	 */
 	printf("----------------------------------------------------------------\n");
-	err = radclock_get_vcounter(clock, &vcount1);
 	printf("Reading a vcount value now: %llu ", (long long unsigned)vcount1);
-	printf(" - have a little rest for .2 seconds...\n");
-	sleep(.2);
+	err = radclock_get_vcounter(clock, &vcount1);
+	//sleep(2);
+	usleep(2000);
 	err = radclock_elapsed(clock, &vcount1, &currtime);
+	printf(" - have a little rest for 2ms ...\n");
 	printf("   radclock_elapsed says we have been sleeping for %12.20Lf [ms]\n", 1000*currtime);
 
 
 	/* radclock_duration
-	 *
-	 * These take advantage of the stability of the difference RADclock. These
-	 * are the function to use to measure time intervals over a short time scale
-	 * between two events.
+	 *   - same thing but a little more manually, taking the 2nd timestamp yourself
 	 */
 	printf("----------------------------------------------------------------\n");
-	err = radclock_get_vcounter(clock, &vcount1);
 	printf("Reading a vcount value now:  %llu ", (long long unsigned)vcount1);
-	printf(" - have a little rest for .2 seconds...\n");
-	sleep(.2);
+	err = radclock_get_vcounter(clock, &vcount1);
+	usleep(200000);
 	err = radclock_get_vcounter(clock, &vcount2);
+	printf(" - have a little rest for 200 ms...\n");
 	printf("Reading a second vcount now: %llu \n", (long long unsigned)vcount2);
 	err = radclock_duration(clock, &vcount1, &vcount2, &currtime);
 	printf(" - radclock_duration says we have been sleeping for %12.20Lf [ms]\n", 1000*currtime);

@@ -64,6 +64,7 @@ UTCld_to_timeval(long double *time, struct timeval *tv)
 	tv->tv_sec  = (uint32_t) *time;
 	tv->tv_usec = (uint32_t) (1000000*(*time - tv->tv_sec) + 0.5);
 }
+   
 
 
 /* Subtract two timeval */

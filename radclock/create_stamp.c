@@ -646,9 +646,17 @@ bad_packet_server(struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
 		}
 	}
 
+	/* Check if the server is a RADserver */
+	static int c = 0;
+	u_char NTPv;
+	if ( c<1 && (NTPv = PKT_VERSION(ntp->li_vn_mode)) != NTP_VERSION) {
+		verbose(LOG_WARNING, "NTP version of %d non-standard", NTPv);
+		c++;
+	}
+
 	/* If the server is unsynchronised we skip this packet */
 	if (PKT_LEAP(ntp->li_vn_mode) == LEAP_NOTINSYNC) {
-		verbose(LOG_WARNING, "NTP server says LEAP_NOTINSYNC, packet ignored.");
+		verbose(LOG_WARNING, "NTP server has LEAP_NOTINSYNC, packet ignored.");
 		stats->badqual_count++;
 		return (1);
 	}
@@ -715,7 +723,7 @@ push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 	stamp.refid = ntohl(ntp->refid);
 	stamp.stratum = ntp->stratum;
 	stamp.LI = PKT_LEAP(ntp->li_vn_mode);
-	stamp.rootdelay = ntohl(ntp->rootdelay) / 65536.;
+	stamp.rootdelay      = ntohl(ntp->rootdelay) / 65536.;
 	stamp.rootdispersion = ntohl(ntp->rootdispersion) / 65536.;
 	BST(&stamp)->Tb = NTPtime_to_UTCld(ntp->rec);
 	BST(&stamp)->Te = NTPtime_to_UTCld(ntp->xmt);
@@ -769,7 +777,7 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
 		else
 			inet_ntop(ss->ss_family,
 				&((struct sockaddr_in6 *)ss)->sin6_addr, ipaddr, INET6_ADDRSTRLEN);
-		verbose(VERB_DEBUG,"Received NTP broadcast packet from %s (Silent discard)",
+		verbose(VERB_DEBUG, "Received NTP broadcast packet from %s (Silent discard)",
 				ipaddr);
 		break;
 
@@ -788,7 +796,7 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
 		break;
 
 	default:
-		verbose(VERB_DEBUG,"Missed pkt due to invalid mode: mode = %d",
+		verbose(VERB_DEBUG, "Missed pkt due to invalid mode: mode = %d",
 			PKT_MODE(ntp->li_vn_mode));
 		err = 1;
 		break;
@@ -811,9 +819,11 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
  * An alternative ordering based on Tf is possible, but has more disadvantages.
  * Note:  older = in queue longer = smaller value.
  * 
- * Server halfstamps shouldn't normally occur but sometimes do: they are cleaned
- * safely in reasonable time by comparison on Tf against the fullstamp, since Ta
- * is not available for them.
+ * Server halfstamps shouldn't normally occur but sometimes do, for example if
+ * a c-halfstamp is cleaned, and its matching response arrives later. This can
+ * arise when a retry response returns before the (in fact not lost) original
+ * response. They are cleaned safely in reasonable time by comparison on Tf
+ * against the fullstamp, since Ta is not available for them.
  *
  * This routine makes NO assumptions on element ordering within the queue, and
  * in particular uses the stamp.id field (see insertandmatch_halfstamp)
@@ -937,14 +947,14 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	int attempt, maxattempts;
 	int err;
 	useconds_t attempt_wait;
-	char *c;
-	char refid [16];
+	unsigned char *c;		// essential this be unsigned !
+	unsigned char refid [16];
 
 	JDEBUG
 
 	err = 0;
-	attempt_wait = 500;					/* [mus]  500 suitable for LAN RTT */
-	maxattempts = 20;						// should be even  VM needs 20
+	attempt_wait = 1000;					/* [mus]  500 suitable for LAN RTT */
+	maxattempts = 20;						// should be even,  VM needs 20
 	// TODO manage peeers better
 	peer = handle->active_peer;
 	packet = create_radpcap_packet();
@@ -1061,26 +1071,52 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 			(long long unsigned) BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
 			(long long unsigned) BST(stamp)->Tf, (long long unsigned) stamp->id);
 
+
+	// TODO: add timingloop test: if NTP_SERV running, test if server's refid
+	//       not the daemon's own server IP
+
 	/* Monitor change in server: logging and quality warning flag */
 	if ((peer->ttl != stamp->ttl) || (peer->LI != stamp->LI) ||
 			(peer->refid != stamp->refid) || (peer->stratum != stamp->stratum)) {
-		if (stamp->qual_warning == 0)
-			stamp->qual_warning = 1;
+			
+		if (stamp->qual_warning == 0) stamp->qual_warning = 1;	// signal to algo
 
-		c = (char *) &(stamp->refid);
-		if (stamp->stratum == STRATUM_REFPRIM)
-			snprintf(refid, 32, "%c%c%c%c", *(c+3), *(c+2), *(c+1), *(c+0));
+		verbose(LOG_WARNING, "Change in NTP server info in stamp %lu (packet %u).",
+				peer->stamp_i, stats->ref_count);
+	
+	
+		/* Print out refid reliably [bit of a monster] */
+		c = (unsigned char *) &(peer->refid);
+		if (stamp->stratum <= STRATUM_REFPRIM) // a string if S0 (KissCode) or S1
+			snprintf(refid, 16, ".%c%c%c%c" ".", *(c+3), *(c+2), *(c+1), *(c+0));  // EOS+ 6 = 7 chars
 		else
-			snprintf(refid, 32, "%d.%d.%d.%d", *(c+3), *(c+2), *(c+1), *(c+0)); 
-		verbose(LOG_WARNING, "New NTP server info on packet %u:", stats->ref_count);
-		verbose(LOG_WARNING, "SERVER: %s, STRATUM: %d, TTL: %d, ID: %s, "
-				"LEAP: %u", stamp->server_ipaddr, stamp->stratum, stamp->ttl,
-				refid, stamp->LI);
+			snprintf(refid, 16, "%u.%u.%u.%u", *(c+3), *(c+2), *(c+1), *(c+0)); // EOS+ 4*3+3 = 16
+		verbose(LOG_WARNING, " OLD:: IP: %s  STRATUM: %d  LI: %u  RefID: %s  TTL: %d",
+			inet_ntoa(NTP_CLIENT(handle)->s_from.sin_addr), peer->stratum, peer->LI, refid, peer->ttl);
+
+		c = (unsigned char *) &(stamp->refid);
+		if (stamp->stratum <= STRATUM_REFPRIM) // a string if S0 (KissCode) or S1
+			snprintf(refid, 16, ".%c%c%c%c" ".", *(c+3), *(c+2), *(c+1), *(c+0));  // EOS+ 6 = 7 chars
+		else
+			snprintf(refid, 16, "%u.%u.%u.%u", *(c+3), *(c+2), *(c+1), *(c+0)); // EOS+ 4*3+3 = 16
+		verbose(LOG_WARNING, " NEW:: IP: %s  STRATUM: %d  LI: %u  RefID: %s  TTL: %d",
+				stamp->server_ipaddr, stamp->stratum, stamp->LI, refid, stamp->ttl);
+
+//		/* Verbosity for refid sanity checking */
+//		// Hack:  Check this format in all cases
+//		snprintf(refid, 16, "%c%c%c%c", *(c+3), *(c+2), *(c+1), *(c+0));
+//		verbose(LOG_WARNING, " Stratum-1 style RefID: %s", refid);
+//		//verbose(LOG_WARNING, "refid manually: IP: %d.%d.%d.%d  .%d",*(c+3), *(c+2), *(c+1), *(c+0), *(c-1));
+//		verbose(LOG_WARNING, "refid manually: %X", stamp->refid );
+//		verbose(LOG_WARNING, "refid manually: %X.%X.%X.%X", *(c+3), *(c+2), *(c+1), *(c+0));
+//		struct in_addr IPrefid;
+//		IPrefid.s_addr = htonl(stamp->refid);
+//		verbose(LOG_WARNING, "IP style refid the easy way: %s", inet_ntoa(IPrefid) );
+
 	}
 
-	/* Store the server refid will pass on to our potential NTP clients */
+
 	// TODO do we have to keep this in both structures ?
-	// TODO: the NTP_SERVER one should not be the refid but the peer's IP
 	NTP_SERVER(handle)->refid = stamp->refid;
 	peer->refid = stamp->refid;
 	peer->ttl = stamp->ttl;

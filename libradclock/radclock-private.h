@@ -93,7 +93,8 @@ struct radclock_shm {
 };
 
 #define SHM_DATA(x)		((struct radclock_data *)((void *)x + x->data_off))
-#define SHM_ERROR(x)	((struct radclock_error *)((void *)x + x->error_off))
+#define SHM_DATAold(x)		((struct radclock_data *)((void *)x + x->data_off_old))
+#define SHM_ERROR(x)		((struct radclock_error *)((void *)x + x->error_off))
 
 
 struct radclock {
@@ -116,7 +117,7 @@ struct radclock {
 
 	/* Pcap handler for the RADclock only */
 	pcap_t *pcap_handle;
-	int tsmode;
+	pktcap_tsmode_t tsmode;
 
 	/* Syscalls */
 	int syscall_set_ffclock;	/* FreeBSD specific, so far */
@@ -157,7 +158,7 @@ int descriptor_get_tsmode(struct radclock *clock, pcap_t *p_handle, int *kmode);
 /**
  * System specific call for setting the capture mode on the pcap capture device.
  */
-int descriptor_set_tsmode(struct radclock *clock, pcap_t *p_handle, int *mode);
+int descriptor_set_tsmode(struct radclock *clock, pcap_t *p_handle, int *mode, u_int custom);
 
 
 /**
@@ -168,7 +169,8 @@ int extract_vcount_stamp(
 		pcap_t *p_handle, 
 		const struct pcap_pkthdr *header, 
 		const unsigned char *packet,
-		vcounter_t *vcount);
+		vcounter_t *vcount,
+		struct pcap_pkthdr *rdhdr);
 
 int radclock_init_vcounter_syscall(struct radclock *clock);
 int radclock_init_vcounter(struct radclock *clock);
@@ -183,8 +185,9 @@ int shm_detach(struct radclock *clock);
 
 
 
-/* Read the RADclock absolute clock within the daemon. Two versions:
- * 	read_RADabs_native  leap-free absolute clock of the algo (formerly counter_to_time)
+/* Read the RADclock absolute clock within the daemon or user radclock.
+ * Two versions:
+ * 	read_RADabs_native  leap-free absolute clock of the algo
  * 	read_RADabs_UTS	  UTC absolute clock, which includes leaps
  * The clocks can be read into the future or past wrt the rad_data used.
  *
@@ -193,10 +196,11 @@ int shm_detach(struct radclock *clock);
  * the flag is set to PLOCAL_ACTIVE, with a typical default  1 = active = using plocal.
  * The radclock library routines instead use clock->local_period_mode  to select
  * per-clock preferences passed to read_RADabs_{native,UTC} .
+ * TODO: consider why defined as inline - is hardly ever used and perf not an issue.
  */
 
 /* Global setting for use of plocal refinement for in-daemon timestamping */
-# define PLOCAL_ACTIVE	1		//  {0,1} = {inactive, active}
+# define PLOCAL_ACTIVE	0		//  {0,1} = {inactive, active}
 
 static inline void
 read_RADabs_native(struct radclock_data *rad_data, vcounter_t *vcount,
@@ -206,9 +210,10 @@ read_RADabs_native(struct radclock_data *rad_data, vcounter_t *vcount,
 
 	do {
 		last  = rad_data->last_changed;
-		*time = *vcount * (long double)rad_data->phat + rad_data->ca;
-		if ( useplocal == 1 && rad_data->phat != rad_data->phat_local )
-			*time += (*vcount - last) * (long double)(rad_data->phat_local - rad_data->phat);
+		*time = *vcount * (long double)rad_data->phat + rad_data->ca; // no leaps in ca
+		if ( useplocal == 1 && (rad_data->phat != rad_data->phat_local) )
+			*time += ((long double)*vcount - (long double)last) *
+						 (long double)(rad_data->phat_local - rad_data->phat);
 	} while (last != rad_data->last_changed);
 }
 
@@ -217,14 +222,15 @@ read_RADabs_UTC(struct radclock_data *rad_data, vcounter_t *vcount,
 	long double *time, int useplocal)
 {
 	vcounter_t last;
-
+	
 	do {
 		last  = rad_data->last_changed;
 		*time = *vcount * (long double)rad_data->phat + rad_data->ca;
-		if ( useplocal == 1 && rad_data->phat != rad_data->phat_local ) {
-			//fprintf(stdout, "** read_RADabs_UTC:  without: %LF, ", *time);
-			*time += (*vcount - last) * (long double)(rad_data->phat_local - rad_data->phat);
-			//fprintf(stdout, "*** with:  %Lf (plocal = %d)\n", *time, useplocal);
+		if ( useplocal == 1 && (rad_data->phat != rad_data->phat_local) ) {
+			fprintf(stdout, "** read_RADabs_UTC:  without: %LF, ", *time);
+			*time += ((long double)*vcount - (long double)last) *
+						 (long double)(rad_data->phat_local - rad_data->phat);
+			fprintf(stdout, "*** with:  %Lf (plocal = %d)\n", *time, useplocal);
 		}
 	} while (last != rad_data->last_changed);
 	
@@ -242,5 +248,22 @@ void printout_raddata(struct radclock_data *rad_data);
 void printout_FFdata(struct ffclock_estimate *cest);
 
 
+#define	TWO32 ((long double)4294967296.0)	// 2^32
+
+static inline void
+bintime_to_ld(long double *time, struct bintime *bt)
+{
+	*time = bt->sec;
+	*time += (long double)(bt->frac) / TWO32 / TWO32;
+}
+ 
+static inline void
+ld_to_bintime(struct bintime *bt, long double *time)
+{
+	bt->sec = (time_t)*time;
+	bt->frac =  (*time - bt->sec) * TWO32 * TWO32;
+}
+ 
+     
 
 #endif

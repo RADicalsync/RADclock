@@ -1,6 +1,8 @@
 /*
-* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-*/
+ * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ *
+ * This file is part of the radclock program.
+ */
 
 RADclock documentation.
 Written by Darryl Veitch
@@ -56,6 +58,7 @@ what pcap passes up from the kernel packet capture.
 The name stems from the fact that it is the passage of packets, either outgoing or
 incoming, which triggers the raw timestamping and data capture, which in turn
 triggers everything else. If no packets flow, then on the whole nothing happens.
+[There are some exceptions to this to ensure awareness of starvation conditions.]
 
 Two other threads are started by MAIN depending on optional settings:
 	RADclock Server (NTP_SERV):  which serves external NTP timing requests from RADclock
@@ -105,7 +108,7 @@ The value (see radclock_daemon.h) of
 
 	handle->run_mode = RADCLOCK_SYNC_{NOTSET,DEAD,LIVE}
 
-is set in main according to the opinion of stampinput.c:is_live_source(handle),
+is set in main according to the opinion of  stampinput.c:is_live_source(handle),
 as a function of the input modes recorded in the configuration, with logic:
 if either ascii or pcap (trace) input selected,   // an error if both
 	run as dead
@@ -172,9 +175,9 @@ struct radclock_handle {
 	/* Virtual Machine management */
 	struct radclock_vm rad_vm;
 
-	/* Protocol related stuff on the client side (NTP, 1588, ...) */
+	/* Protocol related state on the daemon client side (NTP case) */
 	struct radclock_ntp_client		*ntp_client;
-	/* Protol related stuff (NTP, 1588, ...) */
+	/* Protocol related state on the daemon's server side (NTP case) */
 	struct radclock_ntp_server		*ntp_server;
 
 	/* Raw data capture buffer for libpcap */
@@ -185,6 +188,8 @@ struct radclock_handle {
 	/* Common data for the daemon */
 	int is_daemon;
 	radclock_runmode_t 		run_mode;
+	char hostIP[16];		// IP address of the host
+
 	/* UNIX signals */
 	unsigned int unix_signal;
 
@@ -208,8 +213,8 @@ struct radclock_handle {
 	void *algo_output; 	/* Defined as void* since not part of the library */
 								// sync_algo.h:bidir_output  structure
 	/* Stamp source */
-	void *stamp_source; /* Defined as void* since not part of the library */
-	/* Synchronisation Peers. Peers are of different nature (bidir, unidir) will cast */
+	void *stamp_source;  /* Defined as void* since not part of the library */
+	/* Synchronisation peers. Peers are of different nature (bidir, unidir) will cast */
 	void *active_peer;   /* Internal algo variables */
 	
 };
@@ -223,13 +228,23 @@ The only other global variable is verbose_data, needed by the verbosity system
 and available everywhere via an extern declaration in verbose.h.
 It is protected by alarm_{mutex,cwait} as discussed below.
 
+Shortcuts to access certain members of the handle are provided in radclock_daemon.h :
+#define NTP_CLIENT(x) (x->ntp_client)
+#define NTP_SERVER(x) (x->ntp_server)
+#define RAD_DATA(x)   (&(x->rad_data))
+#define RAD_ERROR(x)  (&(x->rad_error))
+#define RAD_VM(x)     (&(x->rad_vm))
+#define ADD_STATUS(x,y) (RAD_DATA(x)->status = RAD_DATA(x)->status | y )
+#define DEL_STATUS(x,y) (RAD_DATA(x)->status = RAD_DATA(x)->status & ~y )
+#define HAS_STATUS(x,y) ((RAD_DATA(x)->status & y ) == y )
 
 
 ==============================================================
 Main and Basic Execution Flow
 ============================
 
-RADclock is launched from the command line or a shell script.
+RADclock is launched from the command line, or via the startup script
+/etc/rc.d/radclock file  when run as a system service.
 To begin a description of the flow of execution, consider this summary of main.
 
  Simplified code:
@@ -242,6 +257,7 @@ To begin a description of the flow of execution, consider this summary of main.
 	handle = clock_handle;                         // make local copy of pointer
 	set_logger((logger_verbose_bridge))	// initialize logging
 	daemonize(,)								// fork/exit check unique, open logfiles, close stdin etc
+	finalize configuration					// read conf file (create if needed), adjust, and print it
 
 	if (!is_live_source(handle))   		// depends on selected inputs recorded in handle->conf
 		handle->run_mode = RADCLOCK_SYNC_DEAD;
@@ -254,7 +270,7 @@ To begin a description of the flow of execution, consider this summary of main.
 	if RADCLOCK_SYNC_DEAD
 		init_peer_stamp_queue(&peer);		// init radclock algo data
 	   while (1)
-			err = process_stamp			// consume data until no more
+			err = process_stamp				// consume data until no more
 	   }
 	else // RADCLOCK_SYNC_LIVE
 		while (starting or restarting)
@@ -268,16 +284,17 @@ To begin a description of the flow of execution, consider this summary of main.
  ----------------
 
 The critical configuration parameter here is handle->run_mode.
-If running live, radclock can run both as a deamon or not, but this is less important.
+If running live, radclock can run both as a daemon or not, but this is less important.
 The only real difference is the existence of a controlling terminal, and the location
-and naming of log files.
+and naming of log and output files.
 
 The key function regarding threads is start_live. It starts up the threads using
 the start_thread_{DATA_PROC,,,,} functions defined in pthread_mgr.c, and calls
 	rawdata.c:capture_raw_data,
 which calls pcap_loop(), thereby entering an infinite rawdata production
-loop under the control of MAIN. Meanwhile DATA_PROC is now active. It calls rawdata.c:process_stamp
-in an infinite loop to consume raw data as it becomes available.
+loop under the control of MAIN. Meanwhile DATA_PROC is now active.
+It calls rawdata.c:process_stamp in an infinite loop to consume raw data as it
+becomes available.
 
 If in infinite loop in start_live exits due to an error or SIGTERM signal (exit code err=1),
 then it soft-signals the threads to terminate themselves using the  handle->pthread_flag_stop
@@ -285,7 +302,7 @@ flags, and then uses pthread_join() on each of them so they return to MAIN on de
 Control then returns to main and RADclock exits.
 
 If start_live exits due to a SIGHUP (exit code err=0), this signals that RADclock
-should accept new parameter setting and continue on or `restart`.
+should accept new parameter settings and continue on or `restart`.
 In that case PROC_DATA will be kept alive as it contains the RADclock clock history.
 However it is best to terminate the other threads, as before, to enable a clean re-start.
 On exit rehash_daemon() reparses the configuration file and manages any updates,
@@ -309,25 +326,29 @@ which is a set of C-function library calls.
 
 A complete list of the calls used by RADclock (declared in thread.h) is:
 
-// Management: creation
+/* Management: creation */
 int pthread_create					(pthread_t*, const pthread_attr_t, funcptr,(void *)otherparam)
 int pthread_join						(pthread_t , void **)  // block on thread until it terminates
 int pthread_exit						(void *)					  // does not release related mutexes
-// Management: attribute control
+/* Management: attribute control */
 int pthread_attr_init				(pthread_attr_t*)
 int pthread_attr_setdetachstate	(pthread_attr_t*, int)
 int pthread_attr_getschedparam	(const pthread_attr_t*, struct sched_param*)
 int pthread_attr_setschedparam	(pthread_attr_t*, const struct sched_param*)
 int pthread_attr_setschedpolicy	(pthread_attr_t*, int)
-// Condition threads
+/* Condition threads */
 int pthread_cond_init 			(pthread_cond_t*, pthread_condattr_t)
+//	 Blocks on cond variable, also unlocks mutex
+//  When awakens, will again own mutex, but won't wake until mutex is freed !
+int pthread_cond_wait			(pthread_cond_t* cond, pthread_mutex_t* mutex)
+//  Unblocks thread blocked on cond.
+//  Doesn't also release mutex used in cond_wait call, must be done separately
 int pthread_cond_signal       (pthread_cond_t*, pthread_t)
-int pthread_cond_wait			(pthread_cond_t*, pthread_mutex_t* )  // unlocks mutex during blocking wait, locks when wakes up on signal !
 int pthread_cond_destroy		(pthread_cond_t*);
-// Mutexes
+/* Mutexes */
 int pthread_mutex_init			(pthread_mutex_t*, const pthread_mutexattr_t* )
 int pthread_mutex_destroy		(pthread_mutex_t*)
-int pthread_mutex_lock			(pthread_mutex_t*) 			// is a blocking function
+int pthread_mutex_lock			(pthread_mutex_t*) 		// is a blocking function
 int pthread_mutex_unlock		(pthread_mutex_t*)
 
 
@@ -354,7 +375,7 @@ the functions they are used in, and within which threads.
 mutex    			Data it protects      	Thread,  	fns involved,  	notes
 ------------------------------------------------------------------------------------------------
 	 wakeup_mutex  handle->wakeup_cond		MAIN			pthread_mutex_{init,destroy}
-					 handle->wakeup_checkfordata	TRIGGER		thread_trigger(), 		pthread_cond_signal
+				handle->wakeup_checkfordata	TRIGGER		thread_trigger(), 		pthread_cond_signal
 													 	DATA_PROC	thread_data_processing, pthread_cond_wait
 
 globaldata_mutex  handle->rad_data 			DATA_PROC	updates at end of sync_bidir()
@@ -417,7 +438,7 @@ and consumption.
 The problem is how to tell DATA_PROC that new data is available without polling somehow.
 It is TRIGGER that has the inside information, since it owns the socket that
 sent the packet and hence knows when packets return from it, or should have.
-One expects that when this userland return has occurred, pcap has also seen it in
+One expects that when this userland return has occurred, pcap has also seen it from bpf in
 the kernel and passed its copy to MAIN, who has already inserted it into the rd queue.
 The idea then is for TRIGGER to signal DATA_PROC when it has seen data, and then to check that
 DATA_PROC has picked it up.  The latter is achieved by toggling handle->wakeup_checkfordata .
@@ -433,10 +454,10 @@ pthread_trigger.c		  dummy_client[ if SYNCTYPE_PIGGY: just sleeps ]
 More details below.
 
 
-#	 globaldata_mutex:  Safety of access of RADclock clock data handle->rad_data
+#	globaldata_mutex:  Safety of access of RADclock clock data handle->rad_data
 This provides locking to prevent simultaneous access of global clock data.
 
-#	 vmutex:  Safety of access of verbose_data and log files written to by verbose.
+#	vmutex:  Safety of access of verbose_data and log files written to by verbose.
 Since verbose() is available everywhere and is used by all threads, the risk is high.
 
 #  alarm_mutex:	Passing of a SIGALRM caught in MAIN to TRIGGER for action.
@@ -452,8 +473,8 @@ See Unix Signalling below for more details.
 The only signals involved are the following:
 	SIGALRM: [alarm clock timer expired]			Need periodic timers for spy_loop and ntp_client
 	SIGHUP:	[controlling terminal closed]			Used to trigger config file reload & restart
-	SIGTERM:	[request termination or process] 	Used to shutdown RADclock and terminate.
-	SIGUSR1:	[user defined  							Used to signal closing a logfile.
+	SIGTERM:	[request termination of process] 	Used to shutdown RADclock and terminate.
+	SIGUSR1:	[user defined]  							Used to signal closing a logfile.
 	SIGUSR2:	[user defined]  							Just a placeholder currently.
 
 The catching of SIGHUP and SIGTERM signals (only) are recorded in handle->unix_signal .
@@ -484,7 +505,7 @@ radclock_main.c :
 		HUP:		clear stop flag for DATA_PROC, and avoid joining on it
 		
 pthread_mgr.c : init_thread_signal_mgt()
-		Block signals, called by all start_thread_{,,,,} functions
+		Block signals, called by all thread_{,,,,} `main` functions
 
 rawdata.c : spy_loop()
 		HUP,TERM:	exits on either
@@ -504,7 +525,6 @@ The assess_ calls are only used by ntp_client().
 
 These timing calls are set up in the appropriate thread (MAIN,TRIGGER) for
 (spy_loop,ntp_client) but the signals are still caught by MAIN as above.
-
 
 All the uses of signals above concern the MAIN thread with the exception of
 the periodic alarm used by ntp_client under the TRIGGER thread.
@@ -527,24 +547,30 @@ where alarm_{cwait,mutex} are defined in pthread_trigger.c .
 Trigger Thread Detail
 ============================
 
-The original idea of TRIGGER was that it would be a dumb packet sender only, with some
-retry intelligence only, completely independent of PROC.  However for efficiency reasons,
-this evolved into a much tighter coordination, where they takes turns. The benefit is that
-each can sleep most of the time, and that in the common case (if timeouts and retries are
-calibrated appropriately), the process is simple:
+The original idea of TRIGGER was that it would be a dumb packet sender (albeit with
+some independent loss-retry intelligence), completely independent of PROC.
+However for efficiency reasons, this evolved into a much tighter coordination,
+where they takes turns. The benefit is that each can sleep most of the time,
+and that in the common case (if timeouts and retries are calibrated appropriately),
+the process is simple:
+
   TRIGGER
-    - sleeps waiting for next grid point alarm,
-    - wakes on alarm, creates and sends a response
-    - wait a bit to try to get a reply, succeeds, typically it matches
-    - tells PROC it is finished this this grid point  (successfully or not)
+    - sleeps waiting for PROC to finish processing all available stamps
+    - Wakes up and prepares for the next grid point, waits for its alarm,
+    - wakes on the next alarm, creates and sends a request
+    	- wait for a timeout to try to get a reply, if not does limited retries
+    - simple tests to check if returning pkt a match, typically succeeds
+    - tells PROC it is finished with this grid point  (successfully or not)
   PROC
     - wakes up, tries to extract data from the queue
     - processes it, typically it will see the new full stamp available, will get it
     - tries to get more, fails  [ this part is inefficient: has to fail many times]
     - hands control back to TRIGGER, blocks
+
 A third benefit is that per-grid point actions, like starvation checking, can be performed
-in PROC where they are more natural, without running the risk of being performed very late
-in a batch if PROC stayed blocked until a new stamp arrived.
+in PROC where they are more natural, without running the risk of being performed
+very late in a batch if PROC stayed blocked until a new stamp finally (or never) arrived
+following a long gap in server availability.
 The downside is that they do not run truly independently.
 However they run independently enough to ensure robustness, if their coordination fails,
 nothing too bad will happen, no packets will be lost. The worst that can happen is
@@ -556,37 +582,238 @@ When TRIGGER is performing its work, including waiting (within ntp_client) for t
 next grid point alarm so it may attempt to send the next NTP request, it holds
 wakeup_mutex until it is finished dealing with the current grid point (successfully or not).
 After releasing it, it enters a signal-then-sleep loop until wakeup_checkfordata is released.
-Conversely, when DATA_PROC hold the lock it attempts to consume data (within
+Conversely, when DATA_PROC holds the lock it attempts to consume data (within
 process_stamp), and will not stop until there is no data left.
 Thus is is normal for process_stamp to complain about a lack of data regularly, and TRIGGER
 cannot generate new data until after process_stamp has given up and
-wakeup_checkfordata is released.
-In fact, DATA_PROC holds the lock essentially all the time.
-The toggle at the end of the while does allow TRIGGER to regain control.
-It also releases it within the pthread_cond_wait call, allowing TRIGGER (who
-has advanced from the signal-then-sleep loop at that point, and is blocking on
-pthread_mutex_lock, to proceed.
+wakeup_checkfordata (and the mutex) is released.
+
+Three threads interact here:  MAIN, PROC and TRIGGER.  It is frequently the case
+that the responses corresponding to requests sent by TRIGGER are seen by MAIN
+before TRIGGER. In the case of timeouts, it is possible for responses to even
+have been processed by PROC before TRIGGER finally sees them, belately, when
+dealing with the next grid point. Note that even a non-matching response seen
+by TRIGGER represents a packet arrival so it is sensible to signal PROC to deal
+with it.
+
+Within client_ntp.c, several important tasks are dealt with in a modular fashion:
+  maxattempts: the max number of retries, is set intelligently to avoid grid
+					points from overlapping
+  retry loop:  this aims to deal with loss, each retry is a NEW request,
+               taken after a timeout Assuming the previous ones were lost
+  second-try:  within a given retry, if response is seen but it doesnt match
+	            (due to a late earlier retry) a second read is taken try to catch it.
+  simple-pass through:  when any packet is seen, or none, the function exits and
+               signals PROC anyway, it should look and process whatever is there
+               (often more than what TRIGGER itself saw).
+  timeout adaption:  this is set as a function of minimum RTT with controls to
+               avoid extremes, excessive re-setting, and to ensure grid points dont overlap.
+				
+More details on each of these aspects are given in comment blocks within client_ntp.c
+
+The use of retries does add a lot of complexity, both to trigger and stamp matching
+(generating overlapping stamps, 'dangerous' c-halfstamps, and corresponding orphaned
+s-halfstamps also requiring cleaning), and it is explictly suppressed when poll_period = 1.
+               
+
+
+==============================================================
+Networking and Sockets
+=============================
+
+In the case of live capture, IP addresses of the host and server must be obtained
+so that a tight bpf filter can be defined to isolate the desired client<-->server
+packets.
+
+main
+	...
+	/* server specified on command line or in conf file */
+	config_print(LOG_NOTICE, handle->conf);	// confirm what handle->conf holds
+   ...
+	init_handle
+		create_source
+		  INPUT_OPS(src)->init(handle, src)    // init pointer mapped to livepcapstamp_init
+			 livepcapstamp_init
+				open_live
+				  - use conf->hostname  or if not discover it
+				  - find the associated IP address, store in handle->hostIP
+				  - build_BPFfilter(handle, fltstr, MAXLINE, hostIP, conf->time_server);
+				  - pcap_open_live
+
+If the configuration file does not exist it will be written, but will fail on
+the first pass as the server will not be picked up. Rerun to pick it up.
 
 
 
+The handle includes two variables for keeping state regarding the remote server
+the daemon synchronized to, and the network information required to achieve this.
+
+	/* Protocol related stuff on the client side (NTP, 1588, ...) */
+	struct radclock_ntp_client		*ntp_client;
+	/* Protocol related stuff on the server side (NTP, 1588, ...) */
+	struct radclock_ntp_server		*ntp_server;
+
+These have memory allocated in create_handle(), and are exclusively accessed via
+#define NTP_CLIENT(x) (x->ntp_client)
+#define NTP_SERVER(x) (x->ntp_server)
+
+
+The client side variable relates to protocol level information required for
+the daemon to maintain packet exchanges with the server.
+These exchanges are controlled by TRIGGER using functions in client_ntp.c .
+The data collected relates to address information, not to packet contents.
+The variable is initialized in  ntp_client_init(handle) as :
+
+	struct radclock_ntp_client {
+		int socket;								// socket(AF_INET, SOCK_DGRAM, 0)
+		struct sockaddr_in s_to;			// info for sending to server
+		struct sockaddr_in s_from;			// into received from  server
+	};
+
+with  s_to  members set as
+
+	struct sockaddr_in {		// structure defn in netinet/in.h
+		uint8_t sin_len;						// never set explicitly
+		sa_family_t     sin_family;		// PF_INET
+		in_port_t       sin_port;			//               conf->ntp_upstream_port
+		struct  in_addr sin_addr;			// IP address of conf->time_server
+		char    sin_zero[8];
+	};
+	
+Those of  s_from  are filled on a (roughly) per-pkt basis via the call to
+recvfrom in ntpclient()  (but only s_from.sin_addr ever used, for verbosity only).
+This address is typically the same as in  s_to.sin_addr.  It is not redundant
+howevever as it enables one to check that who you send to is indeed who is replying.
+Note that these addresses are not hton or ntoh converted.
+	
+Note that the conf->ntp_{up,down}stream_port parameters are not part of the
+configuration file system, and must be set on the command line if
+non-default values are desired.
+	
+	
+	
+The server side variable records state information describing the server itself.
+Four of these members, [refid,stratum,root{delay,dispersion}],  are taken from
+NTP''s ntp_pkt structure, however here the root members are doubles rather than
+uint32_t.  The minRTT member maps to the algo''s minRTT estimate.
+
+struct radclock_ntp_server {
+	int burst;
+	uint32_t refid;
+	unsigned int stratum;
+	double minRTT; 	   	/* minimum RTT [s] to the server we sync to */
+	double rootdelay;		   /* Cumulative RTThat from top of stratum hierarchy */
+	double rootdispersion;	/* Cumulative clock error from top of stratum hierarchy */
+};
+
+A thread based breakdown of all uses of ntp_server follows.
+
+# MAIN  :	  [ initializations in create_handle]
+stratum     : STRATUM_UNSPEC
+burst       : NTP_BURST
+
+
+# PROC  :     [ sets the server information ]
+[refid,stratum,root{delay,dispersion}]  :  in  create_stamp.c:get_network_stamp(),
+   values from successfully popped stamps are stored in NTP_SERVER. Thus this
+   information is refreshed on a per-stamp basis.
+
+Other information from the response packet is also stored in get_network_stamp (within the peer variable):
+[refid, ttl, stratum, LI]   (thus refid and stratum are duplicated currently).
+and server information verbosity lives here.
+      
+minRTT       : the algo (sync_bidir) inserts the RTT estimate
+burst        : reset to NTP_BURST in process_stamp if a counter change detected.
+
+# PROC  :     [ gets the server information ]
+root{delay,dispersion}  :  in update_FBclock (if activated)
+
+
+# TRIGGER :   [gets but not set, and uses burst internally]
+[refid,stratum]  : within create_ntp_request(), the values of the crafted outgoing
+                   request packets are set to [refid,stratum+1] wrt the NTP_SERVER values
+burst            : within ntp_client(), burst is a client-side state variable
+                   used to modify polling period on startup. It lives here since
+                   bursts are server specific, relating to a lack of path information
+                   at statup toward that server.
+
+# NTP_SERV	 [ gets but not set: all within thread_ntp_server() ]
+[refid,stratum]  : the values of the crafted outgoing response packets are set to
+                   [refid,stratum+1]  wrt the NTP_SERVER values
+
+rootdispersion   	  : used to calculate the rootdispersion inserted in response pkts
+[rootdelay,minRTT]  : used to calculate the rootdelay      inserted in response pkts
+
+# VM_UDP_SERV  [ get and set, both in receive_loop_vm ]
+burst 		            : reset to 8 if a counter change detected.
+root{delay,dispersion}  : use to set errors
 
 
 
+==============================================================
+NTP_SERV Thread Detail
+============================
+
+The RADclock server is currently focussed on supporting the essential functionality
+of NTP''s MODE_CLIENT, namely bidirectional  NTP request-response pairs.
+It ignores other modes, and furthermore is not guaranteed to fully, or properly,
+support the NTP standard.
+
+As a result the thread code is currently simple, all contained in a single function
+thread_ntp_server(void *c_handle) .  The thread does not signal other threads,
+nor interact with them in any way other than to access radclock and server
+parameters and status, and to watch for the thread STOP signal.
+The complete list of these read-only interactions is:
+
+Access handle members
+	 pthread_flag_stop	// enables order to STOP to be received by NTP_SERV
+	 clock        to read vcount via radclock_get_vcounter
+	 rad_data.    {phat, phat_local, last_changed, status==STARAD_UNSYNC }
+	 rad_error.   {error_bound_avg}
+	 ntp_server.  {refid, stratum, minRTT, root{delay,dispersion}} [ all except burst ]
+    conf.		  {ntp_downstream_port}
 
 
+Code execution summary:
+
+  init_thread_signal_mgt();  							// block existing signals
+  open DGRAM socket, set timeout and port
+    
+  while ( STOP flag not set for this thread )   // loop to do work until thread STOPped
+		  recvfrom(s_server, (void*) pkt_in, ....  // block on socket with timeout
+		  if (no data)
+		  		continue  // means timed out, enables test if thread should STOP
+		  
+		  radclock_get_vcounter(handle->clock, &vcount_rec); // take raw timestamp ASAP
+
+		  check external client request pkt is MODE_CLIENT
+		  prepare response pkt, fill all ntp_pkt fields
+		  sendto(s_server, (char*)pkt_out,.. )
+		    
+  pthread_exit(NULL)										// terminate
 
 
+# Work in progress
+LI setting:   currently a placeholder, not linked to the Leap second
+processing in process_stamp() under DATA_PROC.
+
+KISS code/refid :  when case refid=0, no KISS code is set
+
+Signalling the server is a RADserver
+ Current hack:
+  - RADclock client now tests for non-standard NTP_VERSION in create_stamp.c:bad_packet_server(),
+  logs a message on first 3 instances.
+  - RADclock server inserts a version of "5"
 
 
+ 
 
 
 ==============================================================
 DATA_PROC Thread Detail
 ============================
 
-==============================================================
-NTP_SERV Thread Detail
-============================
+
 
 ==============================================================
 VM_UDP_SERV Thread Detail

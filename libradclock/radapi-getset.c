@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux, Darryl Veitch
+ * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
  * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  * All rights reserved.
  *
@@ -365,13 +365,15 @@ radclock_get_min_RTT(struct radclock *clock, double *min_RTT)
 
 
 /* Functions to print out rad_data and FF_data neatly */
+
 void
 printout_FFdata(struct ffclock_estimate *cest)
 {
 	logger(RADLOG_NOTICE, "Pretty printing FF_data.");
-	logger(RADLOG_NOTICE, "\t period %llu", cest->period);
-	logger(RADLOG_NOTICE, "\t update_time: %llu.%llu [bintime]\t\t status: 0x%04X",
-		cest->update_time.sec, cest->update_time.frac, cest->status);
+	logger(RADLOG_NOTICE, "\t period %llu \t\t\t status: 0x%04X", cest->period, cest->status);
+	logger(RADLOG_NOTICE, "\t update_time: %llu.%llu [bintime] %.11Lf [dec]",
+		cest->update_time.sec, cest->update_time.frac,
+		((long double) cest->update_time.frac) / (TWO32 * TWO32) );
 	logger(RADLOG_NOTICE, "\t update_ffcount: %llu  secs_to_nextupdate: %u",
 		cest->update_ffcount, cest->secs_to_nextupdate);
 	logger(RADLOG_NOTICE, "\t errb_{abs,rate} = %lu  %lu",
@@ -388,9 +390,9 @@ printout_raddata(struct radclock_data *rad_data)
 	long double UTCtime_l, UTCtime_n;
 
 	logger(RADLOG_NOTICE, "Pretty printing rad_data");
-	logger(RADLOG_NOTICE, "\t phat: %10.10le\t phat_local: %l0.10e\t (diff: %8.2le)",
+	logger(RADLOG_NOTICE, "\t phat: %10.11le\t phat_local: %l0.10e\t (diff: %8.2le)",
 		rad_data->phat, rad_data->phat_local, rad_data->phat - rad_data->phat_local);
-	logger(RADLOG_NOTICE, "\t ca: %Lf\t ca_err: %10.3le,\t\t status: 0x%04X",
+	logger(RADLOG_NOTICE, "\t ca: %10.10Lf\t ca_err: %10.3le,\t\t status: 0x%04X",
 		rad_data->ca, rad_data->ca_err, rad_data->status);
 	logger(RADLOG_NOTICE, "\t last_changed: %llu  next_expected: %llu  (u_diff: %llu)",
 		rad_data->last_changed, rad_data->next_expected,
@@ -402,9 +404,9 @@ printout_raddata(struct radclock_data *rad_data)
 
 	/* Translate raw timestamp fields to UTC for convenient checking */
 	logger(RADLOG_NOTICE,"\t --------------------------------------");
-	read_RADabs_UTC(rad_data, &rad_data->last_changed,  &UTCtime_l, 1);
-	read_RADabs_UTC(rad_data, &rad_data->next_expected, &UTCtime_n, 1);
-	logger(RADLOG_NOTICE,"\t UTC at (last_changed, next_expected) = %10.6Lf  %10.6Lf (diff: %Lf)",
+	read_RADabs_UTC(rad_data, &rad_data->last_changed,  &UTCtime_l, 0);
+	read_RADabs_UTC(rad_data, &rad_data->next_expected, &UTCtime_n, PLOCAL_ACTIVE);
+	logger(RADLOG_NOTICE,"\t UTC at (last_changed, next_expected) = %10.11Lf  %10.9Lf (diff: %Lf)",
 		UTCtime_l, UTCtime_n, UTCtime_n - UTCtime_l);
 	logger(RADLOG_NOTICE,"-------------------------------------------------------------");
 }

@@ -1,0 +1,19 @@
+#!/usr/local/bin/bash
+
+if [ `id -u` -ne 0 ]; then
+        echo "Sorry `id -un`, this must be run as root"
+        exit 0
+fi
+
+OS=`uname -s`
+rcDir="/etc/rc.d"
+name="daemon_startup_script"
+
+if [ $OS == FreeBSD ]; then
+	echo "Installing startup script for $OS in $rcDir/radclock"
+
+	cp $OS/daemon_startup_script $rcDir/radclock
+	ls -l  $rcDir/radclock
+else
+	echo "This script only supports FreeBSD currently, you are on $OS! sorry."
+fi

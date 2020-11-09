@@ -392,7 +392,7 @@ update_FBclock(struct radclock_handle *handle)
  * results, etc.). We get rid of them here.
  */
 int
-insane_bidir_stamp(struct stamp_t *stamp, struct stamp_t *laststamp)
+insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct stamp_t *laststamp)
 {
 	/* Sanity check if two consecutive stamps are identical
 	 *
@@ -419,7 +419,7 @@ insane_bidir_stamp(struct stamp_t *stamp, struct stamp_t *laststamp)
 	/* Non existent stamps */
 	if ((BST(stamp)->Ta == 0) || (BST(stamp)->Tb == 0) ||
 			(BST(stamp)->Te == 0) || (BST(stamp)->Tf == 0)) {
-		verbose(LOG_WARNING, "Insane Stamp: bidir stamp with at least one 0 raw stamp");
+		verbose(LOG_WARNING, "Insane Stamp: bidir stamp with at least one 0 timestamp");
 		return (1);
 	}
 
@@ -432,21 +432,42 @@ insane_bidir_stamp(struct stamp_t *stamp, struct stamp_t *laststamp)
 	 * insane for sure:
 	 * 		stamp->Ta <= laststamp->Ta
 	 */
-	if (BST(stamp)->Ta <= BST(laststamp)->Tf)
-		verbose(VERB_DEBUG, "Insane Stamp: Successive stamps overlapping");
-
 	if (BST(stamp)->Ta <= BST(laststamp)->Ta) {
-		verbose(LOG_WARNING, "Successive NTP requests with non-strictly "
-				"increasing counter");
+		verbose(LOG_WARNING, "Insane Stamp: Successive NTP requests with"
+									" non-strictly increasing counter");
+		return (1);
+	}
+	if (BST(stamp)->Ta <= BST(laststamp)->Tf)
+		verbose(VERB_DEBUG, "Suspicious Stamp: Successive stamps overlapping");
+
+	/* Raw timestamps break causality */
+	if ( BST(stamp)->Tf < BST(stamp)->Ta ) {
+		verbose(LOG_WARNING, "Insane Stamp: raw timestamps non-causal");
 		return (1);
 	}
 
-	/* RAW stamps completely messed up */
-	if ((BST(stamp)->Tf < BST(stamp)->Ta) || (BST(stamp)->Te < BST(stamp)->Tb)) {
-		verbose(LOG_WARNING, "Insane Stamp: bidir stamp broke local causality");
+	/* Server timestamps break causality */
+	if ( BST(stamp)->Te < BST(stamp)->Tb ) {
+		verbose(LOG_WARNING, "Insane Stamp: server timestamps non-causal");
 		return (1);
 	}
-
+	/* Server timestamps equal: survivable, but a sign something strange */
+	if ( BST(stamp)->Te == BST(stamp)->Tf )
+		verbose(LOG_DEBUG, "Suspicious Stamp: server timestamps identical");
+		
+	/* RTC reset event, and server timestamps seem to predate it.
+	 * Algo doesn't run on insane stamps, so RTC reset can be caught subsequently
+	 * on a sane stamp.
+	 */
+//	struct ffclock_estimate cest;
+//	long double resettime;
+//	get_kernel_ffclock(handle->clock, &cest);
+//	bintime_to_ld(&resettime, &cest.update_time);
+//	if ( cest.secs_to_nextupdate == 0 && BST(stamp)->Tb < resettime ) {
+//		verbose(LOG_WARNING, "Insane Stamp: seems to predate last RTC reset");
+//		return (1);
+//	}
+	
 	/* This does not apply to SPY_STAMP for example */
 	if (stamp->type == STAMP_NTP) {
 		/* Sanity checks on null or too small RTT.
@@ -459,8 +480,8 @@ insane_bidir_stamp(struct stamp_t *stamp, struct stamp_t *laststamp)
 		 * 		 TSC  > 500000000
 		 */
 		if ((BST(stamp)->Tf - BST(stamp)->Ta) < 120) {
-			verbose(LOG_WARNING, "Insane Stamp: bidir stamp with RTT impossibly low (< 120)"
-					": %"VC_FMT" cycles", BST(stamp)->Tf - BST(stamp)->Ta);
+			verbose(LOG_WARNING, "Insane Stamp: bidir stamp with RTT impossibly "
+				"low (< 120): %"VC_FMT" cycles", BST(stamp)->Tf - BST(stamp)->Ta);
 			return (1);
 		}
 	}
@@ -542,13 +563,23 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	if (err == 1)
 		return (1);
 
+	/* **FreeBSD** Terminate if find a RTC reset, as currently can't handle this.
+	 * Detection can fail if reset occurs before the first setting of kernel data
+	 */
+	get_kernel_ffclock(handle->clock, &cest);
+	if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(handle, STARAD_UNSYNC)) {
+		verbose(LOG_WARNING, "RADclock noticed a kernel RTC reset on stamp %d, "
+									"will require a restart I'm afraid", peer->stamp_i);
+		return -1;
+	}
+	
 	/* If the new stamp looks insane just don't pass it for processing, keep
 	 * going and look for the next one. Otherwise, record it.
 	 */
 	// TODO: this should be stored in a proper structure under the clock handle, why?
 	// check if insane_bidir_stamp wont kick a stamp out after a leap, or leap screw ups
 	if (OUTPUT(handle, n_stamps) > 1) {
-		if (insane_bidir_stamp(&stamp, &laststamp))
+		if (insane_bidir_stamp(handle, &stamp, &laststamp))
 			return (0);
 	}
 	// Starvation release in case of a stamp passing through to algo
@@ -658,7 +689,11 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	stamp_noleap = stamp.st.bstamp;
 	stamp_noleap.Tb += OUTPUT(handle, leapsec_total);	// adding means removing
 	stamp_noleap.Te += OUTPUT(handle, leapsec_total);
+	//get_kernel_ffclock(handle->clock, &cest);				// check for RTC reset
+	// TODO: need to make  RTCreset = secs_to_nextupdate==0 && not yet pushed to kernel
+	//  easy and definitive way to to record a stamp_firstpush = stamp_i  in peer
 	process_bidir_stamp(handle, peer, &stamp_noleap, stamp.qual_warning);
+//						cest.secs_to_nextupdate == 0 && stamp_i > stamp_firstpush);
 
 	/* Update RADclock data with new algo outputs, and leap second update */
 	pthread_mutex_lock(&handle->globaldata_mutex);	// ensure consistent reads
@@ -678,13 +713,13 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	
 	pthread_mutex_unlock(&handle->globaldata_mutex);
 	
-	if ( VERB_LEVEL>2 ) {
+	if ( VERB_LEVEL>1 ) {
 		verbose(LOG_DEBUG, "In process_stamp");
 		printout_raddata(RAD_DATA(handle));
 	}
 
 	/*
-	 * RAD data copy actions, only relevant when running Live
+	 * RADdata copy actions, only relevant when running Live
 	 *		- IPC shared memory update
 	 *		- FFclock kernel parameters update
 	 *		- VM store update
@@ -725,21 +760,55 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 					peer->stamp_i = 0;
 					NTP_SERVER(handle)->burst = NTP_BURST;
 					strcpy(handle->clock->hw_counter, hw_counter);
-				// XXX TODO: Reinitialise the stats structure as well?
+				// TODO: algo needs to reset:  many things not done here, need big look
 					return (0);
 				}
 	#endif
 				fill_ffclock_estimate(&handle->rad_data, &handle->rad_error, &cest);
 				if ( VERB_LEVEL>2 ) printout_FFdata(&cest);
-				set_kernel_ffclock(handle->clock, &cest);
-				verbose(VERB_DEBUG, "FF kernel data has been updated.");
-				if ( VERB_LEVEL>2 ) { // check was updated as expected
+				
+				if (handle->conf->adjust_FFclock == BOOL_ON) {
+					set_kernel_ffclock(handle->clock, &cest);
+					//stamp_firstpush = stamp_i;
+					verbose(VERB_DEBUG, "FF kernel data has been updated.");
+				}
+				
+				/* Check FFclock data from kernel is what you sent over */
+//				if ( VERB_LEVEL>2 ) { // check was updated as expected
+//					get_kernel_ffclock(handle->clock, &cest);
+//					printout_FFdata(&cest);
+//				}
+				
+				/* Check accuracy of RAD->FF->RAD inversion for Ca read */
+				long double ca_compare, Ca_compare, CaFF;
+				struct radclock_data inverted_raddata;
+				if ( VERB_LEVEL>2 ) {
+				 	ca_compare = handle->rad_data.ca;
+				 	read_RADabs_UTC(&handle->rad_data, &handle->rad_data.last_changed, &Ca_compare, 0);
+					verbose(LOG_NOTICE, "RADdata from daemon");
+					printout_raddata(&handle->rad_data);
+					
 					get_kernel_ffclock(handle->clock, &cest);
-					printout_FFdata(&cest);
+					fill_radclock_data(&cest, &inverted_raddata);
+					verbose(LOG_NOTICE, "RADdata inverted from matching FFdata");
+					printout_raddata(&inverted_raddata);
+					
+					ca_compare -= inverted_raddata.ca;
+					read_RADabs_UTC(&inverted_raddata, &inverted_raddata.last_changed, &CaFF, 0);
+					Ca_compare -= CaFF;
+					verbose(LOG_NOTICE, " orig - inverted:   ca: %5.2Lf [ns],  Ca: %5.4Lf [ns]",
+							ca_compare*1e9, Ca_compare*1e9 );
 				}
 
+			}	// KV>=2
+
+			/* Adjust system FBclock if requested (and if not piggybacking on ntpd) */
+			if (handle->conf->adjust_FBclock == BOOL_ON) { // TODO: catch errors
+				update_FBclock(handle);
+				verbose(VERB_DEBUG, "Kernel FBclock has been set.");
 			}
-		}
+
+		}	// if !STARAD_UNSYNC
 
 		/* Update any virtual machine store if configured */
 		if (VM_MASTER(handle)) {
@@ -750,18 +819,12 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 			}
 		}
 
-		/* Adjust system FBclock if requested (and if not piggybacking on ntpd) */
-		if (handle->conf->adjust_FBclock == BOOL_ON) { // TODO: catch errors
-			update_FBclock(handle);
-			verbose(VERB_DEBUG, "Feed-back kernel clock has been set.");
-		}
-
    }  // RADCLOCK_SYNC_LIVE actions
 
 
 	/* Write algo output to matlab file, much less urgent than previous tasks */
 	print_out_files(handle, &stamp);
-	
+
 	/* View updated RADclock data and compare with NTP server stamps in nice
 	 * format. The first 10 then every 6 hours (poll_period can change, but
 	 * should be fine with a long term average, do not have to be very precise
@@ -770,7 +833,7 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	 * stamp.
 	 */
 	//poll_period = ((struct bidir_peer *)(handle->active_peer))->poll_period;
-	if (VERB_LEVEL && ((OUTPUT(handle, n_stamps) < 50) ||
+	if (VERB_LEVEL && ((OUTPUT(handle, n_stamps) < 10) ||
 			!(OUTPUT(handle, n_stamps) % ((int)(3600*6/peer->poll_period)))))
 	{
 		read_RADabs_UTC(&handle->rad_data, &(RAD_DATA(handle)->last_changed),
@@ -778,10 +841,10 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 		min_RTT = RAD_ERROR(handle)->min_RTT;
 		timediff = (double) (currtime - (long double) BST(&stamp)->Te);
 
-		verbose(VERB_CONTROL, "i=%ld: NTPserver stamp %.6Lf, RAD - NTPserver "
+		verbose(VERB_CONTROL, "i=%ld: Response timestamp %.6Lf, RAD - NTPserver "
 				"= %.3f [ms], RTT/2 = %.3f [ms]",
 				OUTPUT(handle, n_stamps) - 1,
-				BST(&stamp)->Te, timediff * 1000, min_RTT / 2 * 1000);
+				BST(&stamp)->Te, 1000*timediff, 1000*min_RTT / 2 );
 
 		error_bound = RAD_ERROR(handle)->error_bound;
 		error_bound_avg = RAD_ERROR(handle)->error_bound_avg;

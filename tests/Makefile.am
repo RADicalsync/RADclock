@@ -1,5 +1,5 @@
 #
-# Copyright (C) 2006-2012 Julien Ridoux
+# Copyright (C) 2006-2012 Julien Ridoux and Darryl Veitch
 # Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
 #
 # This file is part of the radclock program.
@@ -21,7 +21,7 @@
 
 AM_CPPFLAGS = -I$(top_srcdir)/libradclock/ -I$(top_srcdir)/radclock/
 
-check_PROGRAMS = test_timestamping test_shared_memory
+check_PROGRAMS = test_timestamping test_shared_memory test_FFclocks test_clockcompare
 
 test_timestamping_SOURCES = test_timestamping.c
 test_timestamping_LDADD = @LIBRADCLOCK_LIBS@
@@ -31,3 +31,10 @@ test_shared_memory_SOURCES = test_shared_memory.c
 test_shared_memory_LDADD = @LIBRADCLOCK_LIBS@
 test_shared_memory_LDFLAGS = -static
 
+test_FFclocks_SOURCES = test_FFclocks.c
+test_FFclocks_LDADD = @LIBRADCLOCK_LIBS@
+test_FFclocks_LDFLAGS = -static
+
+test_clockcompare_SOURCES = test_clockcompare.c
+test_clockcompare_LDADD = @LIBRADCLOCK_LIBS@
+test_clockcompare_LDFLAGS = -static

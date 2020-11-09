@@ -1,6 +1,8 @@
 /*
-* Copyright (C) 2016-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-*/
+ * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ *
+ * This file is part of the radclock program.
+ */
 
 RADclock documentation.
 Written by Darryl Veitch
@@ -47,7 +49,7 @@ main, and made globally accessible via
 	handle = clock_handle;									// a copy local to main
 
 Conf has 28 members (33 including expanding struct phyparam), best appreciated through
-the order given in the following defn which provides an initialisation to
+the order given in the following definition which provides an initialization to
 default or trivial values for all members except  verbose_level.
 
 void config_init(struct radclock_config *conf)
@@ -62,6 +64,7 @@ void config_init(struct radclock_config *conf)
 	conf->server_ipc				= DEFAULT_SERVER_IPC;
 	conf->synchro_type			= DEFAULT_SYNCHRO_TYPE;
 	conf->server_ntp				= DEFAULT_SERVER_NTP;
+	conf->adjust_FFclock			= DEFAULT_ADJUST_FFCLOCK;
 	conf->adjust_FBclock			= DEFAULT_ADJUST_FBCLOCK;
 	
 	/* Virtual Machine */
@@ -105,7 +108,6 @@ Also defined there are special macro types :
 #define CONFIG_QUALITY_{POOR,GOOD,EXCEL,UNKWN} = {0,1,2,3}
 used to emulate enumeration types of many of the parameters.
 
-
 Closely parallelling the config variables in conf are the use of keys:
 struct _key {
 	const char *label;
@@ -125,6 +127,20 @@ static struct _key keys[] = {
 contains 30 of these, of which only CONFIG_TEMPQUALITY, and the internal management
 variable CONFIG_UNKNOWN are not in conf, and only 5 conf members (see comments above)
 do not have counterparts in keys[].
+
+
+Note that parameters in conf that are absent from keys, such as {conf,log}file
+and ntp_{up,down}stream_port are absent from the configuration file, and must
+be set on the command line if non-default values are desired.
+
+The default values for log files live in verbose.h :
+#define DAEMON_LOG_FILE		"/var/log/radclock.log"
+#define BIN_LOG_FILE			"radclock.log"
+and are set in config_parse() and used in set_verbose(), whereas those for
+conf files live in config_mgr.h :
+#define DAEMON_CONFIG_FILE	"/etc/radclock.conf"
+#define BIN_CONFIG_FILE		"radclock.conf"
+and are set in config_parse().
 
 
 
@@ -149,19 +165,18 @@ The key management functions
 implicitly define the 3-tuples (label, keytype/code, parameter), and all
 parameters can then be accessed conveniently by switching on the keycode.
 
-An additional function
+An additional function returns the posn of a given label in its label array
 
-	int check_valid_option(char* value, char* labels[], int label_sz) // get posn of label in label array
+	int check_valid_option(char* value, char* labels[], int label_sz)
 
-is used for most (non-string) keys[] entries and also for these option types:
+This is used for most (non-string) keys[] entries and also for these option types:
 
 static char* labels_bool[] = { "off", "on" };						// map to codes { 0, 1 }
-static char* labels_verb[] = { "quiet", "normal", "high" };		// map to codes { 1, 2, 3 }
+static char* labels_verb[] = { "quiet", "normal", "high" };		// map to codes { 0, 1, 2 }
 static char* labels_sync[] = { "spy", "piggy", "ntp", "ieee1588", "pps","vm_udp", "xen", "vmware" };
 	// maps to #define SYNCTYPE_{SPY,PIGGY,NTP,1588,PPS,VM_UDP,XEN,VMWARE} = {0,1,2,3,4,5,6,7}
 
 where the array position plays a natural keycode role.
-
 
 
 
@@ -199,7 +214,7 @@ int update_data (struct radclock_config *conf, u_int32_t *mask, int codekey, cha
   - switches on codekey to scan all parameters
   - on input, mask conveys which parameters to ignore, ie not to take an update from file
     - usually set to UPDMASK_NOUPD=0x0  so that all params will be updated
-	 - exception is after command line parsing, to avoid overwritting command line inputs
+	 - exception is after command line parsing, to avoid overwriting command line inputs
   - on output, record in mask using SET_UPDATE if the input parameter was actually changed
   - so, on input mask says what you cant touch, on output what you did touch (if you could)
 
@@ -208,17 +223,15 @@ int update_data (struct radclock_config *conf, u_int32_t *mask, int codekey, cha
 The three top level `external` config functions, accessible since declared in
 config_mgr.h do the heavy lifting. They are:
 
-
 void config_init(struct radclock_config *conf);
   - called near beginning of main only
   - initializes all 28 conf members except verbose_level
-
   
 int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon);
   - called in radclock_main.c:{rehash_daemon,main} only
   - on exit, mask preserves the input 'cant update' and ALL the 'did update' params
 
- Simplified code:
+ Simplified code :
  ----------------
 	populate conf->{conffile,logfile} if not already present
 	 
@@ -242,7 +255,8 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon);
 
 void config_print(int level, struct radclock_config *conf);
   - called in radclock_main.c:{rehash_daemon,main} only
-  - straightforward hardwired printing of every element of conf (including all 6 phyparam members), except mask, but not in order of config_init .
+  - straightforward hardwired printing of every element of conf (including all
+    6 phyparam members), except mask, but not in the order of config_init .
 
 
 
@@ -304,7 +318,6 @@ To summarise changes config_print is called before exit.
 	 	 VERBOSE, adjust_FBclock	no specific action, done by call to update_data via config_parse
 		 no action at all:		DELTA_HOST, DELTA_NET:  (should be CONFIG_ASYM_{HOST,NET})
 
-		 
 	 To signal to the algo that parameters under its responsibility, namely
 		 TEMPQUALITY, POLLPERIOD   (results in call to update_peer)
 		 DELTA_{HOST,NET} 			(no current action)
@@ -329,7 +342,7 @@ Set to	UPDMASK_NOUPD  in  config_init
 		  	UPDMASK_NOUPD  in  pthread_dataproc.c:process_stamp
 		   param_mask     in  rehash_daemon
 Read in
-		   process_bidir_stamp
+		   main
 
 
 

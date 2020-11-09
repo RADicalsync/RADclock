@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2004-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2006-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  * Copyright (C) 2006-2012, Julien Ridoux
  * All rights reserved.
  *
@@ -61,7 +61,7 @@
 #define TS_LIMIT_POOR			0.000015
 // [sec] maximum timescale of validity of the Simple Skew Model (SKM)
 #define SKM_SCALE_EXCEL			1024.0
-#define SKM_SCALE_GOOD			64.0
+#define SKM_SCALE_GOOD			1024.0
 #define SKM_SCALE_POOR			512.0
 // bound on rate error regardless of time scale
 #define RATE_ERR_BOUND_EXCEL	0.0000001
@@ -73,8 +73,8 @@
 #define BEST_SKM_RATE_POOR		0.000001
 // Ratio defining offset based on TSLIMIT
 #define OFFSET_RATIO_EXCEL		6
-#define OFFSET_RATIO_GOOD		6
-#define OFFSET_RATIO_POOR		6
+#define OFFSET_RATIO_GOOD		10
+#define OFFSET_RATIO_POOR		10
 // plocal quality
 #define PLOCAL_QUALITY_EXCEL	0.0000008
 #define PLOCAL_QUALITY_GOOD	0.0000008

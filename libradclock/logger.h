@@ -30,7 +30,8 @@
 #define _LOGGER_H
 
 
-//TODO XXX : fix this and a single verbose/logger function, enumerify? 
+//TODO XXX : fix this and a single verbose/logger function, enumerify?
+// TODD:  need a way modulate verbosity level for dev/debugging
 #define RADLOG_ERR 			3
 #define RADLOG_WARNING 		4
 #define RADLOG_NOTICE 		5
