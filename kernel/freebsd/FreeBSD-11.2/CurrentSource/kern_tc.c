@@ -7,7 +7,6 @@
  * ----------------------------------------------------------------------------
  *
  * Copyright (c) 2011, 2015, 2016 The FreeBSD Foundation
- * All rights reserved.
  *
  * Portions of this software were developed by Julien Ridoux and Darryl Veitch
  * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
@@ -572,6 +571,7 @@ ffclock_init(void)
 
 	ffclock_updated = 0;
 	ffclock_status = FFCLOCK_STA_UNSYNC;
+	ffclock_boottime.sec = ffclock_boottime.frac = 0;
 	mtx_init(&ffclock_mtx, "ffclock lock", NULL, MTX_DEF);
 }
 
@@ -685,12 +685,12 @@ printout_FFtick(struct fftimehands *ffth)
  *	from tc_windup. This is simply mirrored here in the FF counter `read'.
  *
  * If a RTC reset occurs, then tc_windup is called within tc_setclock with a
- * bootime argument, passed here as reset_boottime. If non-NULL, FFclocks are
+ * bootime argument, passed here as reset_FBbootime. If non-NULL, FFclocks are
  * reset using this and the UTC reset calculated in tc_windup, and FFdata is
  * reinitialized to basic values.
  */
 static void
-ffclock_windup(unsigned int delta, struct bintime *reset_boottime,
+ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 					struct bintime *reset_UTC)
 {
 	struct ffclock_estimate *cest;
@@ -726,16 +726,42 @@ ffclock_windup(unsigned int delta, struct bintime *reset_boottime,
 	 * RTC reset: reset all FFclocks, and the global FFdata.
 	 * The period is initialized only if needed.
 	 */
-	if (reset_boottime) {
+	if (reset_FBbootime) {
+		memcpy(cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
+		
+		/*
+		 * Determine value of ffclock_boottime to maximize Upclock continuity.
+		 * sysclock = FB :  kernel will not see a jump now, better to align FF
+		 *                  and FB to minimize jump if sysclock changes
+		 *          = FF :  ensure continuity in FF and hence sysclock Uptime
+		 */
+		if (sysclock_active == SYSCLOCK_FB)
+			ffclock_boottime = *reset_FBbootime;
+		else {
+			/* First calculate what uptime would be at tick start, if not reset */
+			ffth->tick_time_lerp = fftimehands->tick_time_lerp;
+			ffclock_convert_delta(ffdelta, ffth->period_lerp, &bt);
+			bintime_add(&ffth->tick_time_lerp, &bt);
 
-		/* Align FF to the FB reset derived from the RTC reset */
-		ffclock_boottime = *reset_boottime;
+			/* Cancel out jump in UTC due to reset */
+			bintime_clear(&gap_lerp);
+			if (bintime_cmp(reset_UTC, &ffth->tick_time_lerp, >)) {
+				gap_lerp = *reset_UTC;
+				bintime_sub(&gap_lerp, &ffth->tick_time_lerp);
+				bintime_add(&ffclock_boottime, &gap_lerp);
+			} else {
+				gap_lerp = ffth->tick_time_lerp;
+				bintime_sub(&gap_lerp, reset_UTC);
+				bintime_sub(&ffclock_boottime, &gap_lerp);
+			}
+		}
+
+		/* For UTC clocks, align FF to the FB reset derived from the RTC reset */
 		ffth->tick_time = *reset_UTC;
 		ffth->tick_time_lerp = *reset_UTC;
 		ffth->tick_time_diff = *reset_UTC;
 
 		/* Reset FFdata to reflect the reset, taken to occur at tick-start. */
-		memcpy(cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
 		cest->update_time = *reset_UTC;
 		cest->update_ffcount = ffth->tick_ffcount;
 		if (cest->period == 0)		// if never set
@@ -762,9 +788,9 @@ ffclock_windup(unsigned int delta, struct bintime *reset_boottime,
 		upt = ffth->tick_time_lerp;
 		bintime_sub(&upt, &ffclock_boottime);
 		printf("FFclock processing RTC reset: UTC: %ld.%03lu"
-				 " boottime: %llu.%03lu  uptime: %llu.%03lu\n",
-				(long)ffth->tick_time.sec,
-				(unsigned long)(ffth->tick_time.frac / MS_AS_BINFRAC),
+				 " boottime: %llu.%03lu, uptime preserved at: %llu.%03lu\n",
+				(long)ffth->tick_time_lerp.sec,
+				(unsigned long)(ffth->tick_time_lerp.frac / MS_AS_BINFRAC),
 				(unsigned long long)ffclock_boottime.sec,
 				(long unsigned)(ffclock_boottime.frac / MS_AS_BINFRAC),
 				(unsigned long long)upt.sec,
@@ -790,7 +816,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_boottime,
 	 * Includes case of daemon update following a RTC reset that must be ignored.
 	 * Tick state update based on copy or simple projection from previous tick.
 	 */
-	if (ffclock_updated <= 0 && reset_boottime == NULL) {
+	if (ffclock_updated <= 0 && reset_FBbootime == NULL) {
 
 		/* Update native FFclock members {tick_time{_diff}, tick_error} */
 		memcpy(cest, &fftimehands->cest, sizeof(struct ffclock_estimate));
@@ -896,7 +922,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_boottime,
 
 			upt = ffth->tick_time_lerp;
 			bintime_sub(&upt, &ffclock_boottime);
-			printf(" (uptime preserved at: %llu.%03lu\n)",
+			printf(" (uptime preserved at: %llu.%03lu)\n",
 							(unsigned long long)upt.sec,
 			 				(long unsigned)(upt.frac / MS_AS_BINFRAC) );
 			 				
@@ -928,7 +954,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_boottime,
 					printf(" **  capping  gap_lerp:  %llu [s]\n",
 							(long long unsigned)gap_lerp.sec);
 				else
-					printf(" **  capping  gap_lerp:  %llu.%03lu [s]\n",
+					printf(" **  capping  gap_lerp:  %llu.%1lu [s]\n",
 							(long long unsigned)gap_lerp.sec,
 							(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
 
@@ -1127,10 +1153,7 @@ ffclock_last_tick(ffcounter *ffcount, struct bintime *bt, uint32_t flags)
 	struct fftimehands *ffth;
 	uint8_t gen;
 
-	/*
-	 * No locking but check generation has not changed. Also need to make
-	 * sure ffdelta is positive, i.e. ffcount > tick_ffcount.
-	 */
+	/* No locking but check generation has not changed. */
 	do {
 		ffth = fftimehands;
 		gen = ffth->gen;

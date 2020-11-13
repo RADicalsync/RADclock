@@ -1,6 +1,6 @@
 /*-
  * Copyright (c) 1990, 1991, 1993
- *	The Regents of the University of California.  All rights reserved.
+ *	The Regents of the University of California.
  *
  * This code is derived from the Stanford/CMU enet packet filter,
  * (net/enet.c) distributed as part of 4.3BSD, and code contributed
@@ -192,7 +192,7 @@ enum bpf_direction {
 // Extract FORMAT, FFRAW, FLAVOR, CLOCK  bits
 #define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
 #define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
-#define	BPF_T_FLAVOR(t)	((t) & BPF_T_FLAG_MASK)
+#define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
 #define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
 
 // Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl
@@ -237,13 +237,6 @@ struct bpf_hdr {
 #ifdef _KERNEL
 #define	MTAG_BPF		0x627066
 #define	MTAG_BPF_TIMESTAMP	0
-#endif
-
-#ifdef FFCLOCK
-/*
- * Feed-forward counter accessor.
- */
-#define	BP
 #endif
 
 /*

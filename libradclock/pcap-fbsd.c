@@ -94,7 +94,9 @@
 #define	BPF_T_FBCLOCK			0x1000
 #define	BPF_T_FFCLOCK			0x2000
 #define	BPF_T_CLOCK_MASK		0x3000
+#define	BPF_T_FLAG_MASK		0x0300
 #define	BPF_T_FORMAT(t)		((t) & BPF_T_FORMAT_MASK)
+#define	BPF_T_FLAG(t)			((t) & BPF_T_FLAG_MASK)
 #define	BPF_T_CLOCK(t)			((t) & BPF_T_CLOCK_MASK)
 #define	BIOCGTSTAMP	_IOR('B', 131, u_int)
 #define	BIOCSTSTAMP	_IOW('B', 132, u_int)
@@ -104,9 +106,7 @@
 #ifndef	BPF_T_FFCOUNTER
 #define	BPF_T_FFCOUNTER		0x0004
 #define	BPF_T_FORMAT_MAX		0x0004
-#define	BPF_T_FLAG_MASK		0x0100
 #define	BPF_T_CLOCK_MAX		0x2000
-#define	BPF_T_FLAG(t)			((t) & BPF_T_FLAG_MASK)
 #endif
 	
 
@@ -118,11 +118,11 @@
 #define	BPF_T_FAST				0x0100   // UTC,  FAST
 #define	BPF_T_MONOTONIC		0x0200	// UPTIME, !FAST Exception, redefined to allow compile
 #define	BPF_T_MONOTONIC_FAST	0x0300	// UPTIME,  FAST
-#define	BPF_T_FLAVOR_MASK		0x0300
+//#define	BPF_T_FLAVOR_MASK		0x0300
 #define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
 #define	BPF_T_FFDIFFCLOCK		0x4000	// read FF difference clock
 #define	BPF_T_FFRAW(t)			((t) & BPF_T_FFRAW_MASK)
-#define	BPF_T_FLAVOR(t)		((t) & BPF_T_FLAVOR_MASK)
+//#define	BPF_T_FLAVOR(t)		((t) & BPF_T_FLAVOR_MASK)
 #define	BPF_T_CLOCK_MASK		0x7000	// shouldnt be needed..
 #endif
 
@@ -205,7 +205,7 @@ decode_bpf_tsflags_KV3(u_int bd_tstamp)
 			logger(RADLOG_NOTICE, "     FFRAW = FFC");
 		}
 		
-		switch (BPF_T_FLAVOR(bd_tstamp)) {
+		switch (BPF_T_FLAG(bd_tstamp)) {
 		case BPF_T_NORMAL:
 			logger(RADLOG_NOTICE, "     FLAVOR = NORMAL [UTC, !FAST]");
 			break;

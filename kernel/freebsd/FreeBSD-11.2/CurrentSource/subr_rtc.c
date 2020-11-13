@@ -3,7 +3,6 @@
  * Copyright (c) 1982, 1990, 1993
  *	The Regents of the University of California.
  * Copyright (c) 2011 The FreeBSD Foundation
- * All rights reserved.
  *
  * This code is derived from software contributed to Berkeley by
  * the Systems Programming Group of the University of Utah Computer

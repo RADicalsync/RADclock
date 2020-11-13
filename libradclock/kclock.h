@@ -44,9 +44,23 @@ struct bintime {
 };
 #endif
 
+
 #if defined (__FreeBSD__) && defined (HAVE_SYS_TIMEFFC_H)
-#include <sys/timeffc.h>
-#else
+#include <sys/timeffc.h>			// in userland, defines syscalls only
+#endif
+
+/* This is THE interface data structure with FF code.
+ * It is also defined in timeffc.h, but only when included within the kernel.
+ * Instead, the independent defn here must correspond to it.
+ * This ensures radclock compilation even on systems with FFsupport which is
+ * absent, or with timeffc.h but out of date, so they can at least run dead.
+ * If timeffc.h is present and the definitions don't match, defining it via the include
+ * would not save the situation:  this would require KV dependent code.
+ * [Note timeffc.h exists even if the FFsupport not active in FreeBSD.]
+ *
+ * The native FFclock corresponds to the native RADclock Ca(t), namely the
+ * clock WithOut leaps since boot added in.
+*/
 struct ffclock_estimate {
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
 	vcounter_t	update_ffcount;	/* Counter value at last update */
@@ -59,7 +73,6 @@ struct ffclock_estimate {
 	int8_t	leapsec_total;			/* Sum of leap secs seen since clock start */
 	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
 };
-#endif
 
 int get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest);
 int set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest);

@@ -1,6 +1,5 @@
 /*-
  * Copyright (c) 2011 The University of Melbourne
- * All rights reserved.
  *
  * This software was developed by Julien Ridoux and Darryl Veitch
  * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
