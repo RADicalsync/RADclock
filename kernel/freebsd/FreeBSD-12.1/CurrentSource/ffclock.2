@@ -1,8 +1,8 @@
 .\" Copyright (c) 2011 The University of Melbourne
 .\" All rights reserved.
 .\"
-.\" This documentation was written by Julien Ridoux at the University of
-.\" Melbourne under sponsorship from the FreeBSD Foundation.
+.\" This documentation was written by Julien Ridoux and Darryl Veitch at the
+.\" University of Melbourne under sponsorship from the FreeBSD Foundation.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
 .\" modification, are permitted provided that the following conditions
@@ -27,7 +27,7 @@
 .\"
 .\" $FreeBSD$
 .\"
-.Dd November 21, 2011
+.Dd October 24, 2020
 .Dt FFCLOCK 2
 .Os
 .Sh NAME
@@ -46,7 +46,7 @@
 .Ft int
 .Fn ffclock_setestimate "struct ffclock_estimate *cest"
 .Sh DESCRIPTION
-The ffclock is an alternative method to synchronise the system clock.
+The ffclock is an alternative method to synchronize the system clock.
 The ffclock implements a feed-forward paradigm and decouples the timestamping
 and timekeeping kernel functions.
 This ensures that past clock errors do not affect current timekeeping, an
@@ -75,7 +75,7 @@ parameter estimates respectively.
 The
 .Fn ffclock_setestimate
 system call should be invoked by a single instance of a feed-forward
-synchronisation daemon.
+synchronization daemon.
 The
 .Fn ffclock_getestimate
 system call can be called by any process to retrieve the feed-forward clock
@@ -83,16 +83,11 @@ estimates.
 .Pp
 The feed-forward approach does not require that the clock estimates be retrieved
 every time a timestamp is to be converted into seconds.
-The number of system calls can therefore be greatly reduced if the calling
+The number of system calls can be greatly reduced if the calling
 process retrieves the clock estimates from the clock synchronisation daemon
 instead.
-The
-.Fn ffclock_getestimate
-must be used when the feed-forward synchronisation daemon is not running
-.Po see
-.Sx USAGE
-below
-.Pc .
+Furthermore, if bypass mode is active, or if packet timestamping is required,
+system calls can also be avoided for the reading of the ffcounter itself.
 .Pp
 The clock parameter estimates structure pointed to by
 .Fa cest
@@ -101,15 +96,16 @@ is defined in
 as:
 .Bd -literal
 struct ffclock_estimate {
-	struct bintime update_time;    /* Time of last estimates update. */
-	ffcounter      update_ffcount; /* Counter value at last update. */
-	ffcounter      leapsec_next;   /* Counter value of next leap second. */
-	uint64_t       period;         /* Estimate of counter period. */
-	uint32_t       errb_abs;       /* Bound on absolute clock error [ns]. */
-	uint32_t       errb_rate;      /* Bound on counter rate error [ps/s]. */
-	uint32_t       status;         /* Clock status. */
-	int16_t        leapsec_total;  /* All leap seconds seen so far. */
-	int8_t         leapsec;        /* Next leap second (in {-1,0,1}). */
+  struct bintime  update_time;       /* FFclock time of last update */
+  ffcounter       update_ffcount;    /* Counter value at last update */
+  ffcounter       leapsec_expected;  /* Estimated counter value of next leapsec */
+  uint64_t        period;            /* Estimate of current counter period */
+  uint32_t        errb_abs;          /* Bound on absolute clock error [ns] */
+  uint32_t        errb_rate;         /* Bound on relative counter period err [ps/s] */
+  uint32_t        status;            /* Clock status */
+  uint16_t        secs_to_nextupdate;/* Estimated wait til next update [s] */
+  int8_t          leapsec_total;     /* Sum of leapsecs seen since clock start */
+  int8_t          leapsec_next;      /* Next leap second (in {-1,0,1}) */
 };
 .Ed
 .Pp
@@ -164,14 +160,17 @@ error.
 .Xr date 1 ,
 .Xr adjtime 2 ,
 .Xr clock_gettime 2 ,
-.Xr ctime 3
+.Xr ctime 3 ,
+.Xr ffclock 4
 .Sh HISTORY
 Feed-forward clock support first appeared in
 .Fx 10.0 .
 .Sh AUTHORS
 .An -nosplit
 The feed-forward clock support was written by
-.An Julien Ridoux Aq jridoux@unimelb.edu.au
+.An Julien Ridoux
 in collaboration with
-.An Darryl Veitch Aq dveitch@unimelb.edu.au
+.An Darryl Veitch
 at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+It was later revised and extended by Darryl Veitch at the University of
+Technology Sydney (darryl.veitch@uts.edu.au).
