@@ -103,7 +103,7 @@ AC_SUBST([ADD_INCLS])
 AC_SUBST([ADD_LIBS])
 AC_SUBST([PACKAGE_NAME])
 AC_SUBST([PACKAGE_VERSION])
-AC_SUBST([CFLAGS], "${CFLAGS} -Wall -g -I /usr/src/sys")
+AC_SUBST([CFLAGS], "${CFLAGS} -Wall -g -I /usr/src/sys -I /usr/local/include/")
 
 
 
