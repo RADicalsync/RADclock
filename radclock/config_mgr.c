@@ -67,6 +67,7 @@ static struct _key keys[] = {
 	{ "verbose_level",			CONFIG_VERBOSE},
 	{ "synchronization_type",	CONFIG_SYNCHRO_TYPE},
 	{ "ipc_server",				CONFIG_SERVER_IPC},
+	{ "telemetry_server",		CONFIG_SERVER_TELEMETRY},
 	{ "ntp_server",				CONFIG_SERVER_NTP},
 	{ "vm_udp_server",			CONFIG_SERVER_VM_UDP},
 	{ "xen_server",				CONFIG_SERVER_XEN},
@@ -137,6 +138,7 @@ config_init(struct radclock_config *conf)
 	strcpy(conf->logfile, "");
 	strcpy(conf->radclock_version, PACKAGE_VERSION);
 	conf->server_ipc			= DEFAULT_SERVER_IPC;
+	conf->server_telemetry		= DEFAULT_SERVER_TELEMETRY;
 	conf->synchro_type		= DEFAULT_SYNCHRO_TYPE;
 	conf->server_ntp			= DEFAULT_SERVER_NTP;
 	conf->adjust_FFclock		= DEFAULT_ADJUST_FFCLOCK;
@@ -332,6 +334,19 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 	else
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_IPC),
 				labels_bool[conf->server_ipc]);
+
+
+	/* Saves telemetry data to disk /radclock */
+	fprintf(fd, "# Telemetry server.\n");
+	fprintf(fd, "# Saves telemetry data to /radclock .\n");
+	fprintf(fd, "#\ton : Start service - Generates telemetry data\n");
+	fprintf(fd, "#\toff: Stop service  - No Telemetry Data\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_TELEMETRY),
+				labels_bool[DEFAULT_SERVER_TELEMETRY]);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_TELEMETRY),
+				labels_bool[conf->server_telemetry]);
 
 	/* *
 	 * Virtual Machine Servers 
@@ -729,6 +744,22 @@ switch (codekey) {
 			conf->server_ipc = ival;
 		break;
 
+	case CONFIG_SERVER_TELEMETRY:
+		// If value specified on the command line
+		if ( HAS_UPDATE(*mask, UPDMASK_SERVER_TELEMETRY) ) 
+			break;
+		ival = check_valid_option(value, labels_bool, 2);
+		// Indicate changed value
+		if ( conf->server_telemetry != ival )
+			SET_UPDATE(*mask, UPDMASK_SERVER_TELEMETRY);
+		if ( ival < 0)
+		{
+			verbose(LOG_WARNING, "telemetry_server value incorrect. Fall back to default.");
+			conf->server_telemetry = DEFAULT_SERVER_TELEMETRY;
+		}
+		else
+			conf->server_telemetry = ival;
+		break;
 
 	case CONFIG_SYNCHRO_TYPE:
 		// If value specified on the command line
@@ -1312,6 +1343,7 @@ void config_print(int level, struct radclock_config *conf)
 	verbose(level, "Verbose level        : %s", labels_verb[conf->verbose_level]);
 	verbose(level, "Client sync          : %s", labels_sync[conf->synchro_type]);
 	verbose(level, "Server IPC           : %s", labels_bool[conf->server_ipc]);
+	verbose(level, "Server Telemetry     : %s", labels_bool[conf->server_telemetry]);
 	verbose(level, "Server NTP           : %s", labels_bool[conf->server_ntp]);
 	verbose(level, "Server VM_UDP        : %s", labels_bool[conf->server_vm_udp]);
 	verbose(level, "Server XEN           : %s", labels_bool[conf->server_xen]);

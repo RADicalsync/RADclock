@@ -73,6 +73,7 @@
 #include "stampoutput.h"
 #include "proto_ntp.h"
 #include "jdebug.h"
+#include "ring_buffer.h"
 
 #include <sys/sysctl.h>
 
@@ -209,6 +210,21 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 			break;
 		}
 	}
+
+	if (HAS_UPDATE(param_mask, UPDMASK_SERVER_TELEMETRY)) {
+		switch (conf->server_telemetry) {
+		case BOOL_ON:
+			err = telemetry_init(handle);
+			if (err)
+				return (1);
+			verbose(LOG_NOTICE, " Telemetry Agent ready and updating");
+			break;
+		case BOOL_OFF:
+			verbose(LOG_NOTICE, " Telemetry Agent no longer running");
+			telemetry_deactivate(handle);		// detach segment, but do not destroy!
+			break;
+		}
+	}	
 
 	if (HAS_UPDATE(param_mask, UPDMASK_SERVER_NTP)) {
 		switch (conf->server_ntp) {
@@ -447,6 +463,79 @@ daemonize(const char* lockfile, int *daemon_pid_fd)
 	return (1);
 }
 
+int 
+telemetry_init(struct radclock_handle *handle)
+{
+	struct stat sb;
+	// Make sure the directory is set to permission read, write and exe for all users. 
+	// As different plugins from other users need to read and move cache files around
+	mode_t old_mask = umask(0);
+	if (stat(TELEMETRY_CACHE_DIR, &sb) < 0) {
+		if (mkdir(TELEMETRY_CACHE_DIR, 0777) < 0) {
+			umask(old_mask);
+			logger(RADLOG_ERR, "Cannot create %s directory", TELEMETRY_CACHE_DIR);
+			return (1);
+		}
+	}
+
+	// Also make /radclock.old
+	if (stat(TELEMETRY_CACHE_OLD_DIR, &sb) < 0) {
+		if (mkdir(TELEMETRY_CACHE_OLD_DIR, 0777) < 0) {
+			umask(old_mask);
+			logger(RADLOG_ERR, "Cannot create %s directory", TELEMETRY_CACHE_OLD_DIR);
+			return (1);
+		}
+	}
+	umask(old_mask);
+
+
+	if (handle->telemetry_data.buffer == NULL) {
+		handle->telemetry_data.buffer_size = RADCLOCK_RING_BUFFER_BYTES;
+		handle->telemetry_data.buffer = malloc(RADCLOCK_RING_BUFFER_BYTES);
+		handle->telemetry_data.is_ipc_share = 0;
+		handle->telemetry_data.write_pos = 0;
+		handle->telemetry_data.packetId = 0;
+
+		handle->telemetry_data.holding_buffer_size = RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE;
+		handle->telemetry_data.holding_buffer = malloc(RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE);	
+
+		// Set shared memory read, write and fill heads to 0
+		init_shared_memory(handle->telemetry_data.buffer);
+
+		// memset(handle->telemetry_data.buffer + RADCLOCK_RING_BUFFER_READ_HEAD,    0, sizeof(int));
+		// memset(handle->telemetry_data.buffer + RADCLOCK_RING_BUFFER_WRITE_HEAD,   0, sizeof(int));
+		// memset(handle->telemetry_data.buffer + RADCLOCK_RING_BUFFER_FILL_HEAD,    0, sizeof(int));
+
+	} else
+		logger(RADLOG_NOTICE, "Telemetry shared memory buffer already exists\n", strerror(errno));
+
+	return (0);
+}
+
+int 
+telemetry_deactivate(struct radclock_handle *handle)
+{
+	fprintf(stdout, "Trying to deactivate telemetry ...");
+
+	if (handle->telemetry_data.buffer != NULL) {
+		// Free shared memory
+		handle->telemetry_data.buffer_size = 0;
+		free(handle->telemetry_data.buffer);
+		handle->telemetry_data.buffer = NULL;
+
+		// Free holding buffer
+		free(handle->telemetry_data.holding_buffer);
+		handle->telemetry_data.holding_buffer = NULL;
+		handle->telemetry_data.holding_buffer_size = 0;
+
+		fprintf(stdout, " Done.\n");
+	} else
+		fprintf(stdout, " already deactivated.\n");
+
+	return (0);
+}
+
+
 
 static struct radclock_handle *
 create_handle(struct radclock_config *conf, int is_daemon)
@@ -469,6 +558,19 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Output files */
 	handle->stampout_fd = NULL;
 	handle->matout_fd = NULL;
+
+	/* Telemetry initialisation */
+	handle->telemetry_data.buffer_size = 0;
+	handle->telemetry_data.buffer = NULL;
+	handle->telemetry_data.holding_buffer_size = 0;
+	handle->telemetry_data.holding_buffer = NULL;
+	// These values won't matter too much as the first push will set them
+	handle->telemetry_data.prior_status = 0;
+	handle->telemetry_data.prior_PICN = 0;
+	handle->telemetry_data.prior_uA = 0;
+	handle->telemetry_data.prior_leapsec_total = 0;
+	gettimeofday(&handle->telemetry_data.last_msg_time,NULL);
+
 
 	/*
 	 * Thread related stuff
@@ -736,6 +838,17 @@ init_handle(struct radclock_handle *handle)
 				return (1);
 			verbose(LOG_NOTICE, "IPC Shared Memory ready");
 		}
+
+		/*
+		 * Initialise Telemetry ring buffer agent
+		 */
+		if (handle->conf->server_telemetry == BOOL_ON) {
+			err = telemetry_init(handle);
+			if (err)
+				return (1);
+			verbose(LOG_NOTICE, "Telemetry agent ready");
+		}
+
 	}
 
 	/* Open input file from which to read TS data */
@@ -816,6 +929,19 @@ start_live(struct radclock_handle *handle)
 	   
 	}
 
+
+	/* TELEMETRY_CONSUMER */
+	switch (handle->conf->server_telemetry) {
+	case BOOL_ON:
+		err = start_thread_TELEMETRY_CON(handle);
+		if (err < 0)
+			return (1);
+		break;
+	case BOOL_OFF:
+	default:
+		break;
+	}
+
 	/* NTP_SERV */
 	switch (handle->conf->server_ntp) {
 	case BOOL_ON:
@@ -889,6 +1015,11 @@ start_live(struct radclock_handle *handle)
 	if (handle->conf->server_ntp == BOOL_ON) {
 		pthread_join(handle->threads[PTH_NTP_SERV], &thread_status);
 		verbose(LOG_NOTICE, "NTP server thread is dead.");
+	}
+
+	if (handle->conf->server_telemetry == BOOL_ON) {
+		pthread_join(handle->threads[PTH_TELEMETRY_CON], &thread_status);
+		verbose(LOG_NOTICE, "Telemetry server thread is dead.");
 	}
 
 	pthread_join(handle->threads[PTH_TRIGGER], &thread_status);

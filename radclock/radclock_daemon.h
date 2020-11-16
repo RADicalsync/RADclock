@@ -29,6 +29,7 @@
 #ifndef _RADCLOCK_DAEMON_H
 #define _RADCLOCK_DAEMON_H
 
+#include "ring_buffer.h"
 
 #ifdef VC_FMT
 #undef VC_FMT
@@ -140,6 +141,9 @@ struct radclock_handle {
 	/* Raw data capture buffer for 1588 error queue */
 	struct raw_data_queue *ieee1588eq_queue;
 
+	/* Telemetry shared memory handle */
+	Ring_Buffer_Producer_Data telemetry_data;	
+
 	/* Common data for the daemon */
 	int is_daemon;
 	radclock_runmode_t 		run_mode;
@@ -153,7 +157,7 @@ struct radclock_handle {
 	FILE* matout_fd;
 
 	/* Threads */
-	pthread_t threads[8];		/* TODO: quite ugly implementation ... */
+	pthread_t threads[9];		/* TODO: quite ugly implementation ... */
 	int	pthread_flag_stop;
 	pthread_mutex_t globaldata_mutex;
 	int wakeup_checkfordata;

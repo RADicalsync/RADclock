@@ -53,7 +53,7 @@
 #include "verbose.h"
 #include "jdebug.h"
 
-
+#include "telemetry_consumer.h"
 
 void
 init_thread_signal_mgt()
@@ -124,6 +124,117 @@ thread_trigger(void *c_handle)
 	pthread_exit(NULL);
 }
 
+
+void *
+thread_telemetry_consumer(void *c_handle)
+{
+	struct radclock_handle *handle;
+	int err;
+	JDEBUG
+
+	/* Deal with UNIX signal catching */
+	init_thread_signal_mgt();
+
+	/* Clock handle to be able to read global data */
+	handle = (struct radclock_handle *) c_handle;
+	
+	// Get pointer to shared memory space
+    void * shared_memory_handle = handle->telemetry_data.buffer;
+
+	// Allocate temp holding buffer
+    void * holding_buffer = malloc(RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE);
+    int holding_buffer_size = RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE;
+
+    void * comparison_holding_buffer = malloc(RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE);
+    int comparison_holding_buffer_size = RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE;
+
+	// Get the current read position
+    int ring_read_pos = get_shared_memory_read_header(shared_memory_handle);
+    int last_packet_id = -1;
+    int packets_recorded = 0;
+
+	struct timespec cond_wait_timespec;
+
+	while ((handle->pthread_flag_stop & PTH_TELEMETRY_CON_STOP) != PTH_TELEMETRY_CON_STOP)
+	{
+		// printf("Running telemetry consumer %d %d\n", holding_buffer, last_packet_id);
+		int read_bytes = 1;
+		// While packets exist in the ring buffer keep reading them
+        while (read_bytes > 0)
+            read_bytes = pull_telemetry_batch(&ring_read_pos, &last_packet_id, shared_memory_handle, &packets_recorded, 0, &holding_buffer_size, holding_buffer, -1);
+		
+		clock_gettime(CLOCK_REALTIME, &cond_wait_timespec);
+		struct timespec start_wait_timespec = {cond_wait_timespec.tv_sec, cond_wait_timespec.tv_nsec};
+		
+		// Attempt to create keep alive messages here. It shouldn't be an issue because:
+		// If the producer is very busy then we shouldn't need to create a keep alive as messages are coming in at a high rate
+		// In contrast, creating a keep alive will only occur when the producer is very slow on producing messages. 
+		// Therefore, we don't need to worry about the ring buffer filling
+		if (cond_wait_timespec.tv_sec - handle->telemetry_data.last_msg_time.tv_sec >= TELEMETRY_KEEP_ALIVE_SECONDS)
+		{
+			int conflict_detected = 1;
+			while (conflict_detected)
+			{
+				long double ref_timestamp = 0;
+
+				// This function will attempt to get data directly for the telemetry bypassing the ringbuffer
+				// This thread runs at a different rate and at the same time as the data proc thread
+				// Therefore, in order to ensure correct data without locks we will sample the data twice
+				// If the sampled data is the same then no conflicts were present. Try again if conflicts present
+				int written_bytes = push_telemetry(handle, 1, &holding_buffer_size, holding_buffer, &ref_timestamp);
+
+				// Second sample should use the timestamp retrieved from the first attempt so the data looks the same
+				int comparison_written_bytes = push_telemetry(handle, 1, &comparison_holding_buffer_size, comparison_holding_buffer, &ref_timestamp);
+
+				clock_gettime(CLOCK_REALTIME, &cond_wait_timespec);
+				if (cond_wait_timespec.tv_sec - handle->telemetry_data.last_msg_time.tv_sec >= TELEMETRY_KEEP_ALIVE_SECONDS)
+
+					if (written_bytes == comparison_written_bytes)
+					{
+						if (memcmp(holding_buffer, comparison_holding_buffer, written_bytes) == 0)
+						{
+							// Exit the loop naturally
+							conflict_detected = 0;
+							verbose(LOG_NOTICE, "Telemetry consumer - Created telemetry keep alive. %d seconds after last message.", cond_wait_timespec.tv_sec - handle->telemetry_data.last_msg_time.tv_sec);
+
+							// Sampled data was the same so we can use this data ( no overrides from parralel threads caused conflicts in data)
+							telemetry_consumer_callback_method(holding_buffer, handle->telemetry_data.packetId , written_bytes, ref_timestamp);
+
+							// The only prior data we change is the time since the last telemetry signal
+							// All other data is assumed to be unchanged. Otherwise it would have been triggered by the changing of that data
+							set_last_telemetry_signal_time(handle, cond_wait_timespec);
+						}
+					}
+				else
+					// In the process of getting new data a different thread has sent new data putting us under the keep alive threshold time
+					conflict_detected = 0;
+				
+				// Sanity check that we don't get stuck in an infinite loop for what ever reason
+				// If we are still trying to pull non conflicted data for longer than 2 seconds then print an error and exit loop
+				if (cond_wait_timespec.tv_sec - start_wait_timespec.tv_sec >= 2)
+				{
+					verbose(LOG_ERR, "Telemetry consumer - Unable to create telemetry keep alive message. Attempts exceeded 2 seconds.");
+					conflict_detected = 0;
+				}
+			}
+		}
+
+		// Buffer was empty - sleep for a few ms to give the producer time to add content
+        msleep(SAMPLE_FREQUENCY_MS);
+	}
+
+    // Release allocated memory
+    free(holding_buffer);
+
+
+    //detach from shared memory if we are using it
+	if (handle->telemetry_data.is_ipc_share)
+    	detach_shared_memory(shared_memory_handle);
+
+	/* Thread exit */
+	verbose(LOG_NOTICE, "Thread telemetry consumer is terminating.");
+	pthread_exit(NULL);
+}
 
 
 /*
@@ -323,3 +434,18 @@ int start_thread_FIXEDPOINT(struct radclock_handle *handle)
 	 return (err);
 }
 
+int
+start_thread_TELEMETRY_CON(struct radclock_handle *handle)
+{
+	int err;
+	pthread_attr_t thread_attr;
+	pthread_attr_init(&thread_attr);
+	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_JOINABLE);
+
+	verbose(LOG_NOTICE, "Starting data processing thread");
+	err = pthread_create(&(handle->threads[PTH_TELEMETRY_CON]), &thread_attr,
+			thread_telemetry_consumer, (void *)(handle));
+	if (err)
+		verbose(LOG_ERR, "pthread_create() returned error number %d", err);
+	 return (err);
+}

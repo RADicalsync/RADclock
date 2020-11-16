@@ -50,6 +50,7 @@
 #include "config_mgr.h"
 #include "pthread_mgr.h"
 #include "jdebug.h"
+#include "telemetry_producer.h"
 
 #include <sys/sysctl.h>		// TODO remove when pushing sysctl code within arch
 							// specific code
@@ -818,6 +819,11 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 				return (1);
 			}
 		}
+
+        /* Send telemetry data through ring buffer and eventually to NTC_CN */
+        if (handle->conf->server_telemetry == BOOL_ON) {
+            push_telemetry(handle, 0, NULL, NULL, NULL);
+        }
 
    }  // RADCLOCK_SYNC_LIVE actions
 

@@ -85,6 +85,7 @@
 #define DEFAULT_VERBOSE				1
 #define DEFAULT_SYNCHRO_TYPE		SYNCTYPE_NTP	// Protocol used 
 #define DEFAULT_SERVER_IPC			BOOL_ON			// Update the clock 
+#define DEFAULT_SERVER_TELEMETRY    BOOL_OFF		// Creates telemetry cache files in /radclock
 #define DEFAULT_SERVER_NTP			BOOL_OFF			// Don't act as a server
 #define DEFAULT_SERVER_VM_UDP		BOOL_OFF			// Don't Start VM servers
 #define DEFAULT_SERVER_XEN			BOOL_OFF
@@ -115,6 +116,7 @@
 /* Generic stuff */
 #define CONFIG_VERBOSE			10
 #define CONFIG_SERVER_IPC		11
+#define CONFIG_SERVER_TELEMETRY 12
 //#define CONFIG_				13
 #define CONFIG_SYNCHRO_TYPE	13
 #define CONFIG_SERVER_NTP		14
@@ -193,6 +195,7 @@
 #define UPDMASK_PID_FILE		0x0800000
 #define UPD_NTP_UPSTREAM_PORT	0x1000000
 #define UPD_NTP_DOWNSTREAM_PORT	0x2000000
+#define UPDMASK_SERVER_TELEMETRY 0x4000000
 
 
 #define HAS_UPDATE(val,mask)	((val & mask) == mask)	
@@ -215,6 +218,7 @@ struct radclock_config {
 	struct 	radclock_phyparam phyparam; /* Physical and temperature characteristics */ 
 	int 	synchro_type; 				/* multi-choice depending on client-side protocol */
 	int 	server_ipc; 				/* Boolean */
+	int 	server_telemetry;			/* Boolean */
 	int 	server_ntp;					/* Boolean */
 	int 	server_vm_udp;				/* Boolean */
 	int 	server_xen;					/* Boolean */
