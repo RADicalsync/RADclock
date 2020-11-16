@@ -58,6 +58,8 @@ radclock_SOURCES = \
 		pthread_dataproc.c \
 		pthread_trigger.c \
 		radclock_main.c \
+		radclock_telemetry.c \
+		ring_buffer.c \
 		stampinput.c \
 		stampinput_int.h \
 		stampinput-ascii.c \
