@@ -63,12 +63,13 @@ void packet_callback_binary(void * data, int packetId, int dataSize, double time
     // Open file
     char char_buffer[128];
     sprintf(char_buffer, "%s/bin_%s_%d_%f", TELEMETRY_CACHE_OLD_DIR, hostname, packetId, timestamp);
-
-    int fOut = open (char_buffer, O_WRONLY | O_CREAT, S_IRWXO | S_IRWXG | S_IRWXU);
+    mode_t old_mask = umask(0);
+    int fOut = open (char_buffer, O_WRONLY | O_CREAT, 0777 );
     if (fOut == -1)
     // FILE * fp = fopen(char_buffer, "w");
     // if (fp == 0)
     {
+        umask(old_mask);
         verbose(LOG_ERR,"Telemetry Consumer - Error creating cache file %s", char_buffer);
         return;
     }
@@ -76,6 +77,7 @@ void packet_callback_binary(void * data, int packetId, int dataSize, double time
     // fclose(fp);
     write(fOut, data, dataSize);
     close(fOut);
+    umask(old_mask);
 }
 
 void packet_callback_msgpuck(void * data, int packetId, int dataSize, long double timestamp)
@@ -109,10 +111,11 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
 
 	// Make sure the directory is set to permission read, write and exe for all users. 
 	// As different plugins from other users need to read and move cache files around
-
-    int fOut = open (buf, O_WRONLY | O_CREAT, S_IRWXO | S_IRWXG | S_IRWXU );
+    mode_t old_mask = umask(0);
+    int fOut = open (buf, O_WRONLY | O_CREAT, 0777 );
     if (fOut == -1)
     {
+        umask(old_mask);
         verbose(LOG_ERR,"Telemetry Consumer - Error creating cache file %s", buf);
         return;
     }
@@ -179,7 +182,8 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     // fwrite(buf, w - buf ,1, fp);
     // fclose(fp);
     write(fOut, buf, w - buf);
-    close(fOut);    
+    close(fOut);
+    umask(old_mask);
 }
 
 
