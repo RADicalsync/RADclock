@@ -349,8 +349,8 @@ int radclock_get_status(struct radclock *clock, unsigned int *status);
 
 
 /* View these as presets for bpf's _T_ based timestamp type specification.
- * Used for convenience by daemon and libprocesses to set all FORMAT, FFCOUNTER, FLAVOR, CLOCK
- * dimensions of bpf tstype.  All except PKTCAP_TSMODE_NOMODE set FLAVOR = NORMAL
+ * Used for convenience by daemon and libprocesses to set all FORMAT, FFCOUNTER, FLAG, CLOCK
+ * dimensions of bpf tstype.  All except PKTCAP_TSMODE_NOMODE set FLAG = NORMAL
  * (UTC and !FAST) and FFCOUNTER = FFC.
  * Descriptions below specify high level intent, whether fully possible given KV or not.
  * Other bpf tstype dimensions are specified in KV dependent code.

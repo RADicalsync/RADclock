@@ -54,11 +54,11 @@
  */
 #define SYNCTYPE_SPY 	0
 #define SYNCTYPE_PIGGY 	1
-#define SYNCTYPE_NTP	2
+#define SYNCTYPE_NTP		2
 #define SYNCTYPE_1588	3
-#define SYNCTYPE_PPS	4
+#define SYNCTYPE_PPS		4
 #define SYNCTYPE_VM_UDP 5
-#define SYNCTYPE_XEN	6
+#define SYNCTYPE_XEN		6
 #define SYNCTYPE_VMWARE	7
 
 /*

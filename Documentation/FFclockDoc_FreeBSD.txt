@@ -1809,7 +1809,7 @@ on the given descriptor, using the _T_ timestamp type flags :
 #define	BPF_T_NOFFC			0x0000   // no FFcount
 #define	BPF_T_FFC			0x0010   // want FFcount
 #define	BPF_T_FFRAW_MASK	0x0010
-// FLAVOR flags   [ can view bits as ORable flags ]
+// FLAG flags   [ can view bits as ORable flags ]
 #define	BPF_T_NORMAL		0x0000	// UTC, !FAST
 #define	BPF_T_FAST			0x0100   // UTC,  FAST
 #define	BPF_T_MONOTONIC	0x0200	// UPTIME, !FAST
@@ -1823,7 +1823,7 @@ on the given descriptor, using the _T_ timestamp type flags :
 #define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
 #define	BPF_T_CLOCK_MASK	0x7000
 
-// Extract FORMAT, FFRAW, FLAVOR, CLOCK  bits
+// Extract FORMAT, FFRAW, FLAG, CLOCK  bits
 #define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
 #define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
 #define	BPF_T_FLAG(t	)	((t) & BPF_T_FLAG_MASK)
@@ -1844,14 +1844,14 @@ on the given descriptor, using the _T_ timestamp type flags :
 									&& BPF_T_CLOCK(t)<=BPF_T_FBCLOCK )
 #endif
 
-In KV=3 the four dimensions of the flags: FORMAT, FFRAW, FLAVOR, CLOCK  are completely
+In KV=3 the four dimensions of the flags: FORMAT, FFRAW, FLAG, CLOCK  are completely
 independent. There are two central innovations compared to the pre-FF kernel:
 	i)  two kinds of timestamps: in seconds (ts) and in raw counter units (raw ts), that are simultaneously available
 	ii) for ts, multiple clocks can be selected from, including the specialist FF clocks
 For each dimension, the choices are:
  FORMAT:  (ts only)		specifies the standard resolution type, or to take no timestamp (NONE)
  FFAW:    (raw ts only) specifies if want it or not
- FLAVOR:  (ts only)		covers standard options of UTC versus UPTIME (time since boot), and
+ FLAG:  (ts only)		covers standard options of UTC versus UPTIME (time since boot), and
         FAST (use current tick-start time, dont bother taking a delta and interpolating intra-tick)
  CLOCK:	 (ts only)		select FB, or the type of FF desired, or adopt whatever the current
 		  system clock is  (could be FBCLOCK or FFCLOCK)
@@ -1915,7 +1915,7 @@ be acted on at this level) whereas sysclock_snap2bintime is called separately fo
 which can have any combination of the 4 _T_ dimensions.
 
 The input to timestamp generation is d->bd_stamp, which carries the desired
-BPF_T_{FORMAT,FFRAW,FLAVOR,CLOCK} flags given to pcap from the calling program.
+BPF_T_{FORMAT,FFRAW,FLAG,CLOCK} flags given to pcap from the calling program.
 In the radclock daemon,  d->bd_stamp  is get/set in pcap-fbsd.c:descriptor_{get,set}_tsmode
 using   ioctl(pcap_fileno(p_handle), BIOC{G,S}TSTAMP, (caddr_t)(&bd_tstamp)).
 Note that these ioctl commands are handled by bpf.c:bpfiotl(*dev, cmd, *data,.)

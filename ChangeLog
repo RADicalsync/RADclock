@@ -2,13 +2,23 @@
 ## RADClock versions Changelog 
 ## 
 
-- Version 0.4.0  - coming soon
-    * Oct 2020
-    * New release
-    * Extensive corrections and improvements
-    * Detailed documentation for developers
-    * ......
-    * Support for FreeBSD 11.2, 12.1 and FF kernel version 3
+- Version 0.4.0
+    * November 2020
+    * Synchronized release of RADclock V4, and FreeBSD FFclock V3
+    * RADclock
+    *  Extensive corrections and improvements to most code branches
+    *  Detailed documentation for developers, and user Guide
+    *  Independent setting of {FF,FB} daemons, and RADclock API serving
+    *  FreeBSD FFclock V3 support
+    *  Tools for installation, and corrected and improved daemon startup script
+    *  Stable Workaround for broken pcap 9.1.1_1
+    * FFclock [FreeBSD]
+    *  Kernel patches and complete files for FreeBSD 11.2, 12.1
+	 *  Improved FFclock <--> daemon API
+	 *  Corrections, improvements, reorganisation of core FF timecounter code
+	 *  Full bpf timestamping support for all FFclock and FBclock options
+	 *  Kernel bypass mode support for TSC counters
+	 *  FFdiff clock (difference clock available as an absolute clock read)
 
 
 - Version 0.3.3

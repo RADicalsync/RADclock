@@ -191,7 +191,7 @@ enum bpf_direction {
 #define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
 #define	BPF_T_CLOCK_MASK	0x7000
 
-/* Extract FORMAT, FFRAW, FLAVOR, CLOCK  bits */
+/* Extract FORMAT, FFRAW, FLAG, CLOCK  bits */
 #define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
 #define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
 #define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)

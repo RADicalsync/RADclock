@@ -433,10 +433,7 @@ sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
 
 	mtx_lock(&ffclock_mtx);
 	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
-	if (ffclock_updated == INT8_MAX)	// reset not yet processed by ffclock_windup
-		ffclock_updated = 1;
-	else
-		ffclock_updated++;
+	ffclock_updated++;
 	mtx_unlock(&ffclock_mtx);
 	
 	return (error);

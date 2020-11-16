@@ -476,12 +476,12 @@ ntp_client(struct radclock_handle *handle)
 		if (newtimeout > adjusted_period * 0.7)
 			newtimeout = adjusted_period * 0.7;		// ==> maxattempts=1 next time
 
-		if ( fabs(newtimeout - timeout) > 3e-3 ) {		// skip trivial updates
+		if ( fabs(newtimeout - timeout) > 4e-3 ) {		// skip trivial updates
 			tv.tv_sec = (time_t)newtimeout;
 			tv.tv_usec = (useconds_t)(1e6 * (newtimeout - (time_t)newtimeout));
 			setsockopt(NTP_CLIENT(handle)->socket, SOL_SOCKET, SO_RCVTIMEO,
 					(void *)(&tv), tvlen);
-			verbose(LOG_NOTICE, "NTPclient: Adjusting NTP client socket timeout "
+			verbose(VERB_DEBUG, "NTPclient: Adjusting NTP client socket timeout "
 						"from %3.0lf to %3.0lf [ms]", 1e3*timeout, 1e3*newtimeout);
 		}
 	}
