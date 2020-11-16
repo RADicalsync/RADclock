@@ -7,7 +7,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <fcntl.h>
-
+#include <sys/stat.h>
 // todo move telemetry defines and functions to their own file
 #define SAMPLE_FREQUENCY_MS 10 // Sample ring buffer every 10ms
 
