@@ -207,16 +207,16 @@ decode_bpf_tsflags_KV3(u_int bd_tstamp)
 		
 		switch (BPF_T_FLAG(bd_tstamp)) {
 		case BPF_T_NORMAL:
-			logger(RADLOG_NOTICE, "     FLAVOR = NORMAL [UTC, !FAST]");
+			logger(RADLOG_NOTICE, "     FLAG = NORMAL [UTC, !FAST]");
 			break;
 		case BPF_T_FAST:
-			logger(RADLOG_NOTICE, "     FLAVOR = FAST [UTC, FAST]");
+			logger(RADLOG_NOTICE, "     FLAG = FAST [UTC, FAST]");
 			break;
 		case BPF_T_MONOTONIC:
-			logger(RADLOG_NOTICE, "     FLAVOR = MONOTONIC [Uptime, !FAST]");
+			logger(RADLOG_NOTICE, "     FLAG = MONOTONIC [Uptime, !FAST]");
 			break;
 		case BPF_T_MONOTONIC_FAST:
-			logger(RADLOG_NOTICE, "     FLAVOR = MONOTONIC_FAST [Uptime, FAST]");
+			logger(RADLOG_NOTICE, "     FLAG = MONOTONIC_FAST [Uptime, FAST]");
 		}
 		
 		switch (BPF_T_CLOCK(bd_tstamp)) {
@@ -285,7 +285,7 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 //			logger(RADLOG_ERR, "Getting initial timestamping mode failed: %s", strerror(errno));
 //		decode_bpf_tsflags_KV3(bd_tstamp);
 
-		/* Set FORMAT, FFC, and FLAVOR type components */
+		/* Set FORMAT, FFC, and FLAG type components */
 		bd_tstamp = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL;
 		/* Set CLOCK type component*/
 		switch (*mode) {

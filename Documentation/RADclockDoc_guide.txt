@@ -340,9 +340,17 @@ Important examples of on-the-fly changes are
 	ntp_server					// to stop excessive incoming client traffic
 	verbose_level				// may want to set it high for a period to get more
 									// information if there is a problem, but not forever!
-									
+								
+Another approach to verbosity control is to set it to quiet (which yields no output after
+startup except serious errors), but to use the option to save raw output in pcap
+format (-w on the command line, or via the configuration file). This file can
+be replayed through any radclock offline with verbosity set to high, to obtain
+detailed output identical to what the original radclock would have produced
+(kernel interactions aside). It can be sent to the maintainer for analysis if
+there is an issue that needs examination.
 
 The configuration system of RADclock is documented in detail in RADclockDoc_config.txt.
+
 
 
 ==============================================================

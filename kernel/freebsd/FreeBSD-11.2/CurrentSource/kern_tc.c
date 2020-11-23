@@ -719,7 +719,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 	ffth->tick_ffcount = fftimehands->tick_ffcount + ffdelta;
 
 	/* Turn on regular diagnostic check */
-	if ( (ccc%1000 == 0 || ffclock_updated == 1 || ffclock_updated==INT8_MAX ) && ccc < 3001)
+	if ( (ccc%1000 == 0 || ffclock_updated == 1 ) && ccc < 3001 && 0)
 		if (!watch) watch = 1;	// activate verbosity watching if not already on
 
 	/*
@@ -796,7 +796,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 				(unsigned long long)upt.sec,
 				(long unsigned)(upt.frac / MS_AS_BINFRAC) );
 	
-		if (!watch) watch = 1;	// activate verbosity watching
+		//if (!watch) watch = 1;	// activate verbosity watching
 	}
 
 
@@ -907,12 +907,12 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		if (((ffclock_status & FFCLOCK_STA_UNSYNC) == FFCLOCK_STA_UNSYNC) &&
 		    ((cest->status & FFCLOCK_STA_UNSYNC) == 0) ) {
 			if (forward_jump) {
-				printf("** ffwindup:  Jumping monotonic FFclock forward by %llu.%03lu",
+				printf("ffwindup:  Jumping monotonic FFclock forward by %llu.%03lu",
 							(unsigned long long)gap_lerp.sec,
 			 				(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
 				bintime_add(&ffclock_boottime, &gap_lerp);
 			} else {
-				printf("** ffwindup:  Jumping monotonic FFclock backward by %llu.%03lu",
+				printf("ffwindup:  Jumping monotonic FFclock backward by %llu.%03lu",
 							(unsigned long long)gap_lerp.sec,
 			 				(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
 				bintime_sub(&ffclock_boottime, &gap_lerp);
@@ -927,7 +927,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 			 				(long unsigned)(upt.frac / MS_AS_BINFRAC) );
 			 				
 			bintime_clear(&gap_lerp); // signal nothing to do to period_lerp algo
-			if (!watch) watch = 1;	// activate verbosity watching
+			//if (!watch) watch = 1;	// activate verbosity watching
 		}
 
 
@@ -948,18 +948,10 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 			bt.sec = 0;
 			bt.frac = 5000000 * NS_AS_BINFRAC;
 			bintime_mul(&bt, cest->secs_to_nextupdate);
-			/* Determine the amount of gap to close over the next update interval */
-			if (bintime_cmp(&gap_lerp, &bt, >)) {
-				if (gap_lerp.sec > 1)
-					printf(" **  capping  gap_lerp:  %llu [s]\n",
-							(long long unsigned)gap_lerp.sec);
-				else
-					printf(" **  capping  gap_lerp:  %llu.%1lu [s]\n",
-							(long long unsigned)gap_lerp.sec,
-							(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
 
+			/* Determine the amount of gap to close over the next update interval */
+			if (bintime_cmp(&gap_lerp, &bt, >))
 				gap_lerp = bt;		// gap_lerp = min(gap_lerp, bt)
-			}
 
 			/* Convert secs_to_nextupdate to counter units */
 			frac = 0;
@@ -979,21 +971,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 				ffth->period_lerp += frac;
 			else
 				ffth->period_lerp -= frac;
-			
-//		   if (frac==0) {  // will be inactive if gap too small
-//				printf(" %lu **  warning, is a gap yet period_lerp not changed\n", ccc);
-//				printf("    **  gap_lerp.frac %llu [%lu [ns]],  ffdelta = %llu\n",
-//						(long long unsigned)gap_lerp.frac,
-//						(long unsigned)(gap_lerp.frac / NS_AS_BINFRAC),
-//						(long long unsigned)ffdelta );
-//				if (!watch) watch = 1;	// activate verbosity watching
-//			}
-//			else
-//				printf("    **  gap_lerp.frac %llu [%lu [ns]],  ffdelta = %llu\n",
-//					(long long unsigned)gap_lerp.frac,
-//					(long unsigned)(gap_lerp.frac / NS_AS_BINFRAC),
-//					(long long unsigned)ffdelta );
-				
+
 		}
 
 		ffclock_status = cest->status;	// unsets FFCLOCK_STA_UNSYNC
@@ -1013,45 +991,6 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		printf("   UPDATED TO --->\n");
 		printout_FFtick(ffth);				// updated
 		watch++;
-
-		/* testing of bypass code */
-//		int k;
-//		uint64_t rd1, rd2;
-//		u_int tc;
-//		ffcounter now;
-//
-//		sysctl_kern_ffclock_ffcounter_bypass = 0;
-//
-//		for (k=1; k<=2; k++) {
-//			rd1 = rdtsc();
-//			tc  = (uint64_t) timecounter->tc_get_timecount(timecounter);
-//			rd2 = rdtsc();
-//			printf("Bracket test for ffcounter call latency\n");
-//			printf(" rd1 = %llX\n tc  =  %llX\n rd2 = %llX  \t Diff = %llX  \t rd2-tc = %llX \n\n",
-//				(long long unsigned)rd1, (long long unsigned)tc, (long long unsigned)rd2,
-//				(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - tc) );
-//		}
-//		for (k=1; k<=2; k++) {
-//			rd1 = rdtsc();
-//			ffclock_read_counter(&now);
-//			rd2 = rdtsc();
-//			printf("Bracket test for ffclock_read_counter call latency\n");
-//			printf(" rd1 = %llX\n now = %llX\n rd2 = %llX  \t Diff = %llX  \t rd2-now = %llX \n\n",
-//				(long long unsigned)rd1, (long long unsigned)now, (long long unsigned)rd2,
-//				(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - now) );
-//		}
-//
-//		sysctl_kern_ffclock_ffcounter_bypass = 1;
-//
-//		for (k=1; k<=2; k++) {
-//			rd1 = rdtsc();
-//			ffclock_read_counter(&now);
-//			rd2 = rdtsc();
-//			printf("Bracket test for ffclock_read_counter call latency\n");
-//			printf(" rd1 = %llX\n now = %llX\n rd2 = %llX  \t Diff = %llX  \t rd2-now = %llX \n\n",
-//				(long long unsigned)rd1, (long long unsigned)now, (long long unsigned)rd2,
-//				(long long unsigned)(rd2 - rd1), (long long unsigned)(rd2 - now) );
-//		}
 		
 		if (watch>=3) watch = 0; 	//	switch watch off after context interval
 	}

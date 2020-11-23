@@ -333,8 +333,9 @@ thread_ntp_server(void *c_handle)
 		 * NTP_VERSION:  add an abusive value to enable RAD client<-->server testing
 		 */
 		memset((char *) pkt_out, 0, sizeof(struct ntp_pkt));
-		u_char ntpversion = 4;		// use instead of NTP_VERSION to signal 
-		
+		//u_char ntpversion = 5;		// use instead of NTP_VERSION to signal a RADclock server
+		u_char ntpversion = NTP_VERSION;
+	
 		/* NTP Standard requires special stratum and LI if server not in sync */
 		if (HAS_STATUS(handle, STARAD_UNSYNC)) {
 			pkt_out->stratum = 0;	// STRATUM_UNSPEC not used in responses, mapped to 0

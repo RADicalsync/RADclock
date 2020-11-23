@@ -136,8 +136,8 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 		logger(RADLOG_WARNING, "FFdata never set by kernel");
 		printout_FFdata(cest);
 	}
-	if (cest->secs_to_nextupdate == 0)
-		logger(RADLOG_WARNING, "FFdata in kernel not yet set by daemon");
+//	if (cest->secs_to_nextupdate == 0)
+//		logger(RADLOG_WARNING, "FFdata in kernel not yet set by daemon");
 
 	return (0);
 }

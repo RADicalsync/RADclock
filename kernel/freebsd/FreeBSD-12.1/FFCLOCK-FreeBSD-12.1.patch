@@ -1,6 +1,6 @@
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_ffclock.c /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/kern_ffclock.c
---- /usr/src/sys/kern/kern_ffclock.c	2020-11-13 13:46:28.264214000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/kern_ffclock.c	2020-11-13 13:46:28.219870000 +1100
+--- /usr/src/sys/kern/kern_ffclock.c	2020-11-16 13:23:11.726722000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/kern_ffclock.c	2020-11-16 13:23:11.673193000 +1100
 @@ -3,8 +3,7 @@
   *
   * Copyright (c) 2011 The University of Melbourne
@@ -139,39 +139,33 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_ffclock.c /root/F
 -
  	ffclock_abstime(NULL, bt, NULL,
  	    FFCLOCK_LERP | FFCLOCK_LEAPSEC | FFCLOCK_FAST);
-@@ -430,6 +433,10 @@
- 	mtx_lock(&ffclock_mtx);
- 	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
--	ffclock_updated++;
-+	if (ffclock_updated == INT8_MAX)	// reset not yet processed by ffclock_windup
-+		ffclock_updated = 1;
-+	else
-+		ffclock_updated++;
+@@ -432,4 +435,5 @@
+ 	ffclock_updated++;
  	mtx_unlock(&ffclock_mtx);
 +	
  	return (error);
  }
-@@ -464,5 +471,4 @@
+@@ -464,5 +468,4 @@
  sys_ffclock_getcounter(struct thread *td, struct ffclock_getcounter_args *uap)
  {
 -
  	return (ENOSYS);
  }
-@@ -471,5 +477,4 @@
+@@ -471,5 +474,4 @@
  sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
  {
 -
  	return (ENOSYS);
  }
-@@ -478,5 +483,4 @@
+@@ -478,5 +480,4 @@
  sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
  {
 -
  	return (ENOSYS);
  }
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/kern_tc.c
---- /usr/src/sys/kern/kern_tc.c	2020-11-13 13:46:28.265546000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/kern_tc.c	2020-11-13 13:46:28.221146000 +1100
+--- /usr/src/sys/kern/kern_tc.c	2020-11-16 13:23:11.727034000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/kern_tc.c	2020-11-16 13:23:11.673518000 +1100
 @@ -10,8 +10,7 @@
   *
   * Copyright (c) 2011, 2015, 2016 The FreeBSD Foundation
@@ -243,75 +237,9 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 + * should be used instead.
   * NOTE: bintime_mul requires u_int, but the value of the ffcounter may be
   * larger than the max value of u_int (on 32 bit architecture). Loop to consume
-@@ -640,14 +609,93 @@
+@@ -640,85 +609,213 @@
  }
  
-+
-+/* Function to print out FFtimehands tick state neatly */
-+static void
-+printout_FFtick(struct fftimehands *ffth)
-+{
-+	struct ffclock_estimate *cest;
-+	struct bintime bt;
-+
-+	cest = &ffth->cest; 			// access FFclock data member
-+	printf("-------------------------------------------------------------\n");
-+	printf("Pretty printing fftimehands tick data.\n");
-+	printf("cest: \n");
-+	printf("*    period %llu \t\t status: 0x%04X \n",
-+		(unsigned long long)cest->period, cest->status);
-+	printf("*    update_time: %llu.%llu [bintime]  %06lu [mus]\n",
-+		(unsigned long long)cest->update_time.sec,
-+		(unsigned long long)cest->update_time.frac,
-+			 (long unsigned)(cest->update_time.frac / MUS_AS_BINFRAC) );
-+	printf("*    update_ffcount: %llu = %#llX \t secs_to_nextupdate: %u \n",
-+		(unsigned long long)cest->update_ffcount,
-+		(unsigned long long)cest->update_ffcount, cest->secs_to_nextupdate);
-+	printf("*    errb_{abs,rate} = %lu  %lu\n",
-+		(unsigned long)cest->errb_abs, (unsigned long)cest->errb_rate);
-+	printf("*    leapsec_{expected,total,next}:  %llu  %d  %d\n",
-+		(unsigned long long)cest->leapsec_expected,
-+		cest->leapsec_total, cest->leapsec_next);
-+	printf("-------------------------------------------------------------\n");
-+	printf("   tick_time:      %llu.%llu [bintime]  %06lu [mus]\n",
-+		(unsigned long long)ffth->tick_time.sec,
-+		(unsigned long long)ffth->tick_time.frac,
-+			 (long unsigned)(ffth->tick_time.frac / MUS_AS_BINFRAC) );
-+	printf("   tick_time_lerp: %llu.%llu [bintime]  %06lu [mus]\n",
-+		(unsigned long long)ffth->tick_time_lerp.sec,
-+		(unsigned long long)ffth->tick_time_lerp.frac,
-+			 (long unsigned)(ffth->tick_time_lerp.frac / MUS_AS_BINFRAC) );
-+	printf("   tick_time_diff: %llu.%llu [bintime]  %06lu [mus]\n",
-+		(unsigned long long)ffth->tick_time_diff.sec,
-+		(unsigned long long)ffth->tick_time_diff.frac,
-+			 (long unsigned)(ffth->tick_time_diff.frac / MUS_AS_BINFRAC) );
-+	printf("   tick_error: %llu.%llu [bintime]  %06lu [mus]\n",
-+		(unsigned long long)ffth->tick_error.sec,
-+		(unsigned long long)ffth->tick_error.frac,
-+			 (long unsigned)(ffth->tick_error.frac / MUS_AS_BINFRAC) );
-+	printf("   tick_ffcount: %llu = %#llX\n",
-+		(unsigned long long)ffth->tick_ffcount,
-+		(unsigned long long)ffth->tick_ffcount);
-+	printf("   period_lerp %llu (u_diff: %llu %llu)\n",
-+		(unsigned long long)ffth->period_lerp,
-+		(unsigned long long)(ffth->period_lerp - cest->period),
-+		(unsigned long long)(cest->period - ffth->period_lerp));
-+	printf("   gen %u\n", (unsigned int)ffth->gen);
-+
-+	printf("-------------------------------------------------------------\n");
-+	bt = ffth->tick_time;
-+	bintime_sub(&bt,&cest->update_time);
-+	printf(" tick_time - update_time:  %lld.%.6lu [s]\n",
-+				(long long)bt.sec, (long unsigned)(bt.frac / MUS_AS_BINFRAC) );
-+	printf("-------------------------------------------------------------\n");
-+	bt = ffclock_boottime;
-+	printf(" ffclock_boottime:  %lld.%.6lu [s]\n",
-+				(long long)bt.sec, (long unsigned)(bt.frac / MUS_AS_BINFRAC) );
-+	printf("-------------------------------------------------------------\n");
-+	
-+}
-+
-+
 +
  /*
 - * Update the fftimehands.
@@ -344,7 +272,9 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +					struct bintime *reset_UTC)
  {
  	struct ffclock_estimate *cest;
-@@ -656,69 +704,195 @@
+ 	struct fftimehands *ffth;
+-	struct bintime bt, gap_lerp;
++	struct bintime bt, gap_lerp, upt;
  	ffcounter ffdelta;
  	uint64_t frac;
 -	unsigned int polling;
@@ -354,12 +284,6 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 -	 * Pick the next timehand, copy current ffclock estimates and move tick
 -	 * times and counter forward.
 -	 */
-+	/* verbosity control */
-+	static uint64_t ccc = 0;		// number of calls to this function
-+	static u_int watch = 0;			// signal that watch is on/off, and for how long
-+   int updatedcopy = ffclock_updated;
-+	struct bintime upt;
-+
  	forward_jump = 0;
 +	
 +	/* Prepare next fftimehand where tick state will be updated */
@@ -377,13 +301,6 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 -	ffth->tick_time = fftimehands->tick_time;
 -	ffclock_convert_delta(ffdelta, cest->period, &bt);
 -	bintime_add(&ffth->tick_time, &bt);
-+	/* Turn on regular diagnostic check */
-+	if ( (ccc%1000 == 0 || ffclock_updated == 1 || ffclock_updated==INT8_MAX ) && ccc < 3001)
-+		if (!watch) watch = 1;	// activate verbosity watching if not already on
- 
--	ffth->tick_time_lerp = fftimehands->tick_time_lerp;
--	ffclock_convert_delta(ffdelta, ffth->period_lerp, &bt);
--	bintime_add(&ffth->tick_time_lerp, &bt);
 +	/*
 +	 * RTC reset: reset all FFclocks, and the global FFdata.
 +	 * The period is initialized only if needed.
@@ -405,7 +322,9 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +			ffclock_convert_delta(ffdelta, ffth->period_lerp, &bt);
 +			bintime_add(&ffth->tick_time_lerp, &bt);
  
--	ffth->tick_ffcount = fftimehands->tick_ffcount + ffdelta;
+-	ffth->tick_time_lerp = fftimehands->tick_time_lerp;
+-	ffclock_convert_delta(ffdelta, ffth->period_lerp, &bt);
+-	bintime_add(&ffth->tick_time_lerp, &bt);
 +			/* Cancel out jump in UTC due to reset */
 +			bintime_clear(&gap_lerp);
 +			if (bintime_cmp(reset_UTC, &ffth->tick_time_lerp, >)) {
@@ -419,11 +338,12 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +			}
 +		}
  
+-	ffth->tick_ffcount = fftimehands->tick_ffcount + ffdelta;
 +		/* For UTC clocks, align FF to the FB reset derived from the RTC reset */
 +		ffth->tick_time = *reset_UTC;
 +		ffth->tick_time_lerp = *reset_UTC;
 +		ffth->tick_time_diff = *reset_UTC;
-+
+ 
 +		/* Reset FFdata to reflect the reset, taken to occur at tick-start. */
 +		cest->update_time = *reset_UTC;
 +		cest->update_ffcount = ffth->tick_ffcount;
@@ -458,8 +378,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +				(long unsigned)(ffclock_boottime.frac / MS_AS_BINFRAC),
 +				(unsigned long long)upt.sec,
 +				(long unsigned)(upt.frac / MS_AS_BINFRAC) );
-+	
-+		if (!watch) watch = 1;	// activate verbosity watching
++
 +	}
 +
 +
@@ -579,7 +498,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +		if (forward_jump) {		// monoFFclock < FFclock
  			gap_lerp = ffth->tick_time;
  			bintime_sub(&gap_lerp, &ffth->tick_time_lerp);
-@@ -729,50 +903,81 @@
+@@ -729,50 +826,72 @@
  
  		/*
 -		 * The reset from the RTC clock may be far from accurate, and
@@ -603,13 +522,13 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 -			if (forward_jump)
 +		    ((cest->status & FFCLOCK_STA_UNSYNC) == 0) ) {
 +			if (forward_jump) {
-+				printf("** ffwindup:  Jumping monotonic FFclock forward by %llu.%03lu",
++				printf("ffwindup:  Jumping monotonic FFclock forward by %llu.%03lu [s]",
 +							(unsigned long long)gap_lerp.sec,
 +			 				(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
  				bintime_add(&ffclock_boottime, &gap_lerp);
 -			else
 +			} else {
-+				printf("** ffwindup:  Jumping monotonic FFclock backward by %llu.%03lu",
++				printf("ffwindup:  Jumping monotonic FFclock backward by %llu.%03lu",
 +							(unsigned long long)gap_lerp.sec,
 +			 				(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
  				bintime_sub(&ffclock_boottime, &gap_lerp);
@@ -625,7 +544,6 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +			 				(long unsigned)(upt.frac / MS_AS_BINFRAC) );
 +			 				
 +			bintime_clear(&gap_lerp); // signal nothing to do to period_lerp algo
-+			if (!watch) watch = 1;	// activate verbosity watching
  		}
  
 -		ffclock_status = cest->status;
@@ -656,24 +574,15 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
  			bt.sec = 0;
 -			bt.frac = 5000000 * (uint64_t)18446744073LL;
 -			bintime_mul(&bt, polling);
--			if (bintime_cmp(&gap_lerp, &bt, >))
--				gap_lerp = bt;
 +			bt.frac = 5000000 * NS_AS_BINFRAC;
 +			bintime_mul(&bt, cest->secs_to_nextupdate);
++
 +			/* Determine the amount of gap to close over the next update interval */
-+			if (bintime_cmp(&gap_lerp, &bt, >)) {
-+				if (gap_lerp.sec > 1)
-+					printf(" **  capping  gap_lerp:  %llu [s]\n",
-+							(long long unsigned)gap_lerp.sec);
-+				else
-+					printf(" **  capping  gap_lerp:  %llu.%1lu [s]\n",
-+							(long long unsigned)gap_lerp.sec,
-+							(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
+ 			if (bintime_cmp(&gap_lerp, &bt, >))
+-				gap_lerp = bt;
++				gap_lerp = bt;		// gap_lerp = min(gap_lerp, bt)
  
 -			/* Approximate 1 sec by 1-(1/2^64) to ease arithmetic */
-+				gap_lerp = bt;		// gap_lerp = min(gap_lerp, bt)
-+			}
-+
 +			/* Convert secs_to_nextupdate to counter units */
  			frac = 0;
 +			frac -= 1;		// approximate 2^64 with (2^64)-1 to ease arithmetic
@@ -690,7 +599,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +			frac += gap_lerp.frac / ffdelta;	// very small gaps rounded to zero
  
  			if (forward_jump)
-@@ -780,26 +985,41 @@
+@@ -780,26 +899,29 @@
  			else
  				ffth->period_lerp -= frac;
 +
@@ -705,18 +614,6 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
  	if (++ogen == 0)
  		ogen = 1;
  	ffth->gen = ogen;
-+
-+	if ( watch ) {
-+		// if ( (fftimehands->tick_ffcount) < 3000*timehands->th_counter->tc_frequency && ccc<20) { // <10sec
-+		printf(" %lu\t ffwindup:  ffclock_updated = %d  Tick start = %llu \n",
-+				 ccc, updatedcopy, (long long unsigned)ffth->tick_ffcount );
-+		printout_FFtick(fftimehands);		// current
-+		printf("   UPDATED TO --->\n");
-+		printout_FFtick(ffth);				// updated
-+		watch++;
-+		if (watch>=3) watch = 0; 	//	switch watch off after context interval
-+	}
-+	ccc++;
 +
  	fftimehands = ffth;
 +
@@ -741,7 +638,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +ffclock_change_tc(struct timehands *th, u_int ncount)
  {
  	struct fftimehands *ffth;
-@@ -807,29 +1027,71 @@
+@@ -807,29 +929,71 @@
  	struct timecounter *tc;
  	uint8_t ogen;
 +	ffcounter now;
@@ -818,7 +715,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +		tc->tc_name, (unsigned long long)tc->tc_frequency);
  }
  
-@@ -843,8 +1105,5 @@
+@@ -843,8 +1007,5 @@
  	uint8_t gen;
  
 -	/*
@@ -828,7 +725,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +	/* No locking but check generation has not changed. */
  	do {
  		ffth = fftimehands;
-@@ -873,8 +1132,5 @@
+@@ -873,8 +1034,5 @@
  	uint8_t gen;
  
 -	/*
@@ -838,13 +735,13 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +	/* No locking but check generation has not changed */
  	do {
  		ffth = fftimehands;
-@@ -922,4 +1178,5 @@
+@@ -922,4 +1080,5 @@
  /*
   * Access to current ffcounter value.
 + * If bypass mode on, assume the counter is TSC, and access it directly.
   */
  void
-@@ -930,4 +1187,9 @@
+@@ -930,4 +1089,9 @@
  	unsigned int gen, delta;
  
 +	if (sysctl_kern_ffclock_ffcounter_bypass == 1) {
@@ -854,14 +751,14 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +	
  	/*
  	 * ffclock_windup() called from tc_windup(), safe to rely on
-@@ -1055,5 +1317,5 @@
+@@ -1055,5 +1219,5 @@
   * when the FFCLOCK option is defined.
   */
 -int sysclock_active = SYSCLOCK_FBCK;
 +int sysclock_active = SYSCLOCK_FB;
  
  /* Internal NTP status and error estimates. */
-@@ -1062,6 +1324,8 @@
+@@ -1062,6 +1226,8 @@
  
  /*
 - * Take a snapshot of sysclock data which can be used to compare system clocks
@@ -872,7 +769,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 + * If bypass mode on, assume the counter is TSC, and access it directly.
   */
  void
-@@ -1073,23 +1337,29 @@
+@@ -1073,23 +1239,29 @@
  	unsigned int delta, gen;
  #ifdef FFCLOCK
 -	ffcounter ffcount;
@@ -909,14 +806,14 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +		ffi->tick_time_diff = ffth->tick_time_diff;
  		ffi->tick_time_lerp = ffth->tick_time_lerp;
  		ffi->period = ffth->cest.period;
-@@ -1098,6 +1368,4 @@
+@@ -1098,6 +1270,4 @@
  		cest = ffth->cest;
  #endif
 -		if (!fast)
 -			delta = tc_delta(th);
  		atomic_thread_fence_acq();
  	} while (gen == 0 || gen != th->th_generation);
-@@ -1107,10 +1375,9 @@
+@@ -1107,10 +1277,9 @@
  
  	/* Record feedback clock status and error. */
 -	clock_snap->fb_info.status = time_status;
@@ -931,7 +828,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +	fbi->error = bt;
  
  #ifdef FFCLOCK
-@@ -1118,18 +1385,19 @@
+@@ -1118,18 +1287,19 @@
  		clock_snap->ffcount += delta;
  
 -	/* Record feed-forward clock leap second adjustment. */
@@ -962,7 +859,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +	}
  #endif
  }
-@@ -1137,9 +1405,10 @@
+@@ -1137,9 +1307,10 @@
  /*
   * Convert a sysclock snapshot into a struct bintime based on the specified
 - * clock source and flags.
@@ -975,7 +872,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +    int whichclock, int wantFast, int wantUptime, int wantLerp, int wantDiff)
  {
  	struct bintime boottimebin;
-@@ -1150,12 +1419,13 @@
+@@ -1150,12 +1321,13 @@
  
  	switch (whichclock) {
 -	case SYSCLOCK_FBCK:
@@ -992,7 +889,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +		if (!wantUptime) {
  			getboottimebin(&boottimebin);
  			bintime_add(bt, &boottimebin);
-@@ -1163,26 +1433,29 @@
+@@ -1163,26 +1335,29 @@
  		break;
  #ifdef FFCLOCK
 -	case SYSCLOCK_FFWD:
@@ -1034,14 +931,14 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +			// else Diff
  		break;
  #endif
-@@ -1295,4 +1568,6 @@
+@@ -1295,4 +1470,6 @@
   * Step our concept of UTC.  This is done by modifying our estimate of
   * when we booted.
 + * Since this function sets the FB clock, if FFCLOCK defined, ensure all
 + * timestamp calls are in fact from the FB clock for consistency.
   */
  void
-@@ -1303,8 +1578,16 @@
+@@ -1303,8 +1480,16 @@
  
  	timespec2bintime(ts, &bt);
 +#ifdef FFCLOCK
@@ -1058,7 +955,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +#endif
  	bintime_sub(&bt, &bt2);
  
-@@ -1317,5 +1600,9 @@
+@@ -1317,5 +1502,9 @@
  	sleepq_chains_remove_matching(sleeping_on_old_rtc);
  	if (timestepwarnings) {
 +#ifdef FFCLOCK
@@ -1068,7 +965,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +#endif
  		log(LOG_INFO,
  		    "Time stepped from %jd.%09ld to %jd.%09ld (%jd.%09ld)\n",
-@@ -1369,7 +1656,5 @@
+@@ -1369,7 +1558,5 @@
  	else
  		ncount = 0;
 -#ifdef FFCLOCK
@@ -1077,7 +974,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +
  	th->th_offset_count += delta;
  	th->th_offset_count &= th->th_counter->tc_counter_mask;
-@@ -1408,4 +1693,7 @@
+@@ -1408,4 +1595,7 @@
  	bt = th->th_offset;
  	bintime_add(&bt, &th->th_boottime);
 +#ifdef FFCLOCK
@@ -1085,7 +982,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +#endif
  	i = bt.sec - tho->th_microtime.tv_sec;
  	if (i > LARGE_STEP)
-@@ -1424,4 +1712,7 @@
+@@ -1424,4 +1614,7 @@
  	/* Now is a good time to change timecounters. */
  	if (th->th_counter != timecounter) {
 +		printf("Changing tc counter on this tc-tick:  %s = %#X --> %s = %#X \n",
@@ -1093,26 +990,21 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +			timecounter->tc_name, ncount);
  #ifndef __arm__
  		if ((timecounter->tc_flags & TC_FLAGS_C2STOP) != 0)
-@@ -1435,5 +1726,5 @@
+@@ -1435,5 +1628,5 @@
  		    (((uint64_t)timecounter->tc_counter_mask + 1) / 3));
  #ifdef FFCLOCK
 -		ffclock_change_tc(th);
 +		ffclock_change_tc(th,ncount);
  #endif
  	}
-@@ -1475,8 +1766,10 @@
- 	atomic_store_rel_int(&th->th_generation, ogen);
- 
-+static time_t time_old = 1;
-+
- 	/* Go live with the new struct timehands. */
+@@ -1478,5 +1671,5 @@
  #ifdef FFCLOCK
  	switch (sysclock_active) {
 -	case SYSCLOCK_FBCK:
 +	case SYSCLOCK_FB:
  #endif
  		time_second = th->th_microtime.tv_sec;
-@@ -1484,7 +1777,15 @@
+@@ -1484,7 +1677,9 @@
  #ifdef FFCLOCK
  		break;
 -	case SYSCLOCK_FFWD:
@@ -1123,15 +1015,9 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 +		time_second = bt.sec;
 +		ffclock_getbinuptime(&bt);
 +		time_uptime = bt.sec;
-+		if ( time_uptime < 1 || time_uptime < time_old ) {
-+			printf("** time_uptime strange:  (old,new) %ld  %ld\n",
-+					time_old, time_uptime);
-+		}
-+		time_old = time_uptime;
-+		
  		break;
  	}
-@@ -2103,5 +2404,5 @@
+@@ -2103,5 +2298,5 @@
  		c_delta /= divi;
  		if (c_delta > cpu_tick_frequency) {
 -			if (0 && bootverbose)
@@ -1139,8 +1025,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
  				printf("cpu_tick increased to %ju Hz\n",
  				    c_delta);
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/subr_rtc.c /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/subr_rtc.c
---- /usr/src/sys/kern/subr_rtc.c	2020-11-13 13:46:28.266267000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/subr_rtc.c	2020-11-13 13:46:28.222013000 +1100
+--- /usr/src/sys/kern/subr_rtc.c	2020-11-16 13:23:11.727965000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/kern/subr_rtc.c	2020-11-16 13:23:11.673689000 +1100
 @@ -6,5 +6,4 @@
   *	The Regents of the University of California.
   * Copyright (c) 2011 The FreeBSD Foundation
@@ -1170,8 +1056,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/subr_rtc.c /root/FFker
  }
  
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.c /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/net/bpf.c
---- /usr/src/sys/net/bpf.c	2020-11-13 13:46:28.278676000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/net/bpf.c	2020-11-13 13:46:28.226813000 +1100
+--- /usr/src/sys/net/bpf.c	2020-11-16 13:23:11.730662000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/net/bpf.c	2020-11-16 13:23:11.689275000 +1100
 @@ -3,5 +3,5 @@
   *
   * Copyright (c) 1990, 1991, 1993
@@ -1562,8 +1448,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.c /root/FFkernel_Wo
  	hdr.bh_datalen = pktlen;
  	hdr.bh_hdrlen = hdrlen;
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.h /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/net/bpf.h
---- /usr/src/sys/net/bpf.h	2020-11-13 13:46:28.279252000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/net/bpf.h	2020-11-13 13:46:28.227711000 +1100
+--- /usr/src/sys/net/bpf.h	2020-11-16 13:23:11.730922000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/net/bpf.h	2020-11-16 13:23:11.689616000 +1100
 @@ -3,5 +3,5 @@
   *
   * Copyright (c) 1990, 1991, 1993
@@ -1623,7 +1509,7 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.h /root/FFkernel_Wo
 +#define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
 +#define	BPF_T_CLOCK_MASK	0x7000
 +
-+/* Extract FORMAT, FFRAW, FLAVOR, CLOCK  bits */
++/* Extract FORMAT, FFRAW, FLAG, CLOCK  bits */
 +#define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
 +#define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
  #define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
@@ -1671,8 +1557,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.h /root/FFkernel_Wo
  };
  #ifdef _KERNEL
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/sys/_ffcounter.h /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/sys/_ffcounter.h
---- /usr/src/sys/sys/_ffcounter.h	2020-11-13 13:46:28.277078000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/sys/_ffcounter.h	2020-11-13 13:46:28.224635000 +1100
+--- /usr/src/sys/sys/_ffcounter.h	2020-11-16 13:23:11.729109000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/sys/_ffcounter.h	2020-11-16 13:23:11.687593000 +1100
 @@ -3,8 +3,7 @@
   *
   * Copyright (c) 2011 The University of Melbourne
@@ -1685,8 +1571,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/sys/_ffcounter.h /root/FFke
   *
   * Redistribution and use in source and binary forms, with or without
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/sys/timeffc.h /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/sys/timeffc.h
---- /usr/src/sys/sys/timeffc.h	2020-11-13 13:46:28.276611000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/sys/timeffc.h	2020-11-13 13:46:28.223731000 +1100
+--- /usr/src/sys/sys/timeffc.h	2020-11-16 13:23:11.728941000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-12.1/sys/sys/timeffc.h	2020-11-16 13:23:11.684259000 +1100
 @@ -3,8 +3,7 @@
   *
   * Copyright (c) 2011 The University of Melbourne
