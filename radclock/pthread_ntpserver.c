@@ -67,33 +67,32 @@
 void
 add_auth_key(char ** key_data, char * buff)
 {
-        char crypt_type[16];
-        char crypt_key[64];
-        int key_id = -1;
+	char crypt_type[16];
+	char crypt_key[64];
+	int key_id = -1;
 
-			if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key ) == 3)
-                        {
-				printf("Reading key %d %s %s\n", key_id, crypt_type, crypt_key);
-                                if (0 < key_id && key_id < 129)
-                                {
-                                        // Data for this key has already been inserted. Warn user
-                                        if (key_data[key_id])
-                                                verbose(LOG_WARNING, "Authentication file read: Key id % has already been allocated", key_id);
+	if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key ) == 3)
+	{
+		if (0 < key_id && key_id < 129)
+		{
+			// Data for this key has already been inserted. Warn user
+			if (key_data[key_id])
+				verbose(LOG_WARNING, "Authentication file read: Key id % has already been allocated", key_id);
 
-                                        if (strcmp("MD5", crypt_type) == 0)
-                                        {
-                                                char * new_crypt_str = malloc(sizeof(char)*(strlen(crypt_key)+1));
-                                                strcpy(new_crypt_str, crypt_key);
-                                                key_data[key_id] = new_crypt_str;
-                                        }
-                                        else
-                                                verbose(LOG_WARNING, "Authentication file read: Invalid key type. Only MD5 is currently supported");
-                                }
-                                else
-                                {
-                                        verbose(LOG_WARNING, "Authentication file read: key ids must be in range 1-127");
-                                }
-                        }
+			if (strcmp("MD5", crypt_type) == 0)
+			{
+				char * new_crypt_str = malloc(sizeof(char)*(strlen(crypt_key)+1));
+				strcpy(new_crypt_str, crypt_key);
+				key_data[key_id] = new_crypt_str;
+			}
+			else
+				verbose(LOG_WARNING, "Authentication file read: Invalid key type. Only MD5 is currently supported");
+		}
+		else
+		{
+			verbose(LOG_WARNING, "Authentication file read: key ids must be in range 1-127");
+		}
+	}
 }
 
 /*
@@ -313,7 +312,6 @@ thread_ntp_server(void *c_handle)
 			{
 				MD5_Init(&md5);
 				MD5_Update(&md5, key_data[key_id], strlen(key_data[key_id]));
-				printf("Using key '%s'\n", key_data[key_id]);
 				MD5_Update(&md5, pkt_in, 48);
 				MD5_Final(pck_dgst, &md5);
 				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 16) == 0)
@@ -422,14 +420,14 @@ thread_ntp_server(void *c_handle)
 		// Tell the client that the same key was used for auth in reply
 		if (auth_bytes)
 		{
-                	pkt_out->exten[0] = ((struct ntp_pkt*)pkt_in)->exten[0];
+			pkt_out->exten[0] = ((struct ntp_pkt*)pkt_in)->exten[0];
 
 			// Sign reply with key
-                	MD5_Init(&md5);
-                	MD5_Update(&md5, key_data[key_id], strlen(key_data[key_id]));
-                	MD5_Update(&md5, pkt_out, LEN_PKT_NOMAC);
-                	MD5_Final(pck_dgst, &md5);
-                	memcpy(pkt_out->mac, pck_dgst, 16);
+			MD5_Init(&md5);
+			MD5_Update(&md5, key_data[key_id], strlen(key_data[key_id]));
+			MD5_Update(&md5, pkt_out, LEN_PKT_NOMAC);
+			MD5_Final(pck_dgst, &md5);
+			memcpy(pkt_out->mac, pck_dgst, 16);
 		}
 
 		/* Send data back using the client's address */
