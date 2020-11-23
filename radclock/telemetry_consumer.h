@@ -162,7 +162,7 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     w = mp_encode_uint(w, ts_nsec);
 
     // A map of ICN elements
-    w = mp_encode_str(w, "ICN", 4);
+    w = mp_encode_str(w, "ICN", 3);
     w = mp_encode_map(w, ocn_data->ICN_Count);
     for (int i = 0; i < ocn_data->ICN_Count; i++)
     {
