@@ -130,7 +130,7 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
             // Dummy ICN data
             unsigned int status_word = handle->rad_data.status;
             int ICN_id = i+1;
-            double uA = 0; 
+            double uA = (float)(rand()%1000) * 0.001; 
             double err_bound = handle->rad_data.ca_err;
 
             // Create a telemetry ICN specific packet

@@ -177,10 +177,10 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
         w = mp_encode_uint(w, ICN_data->status_word);
 
         w = mp_encode_str(w, "ua", 2);
-        w = mp_encode_uint(w, ICN_data->uA);
+        w = mp_encode_double(w, ICN_data->uA);
 
         w = mp_encode_str(w, "err_bound", strlen("err_bound"));
-        w = mp_encode_uint(w, ICN_data->err_bound);
+        w = mp_encode_double(w, ICN_data->err_bound);
     }
 
     // Write OCN data to file
