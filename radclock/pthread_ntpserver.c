@@ -38,6 +38,8 @@
 #include <netinet/ip.h>
 #include <net/ethernet.h>
 
+#include <openssl/md5.h>
+
 #include <errno.h>
 #include <pthread.h>
 #include <stdlib.h>
@@ -57,6 +59,93 @@
 #include "misc.h"
 #include "jdebug.h"
 #include "config_mgr.h"
+
+
+/*
+ * Adds authentication key
+*/
+void
+add_auth_key(char ** key_data, char * buff)
+{
+        char crypt_type[16];
+        char crypt_key[64];
+        int key_id = -1;
+
+			if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key ) == 3)
+                        {
+				printf("Reading key %d %s %s\n", key_id, crypt_type, crypt_key);
+                                if (0 < key_id && key_id < 129)
+                                {
+                                        // Data for this key has already been inserted. Warn user
+                                        if (key_data[key_id])
+                                                verbose(LOG_WARNING, "Authentication file read: Key id % has already been allocated", key_id);
+
+                                        if (strcmp("MD5", crypt_type) == 0)
+                                        {
+                                                char * new_crypt_str = malloc(sizeof(char)*(strlen(crypt_key)+1));
+                                                strcpy(new_crypt_str, crypt_key);
+                                                key_data[key_id] = new_crypt_str;
+                                        }
+                                        else
+                                                verbose(LOG_WARNING, "Authentication file read: Invalid key type. Only MD5 is currently supported");
+                                }
+                                else
+                                {
+                                        verbose(LOG_WARNING, "Authentication file read: key ids must be in range 1-127");
+                                }
+                        }
+}
+
+/*
+ * Read authentication keys to validate requests
+ */
+char** read_keys()
+{
+	FILE * fp = fopen("/etc/radclock.keys", "r");
+	if (fp == 0)
+	{
+		verbose(LOG_WARNING, "No authentication keys present within /etc/radclock.keys");
+		return 0;
+	}
+	// Currently allow for up to 128 keys. We could make this more dynamic in future
+	char ** key_data = malloc(sizeof(char *)*128);
+	memset(key_data, 0, sizeof(char *)*128);
+	
+	char buff[128];
+	int buff_size = 0;
+	int ignore_content = 0;
+
+	buff[0] = 0;
+	char c;
+	while (! feof(fp) )
+	{
+		fread(&c, 1, 1, fp);
+		if (c == '#')
+			ignore_content = 1;
+
+		if (! ignore_content && buff_size < 126)
+		{
+			buff[buff_size] = c;
+			buff_size ++;
+		}
+
+		if (c == '\n')
+		{
+			buff[buff_size] = 0;
+			add_auth_key(key_data, buff);
+			buff_size = 0;
+			ignore_content = 0;
+		}
+	}
+
+	// Check if the last line with no '\n' had data
+	buff[buff_size] = 0;
+        add_auth_key(key_data, buff);
+	
+	fclose(fp);
+	return key_data;
+}
+
 
 
 /*
@@ -117,6 +206,12 @@ thread_ntp_server(void *c_handle)
 	so_timeout.tv_usec 	= 0;
 	setsockopt(s_server, SOL_SOCKET, SO_RCVTIMEO, (void*)(&so_timeout),
 			sizeof(struct timeval));
+
+	/* Authentication data structures*/
+	unsigned char pck_dgst[16];
+	MD5_CTX md5;	
+	char ** key_data = read_keys();
+	
 
 	/* Bind socket */
 	err = bind(s_server, (struct sockaddr *)&sin_server, sizeof(struct sockaddr_in));
@@ -206,13 +301,41 @@ thread_ntp_server(void *c_handle)
 
 		rootdelay = NTP_SERVER(handle)->rootdelay + NTP_SERVER(handle)->minRTT;
 
+		int auth_bytes = 0;
+		int auth_pass = 0;
+		unsigned int key_id = 0;
 
+		// If the client has requested authentication and we have some key data
+		if (n > 48 && key_data)
+		{
+			key_id = ntohl( ((struct ntp_pkt*)pkt_in)->exten[0] );
+			if (key_id > 0 && key_id < 128 && key_data[key_id])
+			{
+				MD5_Init(&md5);
+				MD5_Update(&md5, key_data[key_id], strlen(key_data[key_id]));
+				printf("Using key '%s'\n", key_data[key_id]);
+				MD5_Update(&md5, pkt_in, 48);
+				MD5_Final(pck_dgst, &md5);
+				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 16) == 0)
+				{
+					verbose(LOG_WARNING, "NTP client authentication SUCCESS");
+					auth_pass = 1;
+				}
+				else
+					verbose(LOG_WARNING, "NTP client authentication FAILURE");
+				auth_bytes = 20;
+			}
+			else
+				verbose(LOG_WARNING, "NTP client authentication request invalid key_id %d", key_id);
+		}
+		else if ( !key_data )
+			verbose(LOG_WARNING, "NTP client authentication request when this server has no keys");
 		/* Fill the outgoing packet
 		 * Fixed point conversion of rootdispersion and rootdelay with up-down round up
 		 * NTP_VERSION:  add an abusive value to enable RAD client<-->server testing
 		 */
 		memset((char *) pkt_out, 0, sizeof(struct ntp_pkt));
-		u_char ntpversion = 5;		// use instead of NTP_VERSION to signal a RADclock server
+		u_char ntpversion = 4;		// use instead of NTP_VERSION to signal 
 		
 		/* NTP Standard requires special stratum and LI if server not in sync */
 		if (HAS_STATUS(handle, STARAD_UNSYNC)) {
@@ -295,11 +418,23 @@ thread_ntp_server(void *c_handle)
 		UTCld_to_NTPtime(&time, &xmt);
 		pkt_out->xmt.l_int = htonl(xmt.l_int);
 		pkt_out->xmt.l_fra = htonl(xmt.l_fra);
-		
-		
+
+		// Tell the client that the same key was used for auth in reply
+		if (auth_bytes)
+		{
+                	pkt_out->exten[0] = ((struct ntp_pkt*)pkt_in)->exten[0];
+
+			// Sign reply with key
+                	MD5_Init(&md5);
+                	MD5_Update(&md5, key_data[key_id], strlen(key_data[key_id]));
+                	MD5_Update(&md5, pkt_out, LEN_PKT_NOMAC);
+                	MD5_Final(pck_dgst, &md5);
+                	memcpy(pkt_out->mac, pck_dgst, 16);
+		}
+
 		/* Send data back using the client's address */
 		// TODO: So far we send the minimum packet size ... we may change that later
-		err = sendto(s_server, (char*)pkt_out, LEN_PKT_NOMAC, 0,
+		err = sendto(s_server, (char*)pkt_out, LEN_PKT_NOMAC + auth_bytes, 0,
 				(struct sockaddr *)&sin_client, len);
 		if (err < 0)
 			verbose(LOG_ERR, "NTPserver: Socket send() error: %s", strerror(errno));
