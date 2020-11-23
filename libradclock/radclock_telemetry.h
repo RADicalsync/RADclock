@@ -4,7 +4,8 @@
 #define TELEMETRY_CACHE_OLD_DIR "/radclock.old"
 #define TELEMETRY_CACHE_DIR "/radclock"
 
-#define TELEMETRY_KEEP_ALIVE_SECONDS (5 * 60) // Send keep alive messages once every 5 minutes
+#define TELEMETRY_KEEP_ALIVE_SECONDS (5 * 60) // Send keep alive messages once every 5 
+minutes
 #define RADCLOCK_TELEMETRY_VERSION 2
 
 typedef struct Radclock_Telemetry_v2 Radclock_Telemetry_Latest;

@@ -49,7 +49,7 @@ int msleep(long msec)
 }
 
 
-void packet_callback_binary(void * data, int packetId, int dataSize, double timestamp)
+void packet_callback_binary(void * data, int packetId, int dataSize, long double timestamp)
 {
     // Add hostname to filename - because it is not included anywhere within the packet (packet was assumed to circulate
     // only internally to a system). For the purposes of future analysis including the host name will make future
@@ -62,7 +62,7 @@ void packet_callback_binary(void * data, int packetId, int dataSize, double time
 
     // Open file
     char char_buffer[128];
-    sprintf(char_buffer, "%s/bin_%s_%d_%f", TELEMETRY_CACHE_OLD_DIR, hostname, packetId, timestamp);
+    sprintf(char_buffer, "%s/bin_%s_%d_%.09Lf", TELEMETRY_CACHE_OLD_DIR, hostname, packetId, timestamp);
     mode_t old_mask = umask(0);
     int fOut = open (char_buffer, O_WRONLY | O_CREAT, 0777 );
     if (fOut == -1)
@@ -89,6 +89,10 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     Radclock_Telemetry_Latest * ocn_data = (Radclock_Telemetry_Latest *) data;
     Radclock_Telemetry_ICN_Latest * ICN_data;
 
+    // Split the timestamp into two parts - seconds and nano seconds as msgpuck doesn't support long double
+    unsigned int ts_sec = (unsigned int) timestamp;
+    unsigned int ts_nsec = (unsigned int) (1000000000*(timestamp - ts_sec) + 0.5);
+
     // ToDO dynamically size buffers incase of message size ramp up
     // Open file
     char buf[1024*4];
@@ -96,7 +100,7 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     // Cached file is named after the second and packet id. 
     // As the packet id can reset and the time can shift and multiple packets can occur each second
     // This should ensure no two file names have the same name
-    sprintf(buf, "%s/msgpuck_%d_%Lf", TELEMETRY_CACHE_DIR, packetId, ocn_data->timestamp);
+    sprintf(buf, "%s/msgpuck_%d_%.09Lf", TELEMETRY_CACHE_DIR, packetId, ocn_data->timestamp);
     FILE * fp;
     
     // This checks if the file already exists. It shouldn't 
@@ -127,7 +131,7 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     gethostname(hostname, HOST_NAME_MAX + 1);
 
     // Build msgpack
-    w = mp_encode_map(w, 5);
+    w = mp_encode_map(w, 4);
 
     w = mp_encode_str(w, "name", 4);
     w = mp_encode_str(w, "clock_stats", strlen("clock_stats"));
@@ -136,13 +140,10 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     w = mp_encode_str(w, hostname, strlen(hostname));
 
     w = mp_encode_str(w, "v", 1);
-    w = mp_encode_uint(w, ocn_data->header.version);
-
-    w = mp_encode_str(w, "ts", strlen("ts"));
-    w = mp_encode_uint(w, ocn_data->timestamp*1000000000);
+    w = mp_encode_uint(w, ocn_data->header.version);    
 
     w = mp_encode_str(w, "ocn_clock", strlen("ocn_clock"));
-    w = mp_encode_map(w, 5);
+    w = mp_encode_map(w, 6);
     // A map of 5 elements
 
     w = mp_encode_str(w, "picn", 4);
@@ -154,26 +155,30 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     w = mp_encode_str(w, "icn_count", strlen("icn_count"));
     w = mp_encode_uint(w, ocn_data->ICN_Count);
 
-    w = mp_encode_str(w, "ts", strlen("ts"));
-    w = mp_encode_double(w, (double)ocn_data->timestamp);
+    w = mp_encode_str(w, "ts_sec", strlen("ts_sec"));
+    w = mp_encode_uint(w, ts_sec);
+
+    w = mp_encode_str(w, "ts_nsec", strlen("ts_nsec"));
+    w = mp_encode_uint(w, ts_nsec);
 
     // A map of ICN elements
-    w = mp_encode_str(w, "ICNs", 4);
+    w = mp_encode_str(w, "ICN", 4);
     w = mp_encode_map(w, ocn_data->ICN_Count);
     for (int i = 0; i < ocn_data->ICN_Count; i++)
     {
         ICN_data =  (Radclock_Telemetry_ICN_Latest *)(data + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_ICN_Latest)*i);
         char icn_name[128];
-        sprintf(icn_name, "ICN_%d", ICN_data->ICN_id);
+        sprintf(icn_name, "%d", ICN_data->ICN_id);
+        
         w = mp_encode_str(w, icn_name, strlen(icn_name));
         w = mp_encode_map(w, 3);
 
         w = mp_encode_str(w, "stat", 4);
         w = mp_encode_uint(w, ICN_data->status_word);
-        // w = mp_encode_str(w, "icn_id", 6);
-        // w = mp_encode_uint(w, ICN_data->ICN_id);
+
         w = mp_encode_str(w, "ua", 2);
         w = mp_encode_uint(w, ICN_data->uA);
+
         w = mp_encode_str(w, "err_bound", strlen("err_bound"));
         w = mp_encode_uint(w, ICN_data->err_bound);
     }

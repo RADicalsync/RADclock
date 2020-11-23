@@ -70,7 +70,7 @@ struct Ring_Buffer_Producer_Data
     int prior_PICN;
     double prior_uA;
     int prior_leapsec_total;
-	struct timespec last_msg_time;
+	long double last_msg_time;
 };
 
 typedef struct Ring_Buffer_Producer_Data Ring_Buffer_Producer_Data;

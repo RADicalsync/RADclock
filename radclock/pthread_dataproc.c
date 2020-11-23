@@ -537,7 +537,10 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 
 	/* Signal big error */
 	if (err == -1)
+	{
+		push_telemetry(handle); // Check if telemetry message needs to be sent
 		return (-1);
+	}
 
 	/* Starvation test:  have valid stamps stopped arriving to algo?
 	 * Definition based on algo input only, as cannot be evaluated by the algo.
@@ -549,7 +552,11 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
 		err_read = radclock_get_vcounter(handle->clock, &vcount);
 		if (err_read < 0)
+		{
+			push_telemetry(handle); // Check if telemetry message needs to be sent
+
 			return (-1);
+		}
 
 		if ((vcount - RAD_DATA(handle)->last_changed) * RAD_DATA(handle)->phat >
 				10*(((struct bidir_peer*)(handle->active_peer))->poll_period)) {
@@ -562,7 +569,10 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 
 	/* No error, but no stamp to process */
 	if (err == 1)
+	{
+		push_telemetry(handle); // Check if telemetry message needs to be sent
 		return (1);
+	}
 
 	/* **FreeBSD** Terminate if find a RTC reset, as currently can't handle this.
 	 * Detection can fail if reset occurs before the first setting of kernel data
@@ -571,6 +581,8 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(handle, STARAD_UNSYNC)) {
 		verbose(LOG_WARNING, "RADclock noticed a kernel RTC reset on stamp %d, "
 									"will require a restart I'm afraid", peer->stamp_i);
+		push_telemetry(handle); // Check if telemetry message needs to be sent
+
 		return -1;
 	}
 	
@@ -750,6 +762,8 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 						&size_ctl, NULL, 0);
 				if (err == -1) {
 					verbose(LOG_ERR, "Can''t find kern.timecounter.hardware in sysctl");
+					push_telemetry(handle); // Check if telemetry message needs to be sent
+
 					return (-1);
 				}
 				
@@ -761,6 +775,9 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 					peer->stamp_i = 0;
 					NTP_SERVER(handle)->burst = NTP_BURST;
 					strcpy(handle->clock->hw_counter, hw_counter);
+
+					push_telemetry(handle); // Check if telemetry message needs to be sent
+
 				// TODO: algo needs to reset:  many things not done here, need big look
 					return (0);
 				}
@@ -815,15 +832,14 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 		if (VM_MASTER(handle)) {
 			err = push_data_vm(handle);
 			if (err < 0) {
+				push_telemetry(handle); // Check if telemetry message needs to be sent
 				verbose(LOG_WARNING, "Error attempting to push VM data");
 				return (1);
 			}
 		}
 
         /* Send telemetry data through ring buffer and eventually to NTC_CN */
-        if (handle->conf->server_telemetry == BOOL_ON) {
-            push_telemetry(handle, 0, NULL, NULL, NULL);
-        }
+        push_telemetry(handle); // Check if telemetry message needs to be sent
 
    }  // RADCLOCK_SYNC_LIVE actions
 
