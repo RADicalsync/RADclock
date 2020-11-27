@@ -113,13 +113,13 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
     // Create a telemetry OCN specific packet
     Radclock_Telemetry_Latest * header_data = (Radclock_Telemetry_Latest *) holding_buffer;
 
-    if (keep_alive_trigger)
-    {
-        // If it is a keep alive trigger assume all the data is the same. But change the header data
-        header_data->header.packetId = packetId;
-        header_data->timestamp = timestamp;
-    }
-    else
+   // if (keep_alive_trigger)
+    //{
+    //    // If it is a keep alive trigger assume all the data is the same. But change the header data
+   //     header_data->header.packetId = packetId;
+  //      header_data->timestamp = timestamp;
+ //   }
+//    else
     {
         *header_data = make_telemetry_packet(packetId, PICN, asym, ICN_Count, timestamp);
 

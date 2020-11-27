@@ -104,6 +104,7 @@
 #define DEFAULT_SYNC_OUT_PCAP		"sync_output.pcap"
 #define DEFAULT_SYNC_OUT_ASCII	"sync_output.ascii"
 #define DEFAULT_CLOCK_OUT_ASCII	"clock_output.ascii"
+#define DEFAULT_ICN_1			"1 ntp.waia.asn.au"
 
 #define DEFAULT_VM_UDP_LIST		"vm_udp_list"
 
@@ -139,6 +140,7 @@
 /* Network Level */
 #define CONFIG_HOSTNAME			40
 #define CONFIG_TIME_SERVER		41
+#define CONFIG_ICN				42
 /* I/O defintions */
 #define CONFIG_NETWORKDEV		50
 #define CONFIG_SYNC_IN_PCAP	51
@@ -196,13 +198,19 @@
 #define UPD_NTP_UPSTREAM_PORT	0x1000000
 #define UPD_NTP_DOWNSTREAM_PORT	0x2000000
 #define UPDMASK_SERVER_TELEMETRY 0x4000000
+#define UPDMASK_ICN 0x8000000
 
 
 #define HAS_UPDATE(val,mask)	((val & mask) == mask)	
 #define SET_UPDATE(val,mask)	(val |= mask) 
 #define CLEAR_UPDATE(val,mask)	(val &= ~mask)
 
-
+#define MAX_ICNS 32
+struct ICN_Config
+{
+	int 	id;
+	char 	domain[MAXLINE];
+};
 
 /* This is a global structure used to keep track of the config parameters Mostly
  * used by signal handlers The fields present here correspond to the parameters
@@ -239,6 +247,7 @@ struct radclock_config {
 	char 	sync_out_ascii[MAXLINE]; 	/* output processed stamp file */
 	char 	clock_out_ascii[MAXLINE];  /* output matlab requirements */
 	char 	vm_udp_list[MAXLINE];  		/* File containing list of udp vm's */
+	struct ICN_Config 	icn[MAX_ICNS];  				/* ICN definition */
 };
 
 

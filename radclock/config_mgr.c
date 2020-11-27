@@ -94,6 +94,7 @@ static struct _key keys[] = {
 	{ "sync_output_ascii",		CONFIG_SYNC_OUT_ASCII},
 	{ "clock_output_ascii",		CONFIG_CLOCK_OUT_ASCII},
 	{ "vm_udp_list",			CONFIG_VM_UDP_LIST},
+	{ "icn",					CONFIG_ICN},
 	{ "",			 			CONFIG_UNKNOWN} // Must be the last one
 };
 
@@ -179,6 +180,13 @@ config_init(struct radclock_config *conf)
 	strcpy(conf->sync_out_ascii, "");
 	strcpy(conf->clock_out_ascii, "");
 	strcpy(conf->vm_udp_list, "");
+
+	// Clear all ICN server data
+	for (int i =0; i < MAX_ICNS; i++)
+	{
+		conf->icn[i].id = -1;
+		conf->icn[i].domain[0] = 0;
+	}
 }
 
 
@@ -596,6 +604,24 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 	else
 		fprintf(fd, "#%s = %s\n\n", find_key_label(keys, CONFIG_CLOCK_OUT_ASCII), DEFAULT_CLOCK_OUT_ASCII);
 
+	/* Specifies ICNs to be used */
+	fprintf(fd, "# ICNs.\n");
+	fprintf(fd, "# %s = ICN_ID domain. ICN_ID should remain constant and never re-used.\n", find_key_label(keys, CONFIG_ICN));
+	int written_icns = 0;
+	if ( conf )
+	{
+		for (int i = 0; i<MAX_ICNS; i++)
+			if ( strlen(conf->icn[i].domain) > 0 )
+			{
+				fprintf(fd, "%s = %d %s\n", find_key_label(keys, CONFIG_ICN), conf->icn[i].id, conf->icn[i].domain);
+				written_icns ++;
+			}
+	}
+
+	// No recorded values for ICNs were provided so write the default
+	if ( written_icns == 0 )
+		fprintf(fd, "%s = %s\n", find_key_label(keys, CONFIG_ICN), DEFAULT_ICN_1);
+
 }
 
 
@@ -689,7 +715,7 @@ int update_data (struct radclock_config *conf, u_int32_t *mask, int codekey, cha
 	double dval 	= 0.0;
 	int iqual 		= 0;
 	struct _key *quality = temp_quality;
-	
+	char sval[MAXLINE];
 	// Additionnal input checks: codekey and value
 	if ( codekey < 0) {
 		verbose(LOG_ERR, "Negative key value from the config file");
@@ -1124,6 +1150,19 @@ switch (codekey) {
 		break;
 
 
+	case CONFIG_ICN:
+		// If value specified on the command line
+		//if ( HAS_UPDATE(*mask, UPDMASK_ICN) ) 
+		//	break;
+		//printf("Reading ICN data\n");
+		if (sscanf(value, "%d %s", &ival, sval) == 2 && ival > 0 && ival < MAX_ICNS && strcmp(conf->icn[ival].domain, sval) != 0 )
+			SET_UPDATE(*mask, UPDMASK_ICN);
+		strcpy(conf->icn[ival].domain, sval);
+		conf->icn[ival].id = ival;
+		printf("Set ICN id %d to domain %s\n", ival, sval);
+		break;
+
+
 	case CONFIG_NETWORKDEV:
 		// If value specified on the command line
 		if ( HAS_UPDATE(*mask, UPDMASK_NETWORKDEV) ) 
@@ -1370,4 +1409,9 @@ void config_print(int level, struct radclock_config *conf)
 	verbose(level, "pcap sync output     : %s", conf->sync_out_pcap);
 	verbose(level, "ascii sync output    : %s", conf->sync_out_ascii);
 	verbose(level, "ascii clock output   : %s", conf->clock_out_ascii);
+
+	for (int i = 0; i<MAX_ICNS; i++)
+		if ( strlen(conf->icn[i].domain) > 0 )
+			verbose(level, "ICN                  : %d %s", conf->icn[i].id, conf->icn[i].domain);
+
 }

@@ -38,7 +38,7 @@
 #include <netinet/ip.h>
 #include <net/ethernet.h>
 
-#include <openssl/md5.h>
+#include <wolfssl/wolfcrypt/sha.h>
 
 #include <errno.h>
 #include <pthread.h>
@@ -62,6 +62,24 @@
 
 
 /*
+ * Convert char string into byte array
+*/
+char *
+cstr_2_bytes(char * key_str)
+{
+	int num_bytes = strlen(key_str) / 2;
+	
+	char * new_crypt_data = malloc(sizeof(char)*num_bytes);
+	char * pos = key_str;
+	for (size_t count = 0; count < num_bytes; count++) {
+        	sscanf(pos, "%2hhx", &new_crypt_data[count]);
+        	pos += 2;
+    	}
+	return new_crypt_data;
+}
+
+
+/*
  * Adds authentication key
 */
 void
@@ -79,14 +97,12 @@ add_auth_key(char ** key_data, char * buff)
 			if (key_data[key_id])
 				verbose(LOG_WARNING, "Authentication file read: Key id % has already been allocated", key_id);
 
-			if (strcmp("MD5", crypt_type) == 0)
-			{
-				char * new_crypt_str = malloc(sizeof(char)*(strlen(crypt_key)+1));
-				strcpy(new_crypt_str, crypt_key);
-				key_data[key_id] = new_crypt_str;
+			if (strcmp("SHA1", crypt_type) == 0)
+			{           
+					key_data[key_id] = cstr_2_bytes(crypt_key);
 			}
 			else
-				verbose(LOG_WARNING, "Authentication file read: Invalid key type. Only MD5 is currently supported");
+				verbose(LOG_WARNING, "Authentication file read: Invalid key type. Only MD5 is currently supported got %s", crypt_type);
 		}
 		else
 		{
@@ -207,8 +223,9 @@ thread_ntp_server(void *c_handle)
 			sizeof(struct timeval));
 
 	/* Authentication data structures*/
-	unsigned char pck_dgst[16];
-	MD5_CTX md5;	
+	unsigned char pck_dgst[20];
+	Sha sha;	
+
 	char ** key_data = read_keys();
 	
 
@@ -310,18 +327,20 @@ thread_ntp_server(void *c_handle)
 			key_id = ntohl( ((struct ntp_pkt*)pkt_in)->exten[0] );
 			if (key_id > 0 && key_id < 128 && key_data[key_id])
 			{
-				MD5_Init(&md5);
-				MD5_Update(&md5, key_data[key_id], strlen(key_data[key_id]));
-				MD5_Update(&md5, pkt_in, 48);
-				MD5_Final(pck_dgst, &md5);
-				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 16) == 0)
+				wc_InitSha(&sha);
+				wc_ShaUpdate(&sha, key_data[key_id], 20);
+				wc_ShaUpdate(&sha, pkt_in, 48);
+				wc_ShaFinal(pck_dgst, &sha);
+				// printf("size:%d %s %d key\n", n, key_data[key_id], key_id);
+
+				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0)
 				{
 					verbose(LOG_WARNING, "NTP client authentication SUCCESS");
 					auth_pass = 1;
 				}
 				else
 					verbose(LOG_WARNING, "NTP client authentication FAILURE");
-				auth_bytes = 20;
+				auth_bytes = 24;
 			}
 			else
 				verbose(LOG_WARNING, "NTP client authentication request invalid key_id %d", key_id);
@@ -424,11 +443,11 @@ thread_ntp_server(void *c_handle)
 			pkt_out->exten[0] = ((struct ntp_pkt*)pkt_in)->exten[0];
 
 			// Sign reply with key
-			MD5_Init(&md5);
-			MD5_Update(&md5, key_data[key_id], strlen(key_data[key_id]));
-			MD5_Update(&md5, pkt_out, LEN_PKT_NOMAC);
-			MD5_Final(pck_dgst, &md5);
-			memcpy(pkt_out->mac, pck_dgst, 16);
+			wc_InitSha(&sha);
+			wc_ShaUpdate(&sha, key_data[key_id], 20);
+			wc_ShaUpdate(&sha, pkt_out, LEN_PKT_NOMAC);
+			wc_ShaFinal(pck_dgst, &sha);
+			memcpy(pkt_out->mac, pck_dgst, 20);
 		}
 
 		/* Send data back using the client's address */
