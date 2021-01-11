@@ -39,6 +39,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -329,13 +330,13 @@ push_data_vm_udp(struct radclock_handle *handle)
 }
 
 
-static int
-init_vmware(struct radclock_handle *handle)
-{
-	JDEBUG
-
-	return (0);
-}
+//static int
+//init_vmware(struct radclock_handle *handle)
+//{
+//	JDEBUG
+//
+//	return (0);
+//}
 
 static int
 push_data_vmware(struct radclock_handle *handle)
@@ -359,7 +360,7 @@ init_vm(struct radclock_handle *handle)
 {
 	int err;
 
-	 err = 0;
+	err = 0;
 	verbose(LOG_INFO, "Setting up virtual machine communication");
 
 	if (handle->conf->synchro_type == SYNCTYPE_XEN ||
@@ -372,7 +373,7 @@ init_vm(struct radclock_handle *handle)
 		err = init_vm_udp(handle);
 	}
 
-	return (0);
+	return (err);		// was 0 and err not used, guess this was an error
 }
 
 
@@ -393,7 +394,7 @@ push_data_vm(struct radclock_handle *handle)
 	if (handle->conf->server_vmware == BOOL_ON)
 		err = push_data_vmware(handle);
 
-	return (0);
+	return (err);		// was 0 and err not used, guess this was an error
 }
 
 
@@ -435,7 +436,7 @@ receive_loop_vm(struct radclock_handle *handle)
 		 */
 		if ((handle->run_mode == RADCLOCK_SYNC_LIVE) &&
 				(handle->conf->server_ipc == BOOL_ON)) {
-			if (!HAS_STATUS(handle, STARAD_UNSYNC))
+			if (!HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC))
 				update_ipc_shared_memory(handle);
 		}
 
@@ -451,7 +452,7 @@ receive_loop_vm(struct radclock_handle *handle)
 		 */
 		if (handle->run_mode == RADCLOCK_SYNC_LIVE &&
 				handle->conf->adjust_FBclock == BOOL_ON &&
-				!HAS_STATUS(handle, STARAD_UNSYNC)) {
+				!HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
 
 			if (handle->clock->kernel_version < 2) {
 				update_kernel_fixed(handle);
@@ -482,7 +483,8 @@ receive_loop_vm(struct radclock_handle *handle)
 						" Reinitialising radclock.", handle->clock->hw_counter,
 						hw_counter);
 					OUTPUT(handle, n_stamps) = 0;
-					((struct bidir_peer *)handle->active_peer)->stamp_i = 0;
+					((struct bidir_peers*)handle->peers)->state[handle->pref_sID].stamp_i = 0;
+
 					//handle->server_data->burst = NTP_BURST;
 					NTP_SERVER(handle)->burst = 8;
 					strcpy(handle->clock->hw_counter, hw_counter);
@@ -490,7 +492,7 @@ receive_loop_vm(struct radclock_handle *handle)
 					return (0);
 				}
 #endif
-				fill_ffclock_estimate(&handle->rad_data, &handle->rad_error, &cest);
+				fill_ffclock_estimate(RAD_DATA(handle), RAD_ERROR(handle), &cest);
 				set_kernel_ffclock(handle->clock, &cest);
 				verbose(VERB_DEBUG, "Feed-forward kernel clock has been set.");
 			}
@@ -541,9 +543,9 @@ receive_loop_vm(struct radclock_handle *handle)
 				offset = -offset;
 			if (offset > 100e-6) {
 				tx.constant = TIME_CONSTANT - 2;
-				DEL_STATUS(handle, STARAD_SYSCLOCK);
+				DEL_STATUS(RAD_DATA(handle), STARAD_SYSCLOCK);
 			} else {
-				ADD_STATUS(handle, STARAD_SYSCLOCK);
+				ADD_STATUS(RAD_DATA(handle), STARAD_SYSCLOCK);
 				if (offset > 40e-6)
 					tx.constant = TIME_CONSTANT - 1;
 				else

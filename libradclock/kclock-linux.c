@@ -84,18 +84,18 @@ static int resolve_family(const char *family_name);
 
 
 int
-init_kernel_clock(struct radclock *handle)
+init_kernel_clock(struct radclock *clock)
 {
-	PRIV_DATA(handle)->radclock_gnl_id = resolve_family(RADCLOCK_NAME);
+	PRIV_DATA(clock)->radclock_gnl_id = resolve_family(RADCLOCK_NAME);
 
-	if (PRIV_DATA(handle)->radclock_gnl_id  == 0) {
+	if (PRIV_DATA(clock)->radclock_gnl_id  == 0) {
 		//PANIC
 		logger(RADLOG_ERR, "Cannot lookup linux global data netlink ID");
 		return (1);
 	}
 	else {
 		logger(RADLOG_NOTICE, "Global data generic netlink id is %d",
-				PRIV_DATA(handle)->radclock_gnl_id);
+				PRIV_DATA(clock)->radclock_gnl_id);
 	}
 	logger(RADLOG_NOTICE, "Feed-Forward Kernel initialised");
 

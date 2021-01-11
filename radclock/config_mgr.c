@@ -141,7 +141,7 @@ config_init(struct radclock_config *conf)
 	conf->server_ntp			= DEFAULT_SERVER_NTP;
 	conf->adjust_FFclock		= DEFAULT_ADJUST_FFCLOCK;
 	conf->adjust_FBclock		= DEFAULT_ADJUST_FBCLOCK;
-	
+
 	/* Virtual Machine */
 	conf->server_vm_udp 		= DEFAULT_SERVER_VM_UDP;
 	conf->server_xen 			= DEFAULT_SERVER_XEN;
@@ -161,7 +161,7 @@ config_init(struct radclock_config *conf)
 
 	/* Network level */
 	strcpy(conf->hostname, "");
-	strcpy(conf->time_server, "");
+	conf->time_server = calloc(1,MAXLINE);	// always need at least one string
 	conf->ntp_upstream_port	= DEFAULT_NTP_PORT;
 	conf->ntp_downstream_port = DEFAULT_NTP_PORT;
 
@@ -230,9 +230,12 @@ int get_temperature_config(struct radclock_config *conf)
 }
 
 
-/** Write a default configuration file */
+/* Write a default configuration file
+ * If at least one time_server is already configured, it is necessary to
+ * pass in the number  ns  of them.
+ */
 void
-write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
+write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int ns)
 {
 
 	fprintf(fd, "##\n");
@@ -307,9 +310,11 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 
 	/* NTP server */
 	fprintf(fd, "# Time server answering the requests from this client.\n");
-   	fprintf(fd, "# Can be a host name or an IP address (uses lookup name resolution).\n");
+	fprintf(fd, "# Can be a host name or an IP address (uses lookup name resolution).\n");
 	if ( (conf) && (strlen(conf->time_server) > 0) )
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER), conf->time_server);
+		for (int s=0; s<ns; s++)
+			fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER),
+				conf->time_server + s*MAXLINE );
 	else
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER), DEFAULT_TIME_SERVER);
 
@@ -663,9 +668,13 @@ int have_all_tmpqual = 0; /* To know if we run expert mode */
 
 
 
-/** Update global data with values retrieved from the configuration file */
-int update_data (struct radclock_config *conf, u_int32_t *mask, int codekey, char *value) { 
-
+/* Update global data with values retrieved from the configuration file
+ * This function counts the number of time servers being configured, and passes
+ * this back for storage as handle->nservers .
+ */
+static int
+update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *value, int *nf, int ns)
+{
 	// The mask parameter should always be positioned to UPDMASK_NOUPD except
 	// for the first call to config_parse() after parsing the command line
 	// arguments
@@ -674,7 +683,7 @@ int update_data (struct radclock_config *conf, u_int32_t *mask, int codekey, cha
 	double dval 	= 0.0;
 	int iqual 		= 0;
 	struct _key *quality = temp_quality;
-	
+
 	// Additionnal input checks: codekey and value
 	if ( codekey < 0) {
 		verbose(LOG_ERR, "Negative key value from the config file");
@@ -685,7 +694,6 @@ int update_data (struct radclock_config *conf, u_int32_t *mask, int codekey, cha
 		verbose(LOG_ERR, "Empty value from the config file");
 		return 0;
 	}
-
 
 
 switch (codekey) {
@@ -1083,13 +1091,39 @@ switch (codekey) {
 		break;
 
 
+	/* There may be multiple time_server lines in the conf file.
+	 * Space is already allocated for the first, if more encountered, more is made
+	 * dynamically. If this is called during rehash, more may already be allocated.
+	 * The allocated memory is organised as nf concatenated blocks,
+	 * each of MAXLINE chars, off a common origin pointed to by conf->time_server .
+	 * Here nf tracks the number of servers parsed this time, ns the number
+	 * last time (or ns=0 when starting).
+	 */
 	case CONFIG_TIME_SERVER:
-		// If value specified on the command line
-		if ( HAS_UPDATE(*mask, UPDMASK_TIME_SERVER) ) 
+
+		verbose(LOG_DEBUG, " found server nf = %d (ns = %d)", *nf, ns);
+
+		// If value specified on the command line, replace first server in config
+		if ( *nf == 0 && HAS_UPDATE(*mask, UPDMASK_TIME_SERVER) ) {
+			//verbose(LOG_DEBUG, " Adopting CMDline specified %s as server %d", conf->time_server, *nf);
+			*nf = 1;
 			break;
-		if ( strcmp(conf->time_server, value) != 0 )
+		}
+
+		// From file, process potentially multiple lines
+		char *this_s;		// start address of string for this server
+		if (ns == 0 || *nf < ns) {	// if storage already there
+			this_s = conf->time_server + (*nf)*MAXLINE;
+			if ( strcmp(this_s, value) != 0 )
+				SET_UPDATE(*mask, UPDMASK_TIME_SERVER);
+		} else {			// must extend allocation, and record new origin
+			conf->time_server = realloc(conf->time_server,(*nf+1)*MAXLINE);
+			this_s = conf->time_server + (*nf)*MAXLINE;
 			SET_UPDATE(*mask, UPDMASK_TIME_SERVER);
-		strcpy(conf->time_server, value);
+		}
+		strcpy(this_s, value);
+		//verbose(LOG_DEBUG, " Adopting %s as server nf = %d (ns = %d)", this_s, *nf, ns);
+		(*nf)++;
 		break;
 
 
@@ -1173,10 +1207,11 @@ return 1;
 /*
  * Reads config file line by line, retrieve (key,value) and update global data
  */
-int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon) 
+int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns)
 {
 	struct _key *pkey = keys;
-	int codekey=0;	
+	int codekey=0;
+	int nf;		// count time servers found
 	char *c;
 	char line[MAXLINE];
 	char key[MAXLINE];
@@ -1224,8 +1259,10 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 			umask(027);
 			return 0;
 		}
-
-		write_config_file(fd, keys, NULL);
+		
+		write_config_file(fd, keys, NULL, 1);	// single server only
+		*ns = 1;
+		
 		fclose(fd);
 		verbose(LOG_NOTICE, "Writing configuration file.");
 		//verbose(LOG_NOTICE, "    Time server          : %s", conf->time_server);
@@ -1237,6 +1274,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 	
 	// The configuration file exists, parse it and update default values
 	have_all_tmpqual = 0; // ugly
+	nf = 0;
 	while ((c=fgets(line, MAXLINE, fd))!=NULL) {
 
 		// Start with a reset of the value to avoid mistakes
@@ -1253,12 +1291,16 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 		if (codekey < 0)
 			continue;
 
-		// update in case we actually retrieved a value
-		// This is our basic output check 
+		/* Update in case we actually retrieved a value, update nf */
 		if ( strlen(value) > 0 )
-			update_data(conf, mask, codekey, value);
+			update_data(conf, mask, codekey, value, &nf, *ns);
 	}
 	fclose(fd);
+	/* Trim any memory containing old servers, and update handle */
+	if (nf < *ns)
+		conf->time_server = realloc(conf->time_server, nf*MAXLINE);
+	*ns = nf;
+
 
 
 	/* Ok, the file has been parsed, but may the version may be outdated. Since
@@ -1275,7 +1317,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 			umask(027);
 			return 0;
 		}
-		write_config_file(fd, keys, conf);
+		write_config_file(fd, keys, conf, *ns);
 		fclose(fd);
 		umask(027);
 
@@ -1302,8 +1344,8 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 
 
 
-
-void config_print(int level, struct radclock_config *conf)
+/* Print configuration to logfile */
+void config_print(int level, struct radclock_config *conf, int ns)
 {
 	verbose(level, "RADclock - configuration summary");
 	verbose(level, "radclock version     : %s", conf->radclock_version);
@@ -1331,7 +1373,11 @@ void config_print(int level, struct radclock_config *conf)
 	verbose(level, "Host asymmetry       : %lf", conf->asym_host);
 	verbose(level, "Network asymmetry    : %lf", conf->asym_net);
 	verbose(level, "Host name            : %s", conf->hostname);
-	verbose(level, "Time server          : %s", conf->time_server);
+	if (ns==1)
+		verbose(level, "Time server          : %s", conf->time_server);
+	else
+		for (int s=0; s<ns; s++)
+			verbose(level, "Time server          : %d %s", s, conf->time_server + s*MAXLINE);
 	verbose(level, "Interface            : %s", conf->network_device);
 	verbose(level, "pcap sync input      : %s", conf->sync_in_pcap);
 	verbose(level, "ascii sync input     : %s", conf->sync_in_ascii);

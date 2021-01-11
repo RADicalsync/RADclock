@@ -36,6 +36,7 @@ int open_output_matlab(struct radclock_handle *handle) ;
 void close_output_matlab(struct radclock_handle *handle) ;
 
 void
-print_out_files(struct radclock_handle *handle, struct stamp_t *stamp);
+print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
+	struct bidir_output *output, int sID);
 
 #endif

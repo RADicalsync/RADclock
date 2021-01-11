@@ -613,7 +613,8 @@ More details on each of these aspects are given in comment blocks within client_
 
 The use of retries does add a lot of complexity, both to trigger and stamp matching
 (generating overlapping stamps, 'dangerous' c-halfstamps, and corresponding orphaned
-s-halfstamps also requiring cleaning), and it is explictly suppressed when poll_period = 1.
+s-halfstamps also requiring cleaning), and it so is explictly suppressed when
+poll_period is too small, eg ≤2.
                
 
 
@@ -644,7 +645,6 @@ If the configuration file does not exist it will be written, but will fail on
 the first pass as the server will not be picked up. Rerun to pick it up.
 
 
-
 The handle includes two variables for keeping state regarding the remote server
 the daemon synchronized to, and the network information required to achieve this.
 
@@ -659,7 +659,7 @@ These have memory allocated in create_handle(), and are exclusively accessed via
 
 
 The client side variable relates to protocol level information required for
-the daemon to maintain packet exchanges with the server.
+the daemon to maintain socket based packet exchanges with the server.
 These exchanges are controlled by TRIGGER using functions in client_ntp.c .
 The data collected relates to address information, not to packet contents.
 The variable is initialized in  ntp_client_init(handle) as :
@@ -691,11 +691,15 @@ configuration file system, and must be set on the command line if
 non-default values are desired.
 	
 	
-	
+
 The server side variable records state information describing the server itself.
 Four of these members, [refid,stratum,root{delay,dispersion}],  are taken from
 NTP''s ntp_pkt structure, however here the root members are doubles rather than
 uint32_t.  The minRTT member maps to the algo''s minRTT estimate.
+The idea is that this variable is the place to go to find out basic information
+characterizing the TYPical behaviour of the server. However its utility is
+low currently as most of the data it carries corresponds to the last stamp_t
+from the server in almost all cases, already recorded under handle->peers->laststamp.
 
 struct radclock_ntp_server {
 	int burst;
@@ -735,7 +739,7 @@ root{delay,dispersion}  :  in update_FBclock (if activated)
 burst            : within ntp_client(), burst is a client-side state variable
                    used to modify polling period on startup. It lives here since
                    bursts are server specific, relating to a lack of path information
-                   at statup toward that server.
+                   at startup toward that server.
 
 # NTP_SERV	 [ gets but not set: all within thread_ntp_server() ]
 [refid,stratum]  : the values of the crafted outgoing response packets are set to

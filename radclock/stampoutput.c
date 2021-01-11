@@ -90,11 +90,11 @@ open_output_stamp(struct radclock_handle *handle)
 		/* TODO: turn off buffering? */
 		setvbuf(handle->stampout_fd, (char *)NULL, _IONBF, 0);
 		fprintf(handle->stampout_fd, "%% BEGIN_HEADER\n");
-		fprintf(handle->stampout_fd, "%% description: radclock local FFcounter "
+		fprintf(handle->stampout_fd, "%% description: radclock local vcounter "
 				"and NTP server stamps\n");
 		fprintf(handle->stampout_fd, "%% type: NTP_rad\n");
-		fprintf(handle->stampout_fd, "%% version: 3\n");
-		fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf NTP_keystamp\n");
+		fprintf(handle->stampout_fd, "%% version: 4\n");
+		fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf nonce [sID]\n");
 		fprintf(handle->stampout_fd, "%% END_HEADER\n");
 	}
 	return (0);
@@ -187,9 +187,15 @@ close_output_matlab(struct radclock_handle *handle)
 	}
 }
 
-
+/* This function covers the cases of the
+ *   ascii stamp out (4tuple + nonce + sID)  [ input to RADclock offline ]
+ *   ascii algo-internals (lots..    + sID)  [ input to matlab evaluation analysis ]
+ * Data is output one line per stamp regardless of originating server, with
+ * the serverID in the last column when applicable.
+ */
 void
-print_out_files(struct radclock_handle *handle, struct stamp_t *stamp)
+print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
+	struct bidir_output *output, int sID)
 {
 	int err;
 	// XXX What is the reason for me to do it that way? Cannot remember.
@@ -204,21 +210,29 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp)
 	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_SPY))
 		verbose(LOG_ERR, "Do not know how to print these stamps!!");
 
-	currtime_out = (long double)(BST(stamp)->Ta * OUTPUT(handle, phat)) +
-		OUTPUT(handle, K);
-	currtime_in  = (long double)(BST(stamp)->Tf * OUTPUT(handle, phat)) +
-		OUTPUT(handle, K);
+	currtime_out = (long double)(BST(stamp)->Ta * output->phat) + output->K;
+	currtime_in  = (long double)(BST(stamp)->Tf * output->phat) + output->K;
 
-	/* Store generated stamp values */
+	/* Deal with sync output */
 	if (handle->stampout_fd != NULL) {
-		err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu\n",
-				(long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-				(long long unsigned)BST(stamp)->Tf,
-				(long long unsigned)stamp->id);
+		if (handle->nservers == 1)	// omit last column with serverID
+			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu\n",
+					(long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+					(long long unsigned)BST(stamp)->Tf,
+					(long long unsigned)stamp->id);
+		else	// include serverID in last column
+			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu %d\n",
+					(long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+					(long long unsigned)BST(stamp)->Tf,
+					(long long unsigned)stamp->id,
+					sID);
+				
 		if (err < 0)
-			verbose(LOG_ERR, "Failed to write data to timestamp file");
+			verbose(LOG_ERR, "Failed to write ascii data to timestamp file");
 	}
 	
+	
+	/* Deal with internal algo output */
 	if (handle->matout_fd == NULL)
 		return;
 
@@ -228,32 +242,34 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp)
 	sprintf(buf,
 		"%.9Lf %"VC_FMT" %"VC_FMT" %.10lg %.10lg %.11Lf %.10lf "
 		"%"VC_FMT" %"VC_FMT" %"VC_FMT" %.9lg %.9lg %.9lg %.11Lf "
-		"%.11Lf %.10lf %.10lf %.6lg %.6lg %.6lg %"VC_FMT" %u\n",
+		"%.11Lf %.10lf %.10lf %.6lg %.6lg %.6lg %"VC_FMT" %u",
 		BST(stamp)->Tb,
 		(unsigned long long)BST(stamp)->Tf,
-		(unsigned long long)OUTPUT(handle, RTT),
-		OUTPUT(handle, phat),
-		OUTPUT(handle, plocal),
-		OUTPUT(handle, K),
-		OUTPUT(handle, thetahat),
-		(unsigned long long)OUTPUT(handle, RTThat),
-		(unsigned long long)OUTPUT(handle, RTThat_new),
-		(unsigned long long)OUTPUT(handle, RTThat_shift),
-		OUTPUT(handle, th_naive),
-		OUTPUT(handle, minET),
-		OUTPUT(handle, minET_last),
+		(unsigned long long)output->RTT,
+		output->phat,
+		output->plocal,
+		output->K,
+		output->thetahat,
+		(unsigned long long)output->RTThat,
+		(unsigned long long)output->RTThat_new,
+		(unsigned long long)output->RTThat_shift,
+		output->th_naive,
+		output->minET,
+		output->minET_last,
 		currtime_out,
 		currtime_in,
-		OUTPUT(handle, errTa),
-		OUTPUT(handle, errTf),
-		OUTPUT(handle, perr),
-		OUTPUT(handle, plocalerr),
-		OUTPUT(handle, wsum),
-		OUTPUT(handle, best_Tf),
-		OUTPUT(handle, status)
-		);
+		output->errTa,
+		output->errTf,
+		output->perr,
+		output->plocalerr,
+		output->wsum,
+		output->best_Tf,
+		output->status);
+		
+	if (handle->nservers > 1)	// add last column with serverID
+		sprintf(buf,"%s %d", buf, sID);
 
-	err = fprintf(handle->matout_fd, "%s", buf);
+	err = fprintf(handle->matout_fd, "%s\n", buf);
 	if (err < 0)
 		verbose(LOG_ERR, "Failed to write data to matlab file");
 

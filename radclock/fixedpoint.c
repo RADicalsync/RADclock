@@ -172,7 +172,7 @@ int update_kernel_fixed(struct radclock_handle *handle)
 		return (1);
 	}
 
-	read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
+	read_RADabs_UTC(RAD_DATA(handle), &vcount, &time, PLOCAL_ACTIVE);
 
 	calculate_fixedpoint_data(vcount, time, RAD_DATA(handle)->phat, &fpdata);
 

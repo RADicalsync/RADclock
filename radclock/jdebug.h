@@ -45,6 +45,7 @@
 #include <netinet/in.h>
 
 #include <pthread.h>
+#include <signal.h>
 #include "radclock-private.h"
 #include "radclock_daemon.h"
 #include "pthread_mgr.h"

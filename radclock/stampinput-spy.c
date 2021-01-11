@@ -73,7 +73,6 @@ spystamp_get_next(struct radclock_handle *handle, struct stampsource *source,
 		return (-1);
 	}
 	stamp->type = STAMP_SPY;
-	stamp->qual_warning = 0;
 	source->ntp_stats.ref_count += 2;
 
 	return (0);

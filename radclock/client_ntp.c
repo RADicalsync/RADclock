@@ -27,9 +27,7 @@
  */
 
 #include "../config.h"
-#ifdef HAVE_POSIX_TIMER
 #include <sys/time.h>
-#endif
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -68,106 +66,144 @@
  * Also, sigsuspend does not work on Linux in a multi-thread environment
  * (apparently) so use pthread condition wait to sync the thread to SIGALRM
  */
-#ifdef HAVE_POSIX_TIMER
-timer_t ntpclient_timerid;
-#endif
+timer_t *ntpclient_timerid;
+float *ntpclient_period;
+double *ntpclient_timeout;
 extern pthread_mutex_t alarm_mutex;
 extern pthread_cond_t alarm_cwait;
 
 
-
+/* Initilize the client socket info, create the timer
+ * mRADclock:  is a mix of one-off and s-specific stuff.
+ *		Probably best to keep a single fn and loop on s for needed bits
+ *    Hopefully can stick with a single signal catching structure,
+ *    but when signal caught and pass back to TRIGGER, how tell which s-timer
+ *		caused it?
+ */
 int
 ntp_client_init(struct radclock_handle *handle)
 {
+	/* Multiple server management */
+	int s;
+	struct radclock_ntp_client	*client;
+	timer_t *timerid;
+	char *domain;			// start address of string for this server
+	float poll_period;
+	
 	/* Socket data */
 	struct hostent *he;
 	struct timeval so_timeout;
+	double timeout;
 
 	/* Signal catching */
-	struct sigaction sig_struct;
 	sigset_t alarm_mask;
+	struct sigaction sig_struct;
+	struct sigevent evp;
+
 
 	/* Do we have what it takes? */
+	// mRAD: update after integrated conf changes
 	if (strlen(handle->conf->time_server) == 0) {
 		verbose(LOG_ERR, "NTPclient: No NTP server specified!");
 		return (1);
 	}
 
-	/* Build server infos */
-	NTP_CLIENT(handle)->s_to.sin_family = PF_INET;
-	NTP_CLIENT(handle)->s_to.sin_port = ntohs(handle->conf->ntp_upstream_port);
-	if ((he=gethostbyname(handle->conf->time_server)) == NULL) {
-		herror("gethostbyname");
-		return (1);
-	}
-	NTP_CLIENT(handle)->s_to.sin_addr.s_addr = *(in_addr_t *)he->h_addr_list[0];
+	/* Allocate parameter arrays to global pointers */
+	ntpclient_timerid = calloc(handle->nservers,sizeof(timer_t));
+	ntpclient_period  = calloc(handle->nservers,sizeof(float));
+	ntpclient_timeout = calloc(handle->nservers,sizeof(double));
 
-	/* Create the socket */
-	if ((NTP_CLIENT(handle)->socket = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
-		perror("socket");
-		return (1);
-	}
+	handle->lastalarm_sID = -1;
 
-	/*
-	 * Set a timeout on the recv side to avoid blocking for lost packets.
-	 * Set to large value well over expected congested RTT.
-	 */
+	/* Initialize socket timeout value to well over expected congested RTT */
 	so_timeout.tv_sec = 0;
 	so_timeout.tv_usec = NTP_INTIAL_SO_TIMEOUT;
-	setsockopt(NTP_CLIENT(handle)->socket, SOL_SOCKET,
-			SO_RCVTIMEO, (void *)(&so_timeout), sizeof(struct timeval));
+	timeout = so_timeout.tv_sec + 1e-6 * so_timeout.tv_usec;
 
-	/* Initialise the signal data */
+	/* Set up SIGALRM signal that timers will fire, and provide server info */
+	evp.sigev_notify = SIGEV_SIGNAL;
+	evp.sigev_signo = SIGALRM;
 	sigemptyset(&alarm_mask);
 	sigaddset(&alarm_mask, SIGALRM);
-	sig_struct.sa_handler = catch_alarm; /* Not so dummy handler */
 	sig_struct.sa_mask = alarm_mask;
-	sig_struct.sa_flags = 0;
+	sig_struct.sa_flags = SA_SIGINFO;
+	sig_struct.sa_sigaction = catch_alarm;	// info prototype since SA_SIGINFO set
+	/* Initialise the signal data */
 	sigaction(SIGALRM, &sig_struct, NULL);
-
-	/* Initialize mutex and condition variable objects */
+		
+	/* Initialize thread comms to return to TRIGGER after MAIN catches signal */
 	pthread_mutex_init(&alarm_mutex, NULL);
 	pthread_cond_init(&alarm_cwait, NULL);
 
-	/* Create the NTP request periodic sending grid with a dummy value>0 .
-	 * Actual period reset per-grid point in ntp_client.
-	 */
-#ifdef HAVE_POSIX_TIMER
-	/* CLOCK_REALTIME_HR does not exist on FreeBSD */
-	if (timer_create(CLOCK_REALTIME, NULL, &ntpclient_timerid) < 0) {
-		verbose(LOG_ERR, "NTPclient: POSIX timer create failed");
-		return (1);
+	/* Loop over all servers to set up networking data and timers for each */
+	for (s=0; s < handle->nservers; s++) {
+
+		client = &handle->ntp_client[s];
+		timerid = &ntpclient_timerid[s];
+		poll_period = (float) handle->conf->poll_period;	// upgrade after
+
+		ntpclient_period[s] = MIN(BURST_DELAY,poll_period);
+		domain = handle->conf->time_server + s*MAXLINE;
+		
+		/* Build server infos */
+		client->s_to.sin_family = PF_INET;
+		client->s_to.sin_port = ntohs(handle->conf->ntp_upstream_port);
+		if ((he=gethostbyname(domain)) == NULL) {
+			herror("gethostbyname");
+			return (1);
+		}
+		client->s_to.sin_addr.s_addr = *(in_addr_t *)he->h_addr_list[0];
+		verbose(LOG_NOTICE, "server %d: %s ,  resolved to %s", s, domain,
+			inet_ntoa(client->s_to.sin_addr));
+
+		/* Create the socket */
+		if ((client->socket = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
+			perror("socket");
+			return (1);
+		}
+		/* Set timeout on the recv side to avoid blocking for lost packets */
+		setsockopt(client->socket, SOL_SOCKET,
+				SO_RCVTIMEO, (void *)(&so_timeout), sizeof(struct timeval));
+		ntpclient_timeout[s] = timeout;
+
+
+		/* Create and arm periodic timers to generate the pkt sending grid. */
+		evp.sigev_value.sival_int = s;	// pass server ID to the signal handler
+		if (timer_create(CLOCK_REALTIME, &evp, timerid) < 0) {	// timerid is stored
+			verbose(LOG_ERR, "NTPclient: POSIX timer create failed");
+			return (1);
+		}
+		/* After a short wait, stagger starting grids over the first half poll_period */
+		if (set_ptimer(*timerid, 0.5 + poll_period*s/(2*handle->nservers), poll_period) < 0) {
+			verbose(LOG_ERR, "NTPclient: POSIX timer cannot be set");
+			return (1);
+		}
+		verbose(VERB_DEBUG, "server %d: POSIX timer set with timerid %d", s, *timerid);
 	}
-	if (set_ptimer(ntpclient_timerid, 0.5 /* !0 */,
-				(float) handle->conf->poll_period) < 0) {
-		verbose(LOG_ERR, "NTPclient: POSIX timer cannot be set");
-		return (1);
-	}
-#else
-	if (set_itimer(0.5, (float) handle->conf->poll_period) < 0) {
-		verbose(LOG_ERR, "NTPclient: itimer cannot be set");
-		return (1);
-	}
-#endif
+
 	return (0);
 }
 
 
+
 /* Create a fresh NTP request pkt.
  * Each call will return a unique pkt since the vcounter is read afresh.
- * Potential uniqueness failure due to finite resolution is dealt with.
+ * Potential nonce uniqueness failure due to finite resolution is dealt with.
+ * The preferred clock is used to fill reftime and xmt fields, and statics.
+ * Hence with multiple servers, the function does not act on the server the
+ * packet is destined for.
  */
 static int
 create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 		struct timeval *xmt_tval)
 {
+	static long double last_time = 0.0;		// for timestamp sanity check
+	static l_fp last_xmt = {0,0};				// used to ensure nonce is unique
+
 	long double time;
 	l_fp reftime, xmt;
 	vcounter_t vcount;
 	int err;
-
-	static long double last_time = 0.0;		// used to let first packet through
-	static l_fp last_xmt = {0,0};				// used to ensure nonce is unique
 
 	pkt->li_vn_mode	= PKT_LI_VN_MODE(LEAP_NOTINSYNC, NTP_VERSION, MODE_CLIENT);
 	pkt->stratum		= STRATUM_UNSPEC;
@@ -184,43 +220,31 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 
 	/* Reference time [ time client clock was last updated ] */
 	vcount = RAD_DATA(handle)->last_changed;
-	read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
+	read_RADabs_UTC(RAD_DATA(handle), &vcount, &time, PLOCAL_ACTIVE);
 	
 	UTCld_to_NTPtime(&time, &reftime);
 	pkt->reftime.l_int = htonl(reftime.l_int);
 	pkt->reftime.l_fra = htonl(reftime.l_fra);
 
-//	UTCld_to_timeval(&time, &reftime);
-//	pkt->reftime.l_int = htonl(reftime.tv_sec + JAN_1970);
-//	pkt->reftime.l_fra = htonl((uint32_t)(reftime.tv_usec * 4294967296.0 / 1e6));
-//
-//	verbose(LOG_NOTICE, "reftime tval: %6lu",	reftime.tv_usec);
-//	verbose(LOG_NOTICE, "reftime tval: %6u",	reftime.tv_usec);
-//	verbose(LOG_NOTICE, "reftime NTPt: %10lu.%20lu [s],  time = %10.9Lf",
-//		reftimeNTP.l_int, reftimeNTP.l_fra, time);
-//
-//	verbose(LOG_NOTICE, "reftime NTPt: %6lu",	(uint32_t)(reftimeNTP.l_fra / 4294967296.0 * 1e6 +0.5));
-//	verbose(LOG_NOTICE, "reftime NTPt: %6u",	(uint32_t)(reftimeNTP.l_fra / 4294967296.0 * 1e6+0.5));
-//	verbose(LOG_NOTICE, "reftime tval: %10lu.%20lu [s],  time = %10.9Lf",
-//		reftime.tv_sec + JAN_1970, (uint32_t)(reftime.tv_usec * 4294967296.0 / 1e6), time);
+	pkt->org.l_int	= pkt->org.l_fra = 0;
+	pkt->rec.l_int	= pkt->rec.l_fra = 0;
 
-	// TODO: need a more symmetric version of the packet exchange?
-	pkt->org.l_int		= 0;
-	pkt->org.l_fra		= 0;
-	pkt->rec.l_int		= 0;
-	pkt->rec.l_fra		= 0;
 
 	/* Transmit time (also used as a nonce for packet matching) */
 	err = radclock_get_vcounter(handle->clock, &vcount);
 	if (err < 0)
 		return (1);
-	read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
+	read_RADabs_UTC(RAD_DATA(handle), &vcount, &time, PLOCAL_ACTIVE);
 
 	/* Sanity test for apparently identical pkts based on ld time
-	 * After kernel init of FFclock data, but before any kernel setting, and before
-	 * any valid stamp (or first two stamps), period=0 and so time = 0 = last_time,
-	 * so sanity test will not run. In that initial phase, 1 or more responses
-	 * will be sent with xmt=NTP0.  Once time>0, test can run, but shouldn't ever.
+	 * TODO: this problem probably no longer can occur, if not, could remove test.
+	 *    If counter super coarse, could occur, but not an error in that case, and
+	 *    nonce still unique, another reason to drop this.
+	 *  After kernel init of FFclock data, but before any kernel setting, and before
+	 *  any valid stamp (or first two stamps), period=0 and so time = 0 = last_time,
+	 *  so sanity test will not run. In that initial phase, 1 or more responses
+	 *  will be sent with xmt=NTP0.
+	 * Once time>0, test can run, but shouldn't ever
 	 */
 	//verbose (LOG_ERR, "last_time = %10.9Lf, time = %10.9Lf, vcount= %llu",
 	// last_time, time, (long long unsigned) vcount);
@@ -228,17 +252,7 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 		verbose(LOG_ERR, "NTPclient: xmt = last_time !! pkt id not unique! "
 							"last_time =%10.9Lf, time = %10.9Lf, vcount= %llu",
 							last_time, time, (long long unsigned) vcount);
-		return (1);  // return to prevent infinite loop in this insane case
-	/* This can provoke an infinite loop! under a naturally occurring condition after a full
-	   kernel rebuild, where no old RTC value (I guess) triggering the wierd `bogus' event of
-		get_kernel_ffclock 
-		Need to understand bogus and either fix, or test for it here so 'time' advances.
-		Need to avoid the infinite loop possibility, in which case, need to see if the
-		return statement should be put back in, or remove this sanity test completely.
-		Already have test below for non-unique nonce no matter what.
-	   After some initialization, all symptoms dissappear. Note that after reboot also get the bogus
-	   ERROR, but this bug does not occur.
-	 */
+		return (1);  // return to try again
 	}
 
 	UTCld_to_NTPtime(&time, &xmt);
@@ -251,7 +265,9 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 							 && xmt.l_fra == last_xmt.l_fra) {
 		verbose(LOG_WARNING, "NTPclient: xmt nonce not unique: %10lu.%10lu [s], "
 				"vcount= %llu", xmt.l_int, xmt.l_fra, (long long unsigned) vcount);
-		xmt.l_fra += 1;	// TODO: treat overflow case properly
+		xmt.l_fra += 1;
+		if (xmt.l_fra == 0) xmt.l_int += 1;		// if overflowed, advance second
+
 		verbose(LOG_WARNING,"  nonce fraction increased to %10lu [s]", xmt.l_fra);
 	}
 
@@ -262,7 +278,7 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	last_xmt.l_int = xmt.l_int;
 	last_xmt.l_fra = xmt.l_fra;
 	
-	UTCld_to_timeval(&time, xmt_tval);					// need to return a timeval
+	UTCld_to_timeval(&time, xmt_tval);			// need to pass back a timeval
 	
 	return (0);
 }
@@ -290,8 +306,8 @@ unmatched_ntp_pair(struct ntp_pkt *spkt, struct ntp_pkt *rpkt)
  * Timeouts are managed as a function of grid period to avoid retries overlapping,
  * keeping grid points distinct for simplicity.
  * Simple (request,response) matching is used (based on the nonce) to give a
- * indication for debugging if the expected match has occured, and to help keep
- * the client in sync with its sending attempts, however technically no acutual
+ * indication for debugging if the expected match has occurred, and to help keep
+ * the client in sync with its sending attempts, however technically no actual
  * matching is performed, TRIGGER is not even responsible for collecting the
  * packet data!
  * After a grid point is dealt with (with or without a response pkt found,
@@ -300,9 +316,19 @@ unmatched_ntp_pair(struct ntp_pkt *spkt, struct ntp_pkt *rpkt)
 int
 ntp_client(struct radclock_handle *handle)
 {
+	/* Multiple server management */
+	int sID;
+	struct radclock_ntp_client	*client;
+	struct radclock_ntp_server	*server;
+	timer_t *timerid;
+	struct bidir_peers *peers;
+	struct bidir_algostate *state;
+	struct radclock_error *rad_error;
+	float poll_period;
+	
 	/* Timer and polling grid data */
 	float adjusted_period;		// actual inter-request grid period used [s]
-	float starve_ratio;
+	float starve_ratio = 1.0;	// placeholder for all servers. Not yet set by algo.
 	int maxattempts, retry;
 
 	/* Packet stuff */
@@ -311,39 +337,53 @@ ntp_client(struct radclock_handle *handle)
 	unsigned int socklen;
 	socklen_t tvlen;
 	int ret;
-
-	struct bidir_peer *peer;
 	struct timeval tv;
 	double timeout, newtimeout;		// timeout in [s]
 
 	JDEBUG
 
-	peer = (struct bidir_peer *)handle->active_peer;
-	starve_ratio = 1.0;	// placeholder
-	maxattempts = 3;		// if pure loss, 3 enough to get response with high prob
 	socklen = sizeof(struct sockaddr_in);
 	tvlen = (socklen_t) sizeof(struct timeval);
+	peers = handle->peers;
 
-	/* Use adjusted_period to modulate sending grid (nominally poll_period) as:
+	/* Sleep until alarm for next grid point goes off */
+	pthread_mutex_lock(&alarm_mutex);
+	pthread_cond_wait(&alarm_cwait, &alarm_mutex);
+	sID = handle->lastalarm_sID;		// discover the server of this grid point
+	verbose(VERB_DEBUG, "Alarm caught for server %d", sID);
+	pthread_mutex_unlock(&alarm_mutex);
+
+	/* Set to data for this server */
+	client = &handle->ntp_client[sID];
+	server = &handle->ntp_server[sID];
+	timerid = &ntpclient_timerid[sID];
+	timeout = ntpclient_timeout[sID];
+	rad_error = &handle->rad_error[sID];
+	state = &peers->state[sID];
+	poll_period = (float) handle->conf->poll_period;	// upgrade after
+	
+	/* Update adjusted_period [ the actual period used by timers ]
 	 *  - startup burst (using ntpd's BURST (#of pkts), BURST_DELAY (interval) )
 	 *  - sync algo as a function of starvation (not yet implemented)
 	 */
-	if (NTP_SERVER(handle)->burst > 0) {
-		NTP_SERVER(handle)->burst -= 1;
-		adjusted_period = MIN(BURST_DELAY,handle->conf->poll_period);
-	} else {
-		// TODO: implement logic for starvation ratio in sync algo
-		adjusted_period = handle->conf->poll_period / starve_ratio;
+	if (server->burst > 0) {
+		server->burst -= 1;
+		if (server->burst == 1)	server->burst = 0;	// since next firing locked in
+		adjusted_period = MIN(BURST_DELAY,poll_period);
+	} else
+		adjusted_period = poll_period / starve_ratio;
+	/* Reset sending grid if needed (1-2ms hiccup). Impacts after next firing. */
+	if (adjusted_period != ntpclient_period[sID]) {
+		assess_ptimer(*timerid, adjusted_period);	// TODO: change name of fn
+		ntpclient_period[sID] = adjusted_period;
 	}
 
-	/* Limit maxattempts to ensure they all (whether successful or not) will
-	 * complete before the next grid point, to reduce complexity.
+	/* Update maxattempts.  Limit to ensure they all (whether successful or not)
+	 * will complete before the next grid point, to reduce complexity.
 	 * This does not ensure that responses can actually return within these
 	 * timeouts (ie RTT<timeout). That is ensured by timeout setting code below.
 	 */
-	getsockopt(NTP_CLIENT(handle)->socket, SOL_SOCKET, SO_RCVTIMEO,
-			(void *)(&tv), &tvlen);
-	timeout = tv.tv_sec + 1e-6 * tv.tv_usec;
+	maxattempts = 3;		// if pure loss, 3 enough to get response with high prob
 	if (adjusted_period <= 2)
 		maxattempts = 1;		// data plentiful, retries not worth the complexity
 	else
@@ -354,17 +394,6 @@ ntp_client(struct radclock_handle *handle)
 						maxattempts, 1e3*timeout);
 		}
 
-	/* Reset sending grid interval if needed (get 1-2ms hiccup if reset) */
-#ifdef HAVE_POSIX_TIMER
-	assess_ptimer(ntpclient_timerid, adjusted_period);
-#else
-	assess_itimer(adjusted_period);
-#endif
-
-	/* Sleep until alarm for next grid point goes off */
-	pthread_mutex_lock(&alarm_mutex);
-	pthread_cond_wait(&alarm_cwait, &alarm_mutex);
-	pthread_mutex_unlock(&alarm_mutex);
 
 	/* Make maxattempts to obtain (request,response) pair if encounter timeouts,
 	 * The goal is to retry to `replace` a lost pair, to help avoid starving the
@@ -385,9 +414,9 @@ ntp_client(struct radclock_handle *handle)
 		if (ret)
 			continue;	// retry never decremented ==> inf loop if create always fails!
 
-		ret = sendto(NTP_CLIENT(handle)->socket,
+		ret = sendto(client->socket,
 				(char *)&spkt, LEN_PKT_NOMAC /* No auth */, 0,
-				(struct sockaddr *) &(NTP_CLIENT(handle)->s_to), socklen);
+				(struct sockaddr *)&client->s_to, socklen);
 
 		if (ret < 0) {
 			verbose(LOG_ERR, "NTPclient: NTP request failed, sendto: %s", strerror(errno));
@@ -395,14 +424,14 @@ ntp_client(struct radclock_handle *handle)
 		}
 
 		verbose(VERB_DEBUG, "Sent NTP request to %s at %lu.%lu with id %llu",
-				inet_ntoa(NTP_CLIENT(handle)->s_to.sin_addr), tv.tv_sec, tv.tv_usec,
+				inet_ntoa(client->s_to.sin_addr), tv.tv_sec, tv.tv_usec,
 				((uint64_t) ntohl(spkt.xmt.l_int)) << 32 |
 				(uint64_t) ntohl(spkt.xmt.l_fra));
 
 		/* This will block then timeout if nothing received */
-		ret = recvfrom(NTP_CLIENT(handle)->socket,
+		ret = recvfrom(client->socket,
 				&rpkt, sizeof(struct ntp_pkt), MSG_WAITALL,
-				(struct sockaddr*)&NTP_CLIENT(handle)->s_from, &socklen);
+				(struct sockaddr*)&client->s_from, &socklen);
 
 		/* If dont find a response within timeout, try again.
 		 * If response doesn't match request, try an additional read of this same (final) retry.
@@ -416,10 +445,12 @@ ntp_client(struct radclock_handle *handle)
 		 * The goal here is to manage timeouts and have effective retries in the
 		 * common loss case (and effective management of the common unneeded
 		 * retry case), not to be a foolproof pkt matcher.
+		 * Remember:  outer retry is about trying again because you got nothing
+		 *            inner retry is about getting sth, but not what you wanted
 		 */
 		if (ret > 0) {
 			verbose(VERB_DEBUG, "Received NTP reply from %s, id %llu, on attempt %d",
-				inet_ntoa(NTP_CLIENT(handle)->s_from.sin_addr),
+				inet_ntoa(client->s_from.sin_addr),
 				((uint64_t) ntohl(rpkt.org.l_int)) << 32 |
 				(uint64_t) ntohl(rpkt.org.l_fra), maxattempts-retry+1);
 
@@ -427,7 +458,7 @@ ntp_client(struct radclock_handle *handle)
 				verbose(VERB_DEBUG, "  Got a non-matching response on "
 					"attempt %d, taking a second look :", maxattempts-retry+1);
 					
-				ret = recvfrom(NTP_CLIENT(handle)->socket,
+				ret = recvfrom(client->socket,
 					&rpkt, sizeof(struct ntp_pkt), MSG_WAITALL,
 					(struct sockaddr*)&NTP_CLIENT(handle)->s_from, &socklen);
 					
@@ -469,8 +500,8 @@ ntp_client(struct radclock_handle *handle)
 	 * the grid points are distant from each other and interference is not an
 	 * issue.
 	 */
-	if (peer && peer->stamp_i>0) {
-		newtimeout = MIN(1, 2*peer->RTThat * RAD_DATA(handle)->phat);
+	if (peers && state->stamp_i>0) {
+		newtimeout = MIN(1, 2*rad_error->min_RTT);
 		if (newtimeout * 1e6 < NTP_MIN_SO_TIMEOUT)
 			newtimeout = NTP_MIN_SO_TIMEOUT * 1e-6;
 		if (newtimeout > adjusted_period * 0.7)
@@ -479,13 +510,12 @@ ntp_client(struct radclock_handle *handle)
 		if ( fabs(newtimeout - timeout) > 4e-3 ) {		// skip trivial updates
 			tv.tv_sec = (time_t)newtimeout;
 			tv.tv_usec = (useconds_t)(1e6 * (newtimeout - (time_t)newtimeout));
-			setsockopt(NTP_CLIENT(handle)->socket, SOL_SOCKET, SO_RCVTIMEO,
-					(void *)(&tv), tvlen);
+			setsockopt(client->socket, SOL_SOCKET, SO_RCVTIMEO, (void *)(&tv), tvlen);
+			ntpclient_timeout[sID] = newtimeout;
 			verbose(VERB_DEBUG, "NTPclient: Adjusting NTP client socket timeout "
-						"from %3.0lf to %3.0lf [ms]", 1e3*timeout, 1e3*newtimeout);
+			"for server %d from %3.0lf to %3.0lf [ms]", sID, 1e3*timeout, 1e3*newtimeout);
 		}
 	}
 
 	return (0);
 }
-

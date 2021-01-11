@@ -132,7 +132,6 @@ thread_trigger(void *c_handle)
 void *
 thread_data_processing(void *c_handle)
 {
-	struct bidir_peer peer;
 	struct radclock_handle *handle;
 	int err;
 
@@ -144,20 +143,12 @@ thread_data_processing(void *c_handle)
 	/* Clock handle to be able to read global data */
 	handle = (struct radclock_handle *) c_handle;
 
-	/* Init peer stamp counter, everything rely on this starting at 0 */
-	init_peer_stamp_queue(&peer);
-	peer.stamp_i = 0;
-	
-	// TODO XXX Need to manage peers better !!
-	/* Register active peer */
-	handle->active_peer = (void*) &peer;
-
 	while ((handle->pthread_flag_stop & PTH_DATA_PROC_STOP) != PTH_DATA_PROC_STOP)
 	{
 		/* Reacquire lock to continue (TRIGGER is not blocking on it) */
 		pthread_mutex_lock(&handle->wakeup_mutex);
 
-		/* Loosely signal this thread did lock the mutex */
+		/* Loosely signal this thread did wake up and process data */
 		handle->wakeup_checkfordata = 0;
 	
 		/* If we are meant to die but TRIGGER is already dead, it will never signal
@@ -173,7 +164,7 @@ thread_data_processing(void *c_handle)
 
 		/* Process rawdata until there is nothing more to process */
 		do {
-			err = process_stamp(handle, &peer);
+			err = process_stamp(handle);
 			
 			/* Something really bad, get out of here */
 			if (err == -1) {
@@ -186,8 +177,6 @@ thread_data_processing(void *c_handle)
 		/* Must release lock in case thread told to STOP */
 		pthread_mutex_unlock(&handle->wakeup_mutex);
 	}
-
-	destroy_peer_stamp_queue(&peer);
 
 	/* Thread exit */
 	verbose(LOG_NOTICE, "Thread data processing is terminating.");

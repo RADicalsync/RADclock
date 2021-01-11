@@ -182,7 +182,6 @@ tracefilestamp_get_next(struct radclock_handle *handle,
 
 	/* Ensure default stamp quality before filling timestamps */
 	stamp->type = STAMP_NTP;
-	stamp->qual_warning = 0;
 
 	err = get_network_stamp(handle, (void *)TRACEFILE_DATA(source),
 			get_packet_tracefile, stamp, &source->ntp_stats);

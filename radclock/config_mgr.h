@@ -98,11 +98,11 @@
 #define DEFAULT_HOSTNAME			"platypus2.tklab.feit.uts.edu.au"
 #define DEFAULT_TIME_SERVER		"ntp.waia.asn.au"	// ntp1.net.monash.edu.au now buggy
 #define DEFAULT_NETWORKDEV			"em0"
-#define DEFAULT_SYNC_IN_PCAP		"sync_input.pcap"
-#define DEFAULT_SYNC_IN_ASCII		"sync_input.ascii"
-#define DEFAULT_SYNC_OUT_PCAP		"sync_output.pcap"
-#define DEFAULT_SYNC_OUT_ASCII	"sync_output.ascii"
-#define DEFAULT_CLOCK_OUT_ASCII	"clock_output.ascii"
+#define DEFAULT_SYNC_IN_PCAP		"/etc/sync_input.pcap"
+#define DEFAULT_SYNC_IN_ASCII		"/etc/sync_input.ascii"
+#define DEFAULT_SYNC_OUT_PCAP		"/etc/sync_output.pcap"
+#define DEFAULT_SYNC_OUT_ASCII	"/etc/sync_output.ascii"
+#define DEFAULT_CLOCK_OUT_ASCII	"/etc/clock_output.ascii"
 
 #define DEFAULT_VM_UDP_LIST		"vm_udp_list"
 
@@ -227,7 +227,7 @@ struct radclock_config {
 	int     ntp_upstream_port;       /* NTP Upstream port */
 	int     ntp_downstream_port;     /* NTP Downstream port */
 	char 	hostname[MAXLINE]; 			/* Client hostname */
-	char 	time_server[MAXLINE]; 		/* Server name */
+	char 	*time_server;			 		/* Server names, concatenated in MAXLINE blocks */
 	char 	network_device[MAXLINE];	/* physical device string, eg xl0, eth0 */ 
 	char 	sync_in_pcap[MAXLINE];	 	/* read from stored instead of live input */
 	char 	sync_in_ascii[MAXLINE]; 	/* input is a preprocessed stamp file */
@@ -249,12 +249,12 @@ void config_init(struct radclock_config *conf);
 /**
  * Parse a configuration file
  */
-int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon);
+int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns);
 
 /**
  * Output the config in config to verbose using level
  */
-void config_print(int level, struct radclock_config *conf);
+void config_print(int level, struct radclock_config *conf, int ns);
 
 
 #endif

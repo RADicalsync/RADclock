@@ -218,8 +218,9 @@ rdtsc(void)
 }
 # endif
 
-inline
-vcounter_t radclock_readtsc(void) {
+inline vcounter_t
+radclock_readtsc(void)
+{
 	return (vcounter_t) rdtsc();
 }
 

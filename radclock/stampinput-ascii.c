@@ -130,19 +130,36 @@ asciistamp_get_next(struct radclock_handle *handle, struct stampsource *source,
 		struct stamp_t *stamp)
 {
 	FILE *stamp_fd = ASCII_DATA(source)->fd;
+	int ncols;
+	int sID = 0;
+	static int firstpass = 1;
 
-	if (fscanf(stamp_fd, "%"VC_FMT" %Lf %Lf %"VC_FMT, &(BST(stamp)->Ta),
-				&(BST(stamp)->Tb), &(BST(stamp)->Te), &(BST(stamp)->Tf)) == EOF ) {
+	if ((ncols = fscanf(stamp_fd, "%"VC_FMT" %Lf %Lf %"VC_FMT" %"VC_FMT" %d",
+			&(BST(stamp)->Ta), &(BST(stamp)->Tb),
+			&(BST(stamp)->Te), &(BST(stamp)->Tf), &stamp->id, &sID )) == EOF )
+	{
 		verbose(LOG_NOTICE, "Got EOF on ascii input file.");
 		return (-1);
 	}
 	else {
-		// skip to start of next line (robust to 5 or more column input)
+		// skip to start of next line (robust to additional unexpected columns)
 		while((fgetc(stamp_fd))!= '\n'){}
+
+		/* Assign distinct fake IP address matching serverID */
+		if (firstpass) {
+			verbose(LOG_NOTICE, "Found %d columns in ascii input file.", ncols);
+			if (ncols == 6)
+				verbose(LOG_NOTICE, " Assuming multiple servers, will assign fake IP addresses");
+			firstpass = 0;
+		}
+
+		//if (ncols<6) sID = 0;		// no serverID in file, only one server
+		sprintf(stamp->server_ipaddr, "10.0.0.%d", sID);
+		verbose(VERB_DEBUG, "input serverID value %d assigned to fake IP address %s",
+				sID, stamp->server_ipaddr);
 
 		// TODO: need to detect stamp type, ie, get a better input format
 		stamp->type = STAMP_NTP;
-		stamp->qual_warning = 0;
 		source->ntp_stats.ref_count+=2;
 	}
 	return (0);
