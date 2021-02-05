@@ -85,28 +85,32 @@
 #define DEFAULT_VERBOSE				1
 #define DEFAULT_SYNCHRO_TYPE		SYNCTYPE_NTP	// Protocol used 
 #define DEFAULT_SERVER_IPC			BOOL_ON			// Update the clock 
+#define DEFAULT_IS_OCN			    BOOL_OFF		// Defines if this server is an OCN
+#define DEFAULT_IS_CN			    BOOL_OFF		// Defines if this server is an CN
 #define DEFAULT_SERVER_TELEMETRY    BOOL_OFF		// Creates telemetry cache files in /radclock
+#define DEFAULT_SERVER_TELEMETRY    BOOL_OFF		// Creates telemetry cache files in /radclock
+#define DEFAULT_SERVER_SHM			BOOL_OFF		// Defines if SHM is active
 #define DEFAULT_SERVER_NTP			BOOL_OFF			// Don't act as a server
 #define DEFAULT_SERVER_VM_UDP		BOOL_OFF			// Don't Start VM servers
 #define DEFAULT_SERVER_XEN			BOOL_OFF
 #define DEFAULT_SERVER_VMWARE		BOOL_OFF
-#define DEFAULT_ADJUST_FFCLOCK	BOOL_ON		// Normally a FFclock daemon !
-#define DEFAULT_ADJUST_FBCLOCK	BOOL_OFF		// Not normally a FBclock daemon
+#define DEFAULT_ADJUST_FFCLOCK		BOOL_ON		// Normally a FFclock daemon !
+#define DEFAULT_ADJUST_FBCLOCK		BOOL_OFF		// Not normally a FBclock daemon
 #define DEFAULT_NTP_POLL_PERIOD 	16				// 16 NTP pkts every [sec]
 #define DEFAULT_PHAT_INIT			1.e-9
 #define DEFAULT_ASYM_HOST			0.0				// 0 micro-sconds
 #define DEFAULT_ASYM_NET			0.0				// 0 micro-seconds 
 #define DEFAULT_HOSTNAME			"platypus2.tklab.feit.uts.edu.au"
-#define DEFAULT_TIME_SERVER		"ntp.waia.asn.au"	// ntp1.net.monash.edu.au now buggy
+#define DEFAULT_TIME_SERVER			"ntp.waia.asn.au"	// ntp1.net.monash.edu.au now buggy
 #define DEFAULT_NETWORKDEV			"em0"
-#define DEFAULT_SYNC_IN_PCAP		"sync_input.pcap"
-#define DEFAULT_SYNC_IN_ASCII		"sync_input.ascii"
-#define DEFAULT_SYNC_OUT_PCAP		"sync_output.pcap"
-#define DEFAULT_SYNC_OUT_ASCII	"sync_output.ascii"
-#define DEFAULT_CLOCK_OUT_ASCII	"clock_output.ascii"
-#define DEFAULT_ICN_1			"1 ntp.waia.asn.au"
-
-#define DEFAULT_VM_UDP_LIST		"vm_udp_list"
+#define DEFAULT_SYNC_IN_PCAP		"/etc/sync_input.pcap"
+#define DEFAULT_SYNC_IN_ASCII		"/etc/sync_input.ascii"
+#define DEFAULT_SYNC_OUT_PCAP		"/etc/sync_output.pcap"
+#define DEFAULT_SYNC_OUT_ASCII		"/etc/sync_output.ascii"
+#define DEFAULT_CLOCK_OUT_ASCII		"/etc/clock_output.ascii"
+#define DEFAULT_ICN_1				"ntp.waia.asn.au 1"
+#define DEFAULT_SHM_DAG_CLIENT  	"10.0.0.3"
+#define DEFAULT_VM_UDP_LIST			"vm_udp_list"
 
 
 /*
@@ -119,10 +123,12 @@
 #define CONFIG_SERVER_IPC		11
 #define CONFIG_SERVER_TELEMETRY 12
 //#define CONFIG_				13
-#define CONFIG_SYNCHRO_TYPE	13
+#define CONFIG_SYNCHRO_TYPE		13
 #define CONFIG_SERVER_NTP		14
 #define CONFIG_ADJUST_FFCLOCK	15
 #define CONFIG_ADJUST_FBCLOCK	16
+#define CONFIG_SERVER_SHM		17
+#define CONFIG_SHM_DAG_CLIENT	18
 /* Clock parameters */
 #define CONFIG_POLLPERIOD		20
 //#define CONFIG_				21
@@ -135,12 +141,13 @@
 #define CONFIG_SKM_SCALE		32
 #define CONFIG_RATE_ERR_BOUND	33
 #define CONFIG_BEST_SKM_RATE	34
-#define CONFIG_OFFSET_RATIO	35
+#define CONFIG_OFFSET_RATIO		35
 #define CONFIG_PLOCAL_QUALITY	36
 /* Network Level */
 #define CONFIG_HOSTNAME			40
 #define CONFIG_TIME_SERVER		41
 #define CONFIG_ICN				42
+#define CONFIG_OCN				43
 /* I/O defintions */
 #define CONFIG_NETWORKDEV		50
 #define CONFIG_SYNC_IN_PCAP	51
@@ -153,6 +160,9 @@
 #define CONFIG_SERVER_XEN		61
 #define CONFIG_SERVER_VMWARE	62
 #define CONFIG_VM_UDP_LIST		63
+/* radclock type */
+#define CONFIG_IS_OCN			70
+#define CONFIG_IS_CN			71
 
 
 
@@ -199,6 +209,11 @@
 #define UPD_NTP_DOWNSTREAM_PORT	0x2000000
 #define UPDMASK_SERVER_TELEMETRY 0x4000000
 #define UPDMASK_ICN 0x8000000
+#define UPDMASK_OCN 0x10000000
+#define UPDMASK_SERVER_SHM 0x20000000
+#define UPDMASK_SHM_DAG_CLIENT 0x40000000
+#define UPDMASK_IS_OCN 0x80000000
+#define UPDMASK_IS_CN 0x100000000
 
 
 #define HAS_UPDATE(val,mask)	((val & mask) == mask)	
@@ -206,6 +221,7 @@
 #define CLEAR_UPDATE(val,mask)	(val &= ~mask)
 
 #define MAX_ICNS 32
+#define MAX_OCNS 32
 struct ICN_Config
 {
 	int 	id;
@@ -227,10 +243,13 @@ struct radclock_config {
 	int 	synchro_type; 				/* multi-choice depending on client-side protocol */
 	int 	server_ipc; 				/* Boolean */
 	int 	server_telemetry;			/* Boolean */
+	int 	server_shm;					/* Boolean */
 	int 	server_ntp;					/* Boolean */
 	int 	server_vm_udp;				/* Boolean */
 	int 	server_xen;					/* Boolean */
 	int 	server_vmware;				/* Boolean */
+	int 	is_ocn;				/* Boolean */
+	int 	is_cn;				/* Boolean */
 	int 	adjust_FFclock;			/* Boolean */
 	int 	adjust_FBclock;			/* Boolean */
 	double 	phat_init;					/* Initial value for phat */
@@ -247,7 +266,9 @@ struct radclock_config {
 	char 	sync_out_ascii[MAXLINE]; 	/* output processed stamp file */
 	char 	clock_out_ascii[MAXLINE];  /* output matlab requirements */
 	char 	vm_udp_list[MAXLINE];  		/* File containing list of udp vm's */
+	char 	shm_dag_client[MAXLINE];  	/* Ip address of SHM DAG client */
 	struct ICN_Config 	icn[MAX_ICNS];  				/* ICN definition */
+	struct ICN_Config 	ocn[MAX_OCNS];  				/* ICN definition */
 };
 
 

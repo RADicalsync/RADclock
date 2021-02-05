@@ -95,7 +95,7 @@ add_auth_key(char ** key_data, char * buff)
 		{
 			// Data for this key has already been inserted. Warn user
 			if (key_data[key_id])
-				verbose(LOG_WARNING, "Authentication file read: Key id % has already been allocated", key_id);
+				verbose(LOG_WARNING, "Authentication file read: Key id %d has already been allocated", key_id);
 
 			if (strcmp("SHA1", crypt_type) == 0)
 			{           

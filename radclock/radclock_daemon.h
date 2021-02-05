@@ -55,6 +55,15 @@ typedef enum {
 
 struct radclock_handle;
 
+struct radclock_shm_ts {
+	vcounter_t	Ta;		// vcount timestamp [counter value] of pkt leaving client
+	long double	Tb;		// timestamp [sec] of arrival at server
+	long double	Te;		// timestamp [sec] of departure from server
+	vcounter_t	Tf;		// vcount timestamp [counter value] of pkt returning to client
+	char server_ipaddr[INET6_ADDRSTRLEN];
+
+	uint64_t id;
+};
 
 
 // TODO: This network protocol code could be factored?
@@ -141,6 +150,11 @@ struct radclock_handle {
 	/* Raw data capture buffer for 1588 error queue */
 	struct raw_data_queue *ieee1588eq_queue;
 
+	/* Latest matched NTP stamp passed to SHM from dataproc */
+	struct radclock_shm_ts * SHM_stamps;
+	int SHM_stamp_write_id;
+	int SHM_stamps_queue_size;
+
 	/* Telemetry shared memory handle */
 	Ring_Buffer_Producer_Data telemetry_data;	
 
@@ -157,7 +171,7 @@ struct radclock_handle {
 	FILE* matout_fd;
 
 	/* Threads */
-	pthread_t threads[9];		/* TODO: quite ugly implementation ... */
+	pthread_t threads[10];		/* TODO: quite ugly implementation ... */
 	int	pthread_flag_stop;
 	pthread_mutex_t globaldata_mutex;
 	int wakeup_checkfordata;

@@ -838,6 +838,18 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 			}
 		}
 
+        /* Push NTP stamp to SHM */
+		struct radclock_shm_ts SHM_stamp;
+		SHM_stamp.Ta = stamp.st.bstamp.Ta;
+		SHM_stamp.Tb = stamp.st.bstamp.Tb;
+		SHM_stamp.Te = stamp.st.bstamp.Te;
+		SHM_stamp.Tf = stamp.st.bstamp.Tf;
+		SHM_stamp.id = stamp.id;
+		// handle->SHM_stamp = SHM_stamp;
+		handle->SHM_stamps[handle->SHM_stamp_write_id] = SHM_stamp;
+		// Increment the write position of the queue. Wrap to start in case of full queue
+		handle->SHM_stamp_write_id = (handle->SHM_stamp_write_id + 1) % handle->SHM_stamps_queue_size;
+
         /* Send telemetry data through ring buffer and eventually to NTC_CN */
         push_telemetry(handle); // Check if telemetry message needs to be sent
 

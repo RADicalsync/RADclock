@@ -42,20 +42,22 @@
 #define PTH_FIXEDPOINT		4
 #define PTH_VM_UDP_SERV		5
 #define PTH_TELEMETRY_CON	6
+#define PTH_SHM_CON			7
 
 
 /*
  * Flags to signal threads they have to commit suicide
  */
-#define PTH_DATA_PROC_STOP		0x000001
-#define PTH_TRIGGER_STOP		0x000010
-#define PTH_NTP_SERV_STOP		0x000100
-#define PTH_FIXEDPOINT_STOP		0x001000
-#define PTH_VM_UDP_SERV_STOP	0x010000
-#define PTH_TELEMETRY_CON_STOP	0x100000
+#define PTH_DATA_PROC_STOP		0x0000001
+#define PTH_TRIGGER_STOP		0x0000010
+#define PTH_NTP_SERV_STOP		0x0000100
+#define PTH_FIXEDPOINT_STOP		0x0001000
+#define PTH_VM_UDP_SERV_STOP	0x0010000
+#define PTH_TELEMETRY_CON_STOP	0x0100000
+#define PTH_SHM_CON_STOP		0x1000000
 #define PTH_STOP_ALL			(PTH_DATA_PROC_STOP | PTH_TRIGGER_STOP | \
 		PTH_FIXEDPOINT_STOP | PTH_NTP_SERV_STOP | PTH_VM_UDP_SERV_STOP | \
-		PTH_TELEMETRY_CON_STOP )
+		PTH_TELEMETRY_CON_STOP | PTH_SHM_CON_STOP)
 
 
 /*
@@ -67,6 +69,7 @@ int start_thread_NTP_SERV(struct radclock_handle *handle);
 int start_thread_VM_UDP_SERV(struct radclock_handle *handle);
 int start_thread_FIXEDPOINT(struct radclock_handle *handle);
 int start_thread_TELEMETRY_CON(struct radclock_handle *handle);
+int start_thread_SHM(struct radclock_handle *handle);
 
 
 /*
@@ -77,6 +80,8 @@ void* thread_trigger(void *c_handle);
 void* thread_ntp_server(void *c_handle);
 void* thread_vm_udp_server(void *c_handle);
 void* thread_telemetry_consumer(void *c_handle);
+void* thread_shm(void *c_handle);
+
 
 int trigger_work(struct radclock_handle *handle);
 int process_stamp(struct radclock_handle *handle, struct bidir_peer *peer);

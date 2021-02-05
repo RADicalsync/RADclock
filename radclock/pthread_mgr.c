@@ -380,10 +380,27 @@ start_thread_TELEMETRY_CON(struct radclock_handle *handle)
 	pthread_attr_init(&thread_attr);
 	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_JOINABLE);
 
-	verbose(LOG_NOTICE, "Starting data processing thread");
+	verbose(LOG_NOTICE, "Starting telemetry thread");
 	err = pthread_create(&(handle->threads[PTH_TELEMETRY_CON]), &thread_attr,
 			thread_telemetry_consumer, (void *)(handle));
 	if (err)
 		verbose(LOG_ERR, "pthread_create() returned error number %d", err);
 	 return (err);
 }
+
+int
+start_thread_SHM(struct radclock_handle *handle)
+{
+	int err;
+	pthread_attr_t thread_attr;
+	pthread_attr_init(&thread_attr);
+	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_JOINABLE);
+
+	verbose(LOG_NOTICE, "Starting SHM thread");
+	err = pthread_create(&(handle->threads[PTH_SHM_CON]), &thread_attr,
+			thread_shm, (void *)(handle));
+	if (err)
+		verbose(LOG_ERR, "pthread_create() returned error number %d", err);
+	 return (err);
+}
+

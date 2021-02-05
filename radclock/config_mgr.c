@@ -68,6 +68,8 @@ static struct _key keys[] = {
 	{ "synchronization_type",	CONFIG_SYNCHRO_TYPE},
 	{ "ipc_server",				CONFIG_SERVER_IPC},
 	{ "telemetry_server",		CONFIG_SERVER_TELEMETRY},
+	{ "shm_server",				CONFIG_SERVER_SHM},
+	{ "shm_dag_client",			CONFIG_SHM_DAG_CLIENT},
 	{ "ntp_server",				CONFIG_SERVER_NTP},
 	{ "vm_udp_server",			CONFIG_SERVER_VM_UDP},
 	{ "xen_server",				CONFIG_SERVER_XEN},
@@ -95,6 +97,9 @@ static struct _key keys[] = {
 	{ "clock_output_ascii",		CONFIG_CLOCK_OUT_ASCII},
 	{ "vm_udp_list",			CONFIG_VM_UDP_LIST},
 	{ "icn",					CONFIG_ICN},
+	{ "ocn",					CONFIG_OCN},
+	{ "is_ocn",					CONFIG_IS_OCN},
+	{ "is_cn",					CONFIG_IS_CN},
 	{ "",			 			CONFIG_UNKNOWN} // Must be the last one
 };
 
@@ -140,10 +145,14 @@ config_init(struct radclock_config *conf)
 	strcpy(conf->radclock_version, PACKAGE_VERSION);
 	conf->server_ipc			= DEFAULT_SERVER_IPC;
 	conf->server_telemetry		= DEFAULT_SERVER_TELEMETRY;
-	conf->synchro_type		= DEFAULT_SYNCHRO_TYPE;
+	conf->synchro_type			= DEFAULT_SYNCHRO_TYPE;
 	conf->server_ntp			= DEFAULT_SERVER_NTP;
 	conf->adjust_FFclock		= DEFAULT_ADJUST_FFCLOCK;
 	conf->adjust_FBclock		= DEFAULT_ADJUST_FBCLOCK;
+	conf->server_shm			= DEFAULT_SERVER_SHM;
+	strcpy(conf->shm_dag_client, "");
+
+	
 	
 	/* Virtual Machine */
 	conf->server_vm_udp 		= DEFAULT_SERVER_VM_UDP;
@@ -187,6 +196,13 @@ config_init(struct radclock_config *conf)
 		conf->icn[i].id = -1;
 		conf->icn[i].domain[0] = 0;
 	}
+
+	// Clear all OCN server data
+	for (int i =0; i < MAX_OCNS; i++)
+	{
+		conf->ocn[i].id = -1;
+		conf->ocn[i].domain[0] = 0;
+	}	
 }
 
 
@@ -355,6 +371,55 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 	else
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_TELEMETRY),
 				labels_bool[conf->server_telemetry]);
+
+
+	/* Defines if this server is an OCN */
+	fprintf(fd, "# is_ocn.\n");
+	fprintf(fd, "# Defines if this server is an OCN - cannot be on with is_cn .\n");
+	fprintf(fd, "#\ton : Start service - Turns on OCN services\n");
+	fprintf(fd, "#\toff: Stop service  - Disables OCN services\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_OCN),
+				labels_bool[DEFAULT_IS_OCN]);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_OCN),
+				labels_bool[conf->is_ocn]);
+
+
+	/* Defines if this server is an CN */
+	fprintf(fd, "# is_cn.\n");
+	fprintf(fd, "# Defines if this server is an CN - cannot be on with is_ocn .\n");
+	fprintf(fd, "#\ton : Start service - Turns on CN services\n");
+	fprintf(fd, "#\toff: Stop service  - Disables CN services\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_CN),
+				labels_bool[DEFAULT_IS_CN]);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_CN),
+				labels_bool[conf->is_cn]);
+
+	/* Active SHM  */
+	fprintf(fd, "# SHM enabled.\n");
+	fprintf(fd, "# Runs server health monitoring module .\n");
+	fprintf(fd, "#\ton : Start service - Runs SHM module\n");
+	fprintf(fd, "#\toff: Stop service  - Deactivates SHM module\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_SHM),
+				labels_bool[DEFAULT_SERVER_SHM]);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_SHM),
+				labels_bool[conf->server_shm]);
+
+	/* Define SHM DAG Client IP */
+	fprintf(fd, "# SHM DAG Client IP.\n");
+	fprintf(fd, "# Requires that DAG packets can only be received by this IP .\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SHM_DAG_CLIENT),
+				DEFAULT_SHM_DAG_CLIENT);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SHM_DAG_CLIENT),
+				conf->shm_dag_client);
+
 
 	/* *
 	 * Virtual Machine Servers 
@@ -613,7 +678,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 		for (int i = 0; i<MAX_ICNS; i++)
 			if ( strlen(conf->icn[i].domain) > 0 )
 			{
-				fprintf(fd, "%s = %d %s\n", find_key_label(keys, CONFIG_ICN), conf->icn[i].id, conf->icn[i].domain);
+				fprintf(fd, "%s = %s %d\n", find_key_label(keys, CONFIG_ICN), conf->icn[i].domain, conf->icn[i].id);
 				written_icns ++;
 			}
 	}
@@ -621,6 +686,21 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf)
 	// No recorded values for ICNs were provided so write the default
 	if ( written_icns == 0 )
 		fprintf(fd, "%s = %s\n", find_key_label(keys, CONFIG_ICN), DEFAULT_ICN_1);
+
+	/* Specifies ICNs to be used */
+	fprintf(fd, "\n# OCNs.\n");
+	fprintf(fd, "# %s = OCN_ID domain. OCN_ID should remain constant and never re-used.\n", find_key_label(keys, CONFIG_OCN));
+	int written_ocns = 0;
+	if ( conf )
+	{
+		for (int i = 0; i<MAX_OCNS; i++)
+			if ( strlen(conf->ocn[i].domain) > 0 )
+			{
+				fprintf(fd, "%s = %s %d\n", find_key_label(keys, CONFIG_OCN), conf->ocn[i].domain, conf->ocn[i].id);
+				written_ocns ++;
+			}
+	}
+
 
 }
 
@@ -785,6 +865,68 @@ switch (codekey) {
 		}
 		else
 			conf->server_telemetry = ival;
+		break;
+
+	case CONFIG_IS_OCN:
+		// If value specified on the command line
+		if ( HAS_UPDATE(*mask, UPDMASK_IS_OCN) ) 
+			break;
+		ival = check_valid_option(value, labels_bool, 2);
+		// Indicate changed value
+		if ( conf->is_ocn != ival )
+			SET_UPDATE(*mask, UPDMASK_IS_OCN);
+		if ( ival < 0)
+		{
+			verbose(LOG_WARNING, "is_ocn value incorrect. Fall back to default.");
+			conf->is_ocn = DEFAULT_IS_OCN;
+		}
+		else
+			conf->is_ocn = ival;
+		break;
+
+
+	case CONFIG_IS_CN:
+		// If value specified on the command line
+		if ( HAS_UPDATE(*mask, UPDMASK_IS_CN) ) 
+			break;
+		ival = check_valid_option(value, labels_bool, 2);
+		// Indicate changed value
+		if ( conf->is_cn != ival )
+			SET_UPDATE(*mask, UPDMASK_IS_CN);
+		if ( ival < 0)
+		{
+			verbose(LOG_WARNING, "is_cn value incorrect. Fall back to default.");
+			conf->is_cn = DEFAULT_IS_CN;
+		}
+		else
+			conf->is_cn = ival;
+		break;
+
+	case CONFIG_SERVER_SHM:
+		// If value specified on the command line
+		if ( HAS_UPDATE(*mask, UPDMASK_SERVER_SHM) ) 
+			break;
+		ival = check_valid_option(value, labels_bool, 2);
+		// Indicate changed value
+		if ( conf->server_shm != ival )
+			SET_UPDATE(*mask, UPDMASK_SERVER_SHM);
+		if ( ival < 0)
+		{
+			verbose(LOG_WARNING, "shm_server value incorrect. Fall back to default.");
+			conf->server_shm = DEFAULT_SERVER_SHM;
+		}
+		else
+			conf->server_shm = ival;
+		break;
+
+	case CONFIG_SHM_DAG_CLIENT:
+		// If value specified on the command line
+		if ( HAS_UPDATE(*mask, UPDMASK_SHM_DAG_CLIENT) ) 
+			break;
+		if ( strcmp(conf->shm_dag_client, value) != 0 )
+			SET_UPDATE(*mask, UPDMASK_SHM_DAG_CLIENT);
+		strcpy(conf->shm_dag_client, value);
+
 		break;
 
 	case CONFIG_SYNCHRO_TYPE:
@@ -1152,16 +1294,57 @@ switch (codekey) {
 
 	case CONFIG_ICN:
 		// If value specified on the command line
-		//if ( HAS_UPDATE(*mask, UPDMASK_ICN) ) 
-		//	break;
-		//printf("Reading ICN data\n");
-		if (sscanf(value, "%d %s", &ival, sval) == 2 && ival > 0 && ival < MAX_ICNS && strcmp(conf->icn[ival].domain, sval) != 0 )
+
+		// Config line can accept one or two arguements (can optionally exclude id)
+		iqual = sscanf(value, "%s %d", sval, &ival);
+		if (! (iqual == 2 && ival >= 0 && ival < MAX_ICNS ) )
+			ival = -1;
+		if (iqual == 1)
+		{
+			ival = 0;
+			for (iqual =0; iqual< MAX_ICNS; iqual++)
+				if (conf->icn[iqual].domain[0] == 0)
+				{
+					ival = iqual;
+					break;
+				}
+		}
+
+		if (0 <= ival && ival < MAX_ICNS)
+		{
 			SET_UPDATE(*mask, UPDMASK_ICN);
-		strcpy(conf->icn[ival].domain, sval);
-		conf->icn[ival].id = ival;
-		printf("Set ICN id %d to domain %s\n", ival, sval);
+			strcpy(conf->icn[ival].domain, sval);
+			conf->icn[ival].id = ival;
+			// printf("Set ICN id %d to domain %s\n", ival, sval);
+		}
 		break;
 
+	case CONFIG_OCN:
+		// If value specified on the command line
+
+		// Config line can accept one or two arguements (can optionally exclude id)
+		iqual = sscanf(value, "%s %d", sval, &ival);
+		if (! (iqual == 2 && ival >= 0 && ival < MAX_OCNS ) )
+			ival = -1;
+		if (iqual == 1)
+		{
+			ival = 0;
+			for (iqual =0; iqual< MAX_OCNS; iqual++)
+				if (conf->ocn[iqual].domain[0] == 0)
+				{
+					ival = iqual;
+					break;
+				}
+		}
+
+		if (0 <= ival && ival < MAX_OCNS)
+		{
+			SET_UPDATE(*mask, UPDMASK_OCN);
+			strcpy(conf->ocn[ival].domain, sval);
+			conf->ocn[ival].id = ival;
+			// printf("Set OCN id %d to domain %s\n", ival, sval);
+		}
+		break;
 
 	case CONFIG_NETWORKDEV:
 		// If value specified on the command line
@@ -1366,6 +1549,12 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon)
 		strcpy(conf->sync_in_pcap,"");
 	}
 	
+	if (conf->is_cn && conf->is_ocn)
+	{
+		verbose(LOG_ERR, "Configuration cannot have both is_cn and is_ocn enabled.");
+		exit(1);
+	}
+
 	return 1;
 }
 
@@ -1377,12 +1566,16 @@ void config_print(int level, struct radclock_config *conf)
 {
 	verbose(level, "RADclock - configuration summary");
 	verbose(level, "radclock version     : %s", conf->radclock_version);
+	verbose(level, "Server CN            : %s", labels_bool[conf->is_cn]);
+	verbose(level, "Server OCN           : %s", labels_bool[conf->is_ocn]);
 	verbose(level, "Configuration file   : %s", conf->conffile);
 	verbose(level, "Log file             : %s", conf->logfile);
 	verbose(level, "Verbose level        : %s", labels_verb[conf->verbose_level]);
 	verbose(level, "Client sync          : %s", labels_sync[conf->synchro_type]);
 	verbose(level, "Server IPC           : %s", labels_bool[conf->server_ipc]);
 	verbose(level, "Server Telemetry     : %s", labels_bool[conf->server_telemetry]);
+	verbose(level, "Server SHM           : %s", labels_bool[conf->server_shm]);
+	verbose(level, "SHM DAG Client       : %s", conf->shm_dag_client);
 	verbose(level, "Server NTP           : %s", labels_bool[conf->server_ntp]);
 	verbose(level, "Server VM_UDP        : %s", labels_bool[conf->server_vm_udp]);
 	verbose(level, "Server XEN           : %s", labels_bool[conf->server_xen]);
@@ -1414,4 +1607,7 @@ void config_print(int level, struct radclock_config *conf)
 		if ( strlen(conf->icn[i].domain) > 0 )
 			verbose(level, "ICN                  : %d %s", conf->icn[i].id, conf->icn[i].domain);
 
+	for (int i = 0; i<MAX_OCNS; i++)
+		if ( strlen(conf->ocn[i].domain) > 0 )
+			verbose(level, "OCN                  : %d %s", conf->ocn[i].id, conf->ocn[i].domain);
 }

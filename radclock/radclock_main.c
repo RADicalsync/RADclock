@@ -571,6 +571,20 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->telemetry_data.prior_leapsec_total = 0;
 	gettimeofday(&handle->telemetry_data.last_msg_time,NULL);
 
+	// Set id to 0 to flag initial blank stamp
+	// handle->SHM_stamp.xmit = 0;
+	int SHM_QUEUE_SIZE = 1024;
+	handle->SHM_stamps = (struct radclock_shm_ts *) malloc(sizeof(struct radclock_shm_ts) * SHM_QUEUE_SIZE);
+	handle->SHM_stamp_write_id = 0;
+	handle->SHM_stamps_queue_size = SHM_QUEUE_SIZE;
+	// Set all data in shm stamp queue to 0 to flag no data
+	memset(handle->SHM_stamps, 0, sizeof(struct radclock_shm_ts) * SHM_QUEUE_SIZE);
+
+
+	// struct radclock_shm_ts * SHM_stamps = malloc(sizeof(struct radclock_shm_ts));
+	// int SHM_stamp_write_id;
+	// int SHM_stamps_queue_size;
+
 
 	/*
 	 * Thread related stuff
@@ -942,6 +956,22 @@ start_live(struct radclock_handle *handle)
 		break;
 	}
 
+	/* TELEMETRY_CONSUMER */
+	switch (handle->conf->server_shm) {
+	case BOOL_ON:
+		err = start_thread_SHM(handle);
+		if (err < 0)
+			return (1);
+		break;
+	case BOOL_OFF:
+	default:
+		break;
+	}
+
+
+
+
+
 	/* NTP_SERV */
 	switch (handle->conf->server_ntp) {
 	case BOOL_ON:
@@ -1020,6 +1050,11 @@ start_live(struct radclock_handle *handle)
 	if (handle->conf->server_telemetry == BOOL_ON) {
 		pthread_join(handle->threads[PTH_TELEMETRY_CON], &thread_status);
 		verbose(LOG_NOTICE, "Telemetry server thread is dead.");
+	}
+
+	if (handle->conf->server_shm == BOOL_ON) {
+		pthread_join(handle->threads[PTH_SHM_CON], &thread_status);
+		verbose(LOG_NOTICE, "SHM module thread is dead.");
 	}
 
 	pthread_join(handle->threads[PTH_TRIGGER], &thread_status);
