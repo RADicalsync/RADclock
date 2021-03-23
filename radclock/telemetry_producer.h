@@ -168,7 +168,7 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
         // bytes_written += ring_buffer_write(&header_data, sizeof(Radclock_Telemetry_Latest), shared_memory_handle, ring_write_pos);
         for (int i = 0; i < ICN_Count; i++)
         {
-            int time_server_id = handle->conf->time_server_icn_indexes[time_server_id];
+            int time_server_id = handle->conf->time_server_icn_indexes[i];
             unsigned int status_word = handle->rad_data[time_server_id].status;
             int ICN_id = handle->conf->time_server_icn_mapping[time_server_id]; ;
             double uA = (float)(rand()%1000) * 0.001; 
