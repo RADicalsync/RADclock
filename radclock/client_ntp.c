@@ -35,6 +35,8 @@
 #include <arpa/inet.h>
 //#include <netinet/in.h>
 
+#include <wolfssl/wolfcrypt/sha.h>
+
 #include <errno.h>
 #include <netdb.h>
 #include <pthread.h>
@@ -56,6 +58,7 @@
 #include "misc.h"
 #include "pthread_mgr.h"
 #include "jdebug.h"
+#include "ntp_auth.h"
 
 #define NTP_MIN_SO_TIMEOUT 5000		/* units of [mus] */
 #define NTP_INTIAL_SO_TIMEOUT 900000	/* very large in case RTT large */
@@ -185,7 +188,6 @@ ntp_client_init(struct radclock_handle *handle)
 }
 
 
-
 /* Create a fresh NTP request pkt.
  * Each call will return a unique pkt since the vcounter is read afresh.
  * Potential nonce uniqueness failure due to finite resolution is dealt with.
@@ -195,7 +197,7 @@ ntp_client_init(struct radclock_handle *handle)
  */
 static int
 create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
-		struct timeval *xmt_tval)
+		struct timeval *xmt_tval, char * ntp_key, int key_id, int * auth_bytes)
 {
 	static long double last_time = 0.0;		// for timestamp sanity check
 	static l_fp last_xmt = {0,0};				// used to ensure nonce is unique
@@ -279,7 +281,35 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	last_xmt.l_fra = xmt.l_fra;
 	
 	UTCld_to_timeval(&time, xmt_tval);			// need to pass back a timeval
+
+	// If this host is the CN and communicating to a OCN then perform in band signaling
+	if (ntp_key && handle->conf->is_cn && IS_PRIVATE_KEY(key_id))
+		pkt->refid = htonl(1);
+
+	// Tell the client that the same key was used for auth in reply
+	if (ntp_key)
+	{
+		/* Authentication data structures*/
+		unsigned char pck_dgst[20];
+		Sha sha;
+
+		pkt->exten[0] = htonl(key_id);
+
+		// Sign reply with key
+		wc_InitSha(&sha);
+		wc_ShaUpdate(&sha, ntp_key, 20);
+		wc_ShaUpdate(&sha, pkt, LEN_PKT_NOMAC);
+		wc_ShaFinal(&sha, pck_dgst);
+
+		memcpy(&pkt->mac[0], pck_dgst, 20);
+
+		*auth_bytes = 24;
+
+	} else
+		*auth_bytes = 0;
 	
+
+
 	return (0);
 }
 
@@ -354,6 +384,20 @@ ntp_client(struct radclock_handle *handle)
 	pthread_mutex_unlock(&alarm_mutex);
 
 	/* Set to data for this server */
+	int ocn_id = -1;
+	if (handle->conf->is_cn) // Only attempt authenticated ntp communication to OCNs from CN
+		ocn_id = handle->conf->time_server_ocn_mapping[sID];
+
+	char * ntp_key = NULL;
+	if (ocn_id > -1 && ocn_id < MAX_NTP_KEYS && MAX_NTP_KEYS && handle->ntp_keys)
+		ntp_key = handle->ntp_keys[ocn_id];
+	
+	if (handle->conf->is_cn && ocn_id > -1 && !ntp_key ) // Only attempt authenticated ntp communication to OCNs from CN
+	{
+		verbose(LOG_ERR, "NTPclient: NTP request failed, CN requires NTP key to communicate to OCN");
+		return(1);
+	}
+
 	client = &handle->ntp_client[sID];
 	server = &handle->ntp_server[sID];
 	timerid = &ntpclient_timerid[sID];
@@ -407,15 +451,16 @@ ntp_client(struct radclock_handle *handle)
 	 * distinct stamps sent in close proximity (and potentially overlapping).
 	 */
 	retry = maxattempts;
+	int auth_bytes = 0;
 	while (retry > 0) {
 		
 		/* Create and send an NTP packet */
-		ret = create_ntp_request(handle, &spkt, &tv);
+		ret = create_ntp_request(handle, &spkt, &tv, ntp_key, ocn_id, &auth_bytes);
 		if (ret)
 			continue;	// retry never decremented ==> inf loop if create always fails!
 
 		ret = sendto(client->socket,
-				(char *)&spkt, LEN_PKT_NOMAC /* No auth */, 0,
+				(char *)&spkt, LEN_PKT_NOMAC + auth_bytes, 0,
 				(struct sockaddr *)&client->s_to, socklen);
 
 		if (ret < 0) {

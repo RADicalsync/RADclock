@@ -57,6 +57,11 @@
 #include "create_stamp.h"
 #include "jdebug.h"
 
+// Required to authenticate some packets
+#include "ntp_auth.h"
+#include <wolfssl/wolfcrypt/sha.h>
+
+
 
 // TODO: we should not have to redefine this
 # ifndef useconds_t
@@ -184,7 +189,7 @@ check_ipv6(struct ip6_hdr *ip6h, int remaining)
 int
 get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 		struct sockaddr_storage *ss_src, struct sockaddr_storage *ss_dst,
-		int *ttl)
+		int *ttl, int *remaining)
 {
 	struct sockaddr_in *sin;
 	struct sockaddr_in6 *sin6;
@@ -193,12 +198,12 @@ get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 	struct udphdr *udph;
 	linux_sll_header_t *sllh;
 	uint16_t proto;
-	int remaining;
+	// int remaining;
 	int err;
 
 	JDEBUG
 
-	remaining = ((struct pcap_pkthdr *)packet->header)->caplen;
+	*remaining = ((struct pcap_pkthdr *)packet->header)->caplen;
 
 	switch (packet->type) {
 
@@ -208,7 +213,7 @@ get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 	 */
 	case DLT_EN10MB:
 		iph = (struct ip *)(packet->payload + sizeof(struct ether_header));
-		remaining -= sizeof(struct ether_header);
+		*remaining -= sizeof(struct ether_header);
 		ip6h = NULL;
 		break;
 
@@ -225,7 +230,7 @@ get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 		if (ntohs(sllh->hatype) != 0x0001) {
 			iph = (struct ip *)(packet->payload + sizeof(struct ether_header) +
 					sizeof(linux_sll_header_t));
-			remaining -= sizeof(struct ether_header);
+			*remaining -= sizeof(struct ether_header);
 			ip6h = NULL;
 			break;
 		}
@@ -238,9 +243,9 @@ get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 		case (ETHERTYPE_IP):
 			ip6h = NULL;
 			iph = (struct ip *)(packet->payload + sizeof(linux_sll_header_t));
-			remaining -= sizeof(linux_sll_header_t);
+			*remaining -= sizeof(linux_sll_header_t);
 
-			err = check_ipv4(iph, remaining);
+			err = check_ipv4(iph, *remaining);
 			if (err)
 				return (1);
 
@@ -253,16 +258,16 @@ get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 			*ttl = iph->ip_ttl;
 
 			udph = (struct udphdr *)((char *)iph + (iph->ip_hl * 4));
-			remaining -= sizeof(struct ip);
+			*remaining -= sizeof(struct ip);
 			break;
 
 		/* IPv6 */
 		case (ETHERTYPE_IPV6):
 			iph = NULL;
 			ip6h = (struct ip6_hdr *)(packet->payload + sizeof(linux_sll_header_t));
-			remaining -= sizeof(linux_sll_header_t);
+			*remaining -= sizeof(linux_sll_header_t);
 
-			err = check_ipv6(ip6h, remaining);
+			err = check_ipv6(ip6h, *remaining);
 			if (err)
 				return (1);
 
@@ -275,7 +280,7 @@ get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 			*ttl = ip6h->ip6_hops;
 
 			udph = (struct udphdr *)((char *)ip6h + sizeof(struct ip6_hdr));
-			remaining -= sizeof(struct ip6_hdr);
+			*remaining -= sizeof(struct ip6_hdr);
 			break;
 
 		/* IEEE 1588 over Ethernet */
@@ -295,22 +300,22 @@ get_valid_ntp_payload(radpcap_packet_t *packet, struct ntp_pkt **ntp,
 		break;
 	}
 
-	if (remaining < sizeof(struct udphdr)) {
+	if (*remaining < sizeof(struct udphdr)) {
 		verbose(LOG_WARNING, "Broken UDP datagram");
 		return (1);
 	}
 
 	*ntp = (struct ntp_pkt *)((char *)udph + sizeof(struct udphdr));
-	remaining -= sizeof(struct udphdr);
+	*remaining -= sizeof(struct udphdr);
 
 	/*
 	 * Make sure the NTP packet is not truncated. A normal NTP packet is at
 	 * least 48 bytes long, but a control or private request is as small as 12
 	 * bytes.
 	 */
-	if (remaining < 12) {
+	if (*remaining < 12) {
 		verbose(LOG_WARNING, "NTP packet truncated, payload is %d bytes "
-			"instead of at least 12 bytes", remaining);
+			"instead of at least 12 bytes", *remaining);
 		return (1);
 	}
 
@@ -492,7 +497,13 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 					return (1);
 				}
 			}
+			if (stamp->auth_key_id != new->auth_key_id) {
+				verbose(LOG_WARNING, "Found NTP request with non matching auth keys %d - %d.", stamp->auth_key_id, new->auth_key_id);
+				return (1);
+			}
+
 			foundhalfstamptofill = 1;		// qel will point to stamp to fill
+
 			break;
 		}
 		qel = qel->next;
@@ -526,6 +537,8 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	stamp->type = STAMP_NTP;
 	if (mode == MODE_CLIENT) {
 		stamp->id = new->id;
+		stamp->auth_key_id = new->auth_key_id;
+
 		BST(stamp)->Ta = BST(new)->Ta;
 		strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
 	} else {
@@ -544,6 +557,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	/* Print out queue from head to tail (oldest in queue at top of printout). */
 	if (VERB_LEVEL>1) {
 		qel = q->start;
+
 		while (qel != NULL) {
 			stamp = &qel->stamp;
 			verbose(VERB_DEBUG, "  stamp queue dump: %llu %.6Lf %.6Lf %llu %llu %s",
@@ -676,13 +690,63 @@ bad_packet_server(struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
 }
 
 /*
+ * Check the server's reply authentication signature.
+ * If this host is a CN and the server reply is from OCN a SHA signature is required.
+ * If the signature is not present or incorrect discard the packet
+ */
+int
+check_auth(struct radclock_handle *handle, struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
+		struct sockaddr_storage *ss_src, int ntp_packet_size)
+{
+	char ** key_data = handle->ntp_keys;
+	int auth_pass = 0;
+	if (ntp_packet_size == 48)
+		auth_pass = 1;
+	else if (ntp_packet_size > 48 && key_data) // If the client has requested authentication and we have some key data
+	{
+		unsigned int key_id = 0;
+		/* Authentication data structures*/
+		unsigned char pck_dgst[20];
+		Sha sha;	
+
+		key_id = ntohl( ntp->exten[0] );
+
+		if (key_id > 0 && key_id < MAX_NTP_KEYS && key_data[key_id])
+		{
+
+			wc_InitSha(&sha);
+			wc_ShaUpdate(&sha, key_data[key_id], 20);
+			wc_ShaUpdate(&sha, ntp, 48);
+			wc_ShaFinal(&sha, pck_dgst);
+			// printf("size:%d %s %d key\n", n, key_data[key_id], key_id);
+
+			if  (memcmp(pck_dgst, ntp->mac, 20) == 0)
+			{
+				// verbose(LOG_WARNING, "PCAP - authentication SUCCESS");
+				auth_pass = 1;
+			}
+			else
+				verbose(LOG_WARNING, "PCAP - authentication FAILURE");
+		}
+		else
+			verbose(LOG_WARNING, "PCAP - authentication request invalid key_id %d", key_id);
+
+	}
+	else if ( !key_data )
+		verbose(LOG_ERR, "PCAP - authentication request when this server has no keys");
+	return 1 - auth_pass;
+}
+
+
+
+/*
  * Create a stamp structure, fill it with client side information and pass it
  * for insertion in the stamp queue.  The server address used by the client
  * to send the request is essentially a serverID: record it here.
  */
 int
 push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
-	vcounter_t *vcount, struct sockaddr_storage *ss_dst)
+	vcounter_t *vcount, struct sockaddr_storage *ss_dst, int ntp_packet_size)
 {
 	struct stamp_t stamp;
 
@@ -690,6 +754,11 @@ push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 
 	stamp.id = ((uint64_t) ntohl(ntp->xmt.l_int)) << 32;
 	stamp.id |= (uint64_t) ntohl(ntp->xmt.l_fra);
+	if (ntp_packet_size == 48)
+		stamp.auth_key_id = -1;
+	else
+		stamp.auth_key_id = ntohl(ntp->exten[0]); // Get the NTP auth key id
+
 	stamp.type = STAMP_NTP;
 	
 	if (ss_dst->ss_family == AF_INET)
@@ -716,7 +785,7 @@ push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
  */
 int
 push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
-		vcounter_t *vcount, int *ttl)
+		vcounter_t *vcount, int *ttl, int ntp_packet_size)
 {
 	struct stamp_t stamp;
 
@@ -725,6 +794,10 @@ push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 	stamp.type = STAMP_NTP;
 	stamp.id = ((uint64_t) ntohl(ntp->org.l_int)) << 32;
 	stamp.id |= (uint64_t) ntohl(ntp->org.l_fra);
+	if (ntp_packet_size == 48)
+		stamp.auth_key_id = -1;
+	else
+		stamp.auth_key_id = ntohl(ntp->exten[0]); // Get the NTP auth key id
 
 	stamp.ttl = *ttl;
 	stamp.refid = ntohl(ntp->refid);
@@ -749,7 +822,7 @@ push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
  * checks and insertion/matching in the stamp queue.
  */
 int
-update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
+update_stamp_queue(struct radclock_handle *handle, struct stamp_queue *q, radpcap_packet_t *packet,
 		struct timeref_stats *stats)
 {
 	struct ntp_pkt *ntp;
@@ -758,6 +831,7 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
 	int ttl;
 	int err;
 	char ipaddr[INET6_ADDRSTRLEN];
+	int ntp_packet_size;
 
 	JDEBUG
 
@@ -767,7 +841,7 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
 		return (-1);
 	}
 
-	err = get_valid_ntp_payload(packet, &ntp, &ss_src, &ss_dst, &ttl);
+	err = get_valid_ntp_payload(packet, &ntp, &ss_src, &ss_dst, &ttl, &ntp_packet_size);
 	if (err) {
 		verbose(LOG_WARNING, "Not an NTP packet.");
 		return (1);
@@ -792,14 +866,17 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
 		err = bad_packet_client(ntp, ss, &ss_dst, stats);
 		if (err)
 			break;
-		err = push_client_halfstamp(q, ntp, &vcount, &ss_dst);
+		err = push_client_halfstamp(q, ntp, &vcount, &ss_dst, ntp_packet_size);
 		break;
 
 	case MODE_SERVER:		// here ss_src is the address the server responded with
 		err = bad_packet_server(ntp, ss, &ss_src, stats);
 		if (err)
 			break;
-		err = push_server_halfstamp(q, ntp, &vcount, &ttl);
+		err = check_auth(handle, ntp, ss, &ss_src, ntp_packet_size);
+		if (err)
+			break;			
+		err = push_server_halfstamp(q, ntp, &vcount, &ttl, ntp_packet_size);
 		break;
 
 	default:
@@ -993,7 +1070,7 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 		 *     [ do not want to fill stamp queue with the entire trace file ! ]
 		 *  1: halfstamp didn't result in match
 	 	*/
-		err = update_stamp_queue(q, packet, stats);
+		err = update_stamp_queue(handle, q, packet, stats);
 		switch (err) {
 		case -1:
 			verbose(LOG_ERR, "Stamp queue error");
@@ -1029,7 +1106,7 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 			} else {		// found a packet, process it
 				stats->ref_count++;
 				/* Convert packet to stamp and push it to the stamp queue */
-				err = update_stamp_queue(q, packet, stats);
+				err = update_stamp_queue(handle, q, packet, stats);
 
 				/* Error codes as for dead case */
 				if (err == -1)

@@ -29,6 +29,8 @@
 #ifndef _PTHREAD_MGR_H
 #define _PTHREAD_MGR_H
 
+// For definition of siginfo_t
+#include <signal.h>
 
 /*
  * Pthread description for their IDs
@@ -80,7 +82,7 @@ void* thread_trigger(void *c_handle);
 void* thread_ntp_server(void *c_handle);
 void* thread_vm_udp_server(void *c_handle);
 void* thread_telemetry_consumer(void *c_handle);
-void* thread_shm(void *c_handle);
+void thread_shm(void *c_handle);
 
 
 int trigger_work(struct radclock_handle *handle);

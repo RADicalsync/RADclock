@@ -14,8 +14,8 @@ Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, double a
     data.header.packetId = packetId;
 
     // Sanity check on PICN
-    if (PICN < 0 || PICN >= ICN_Count)
-        verbose(LOG_ERR, "Telemetry Producer - Error PICN is set to an invalid value %d ICN_Count:%d\n", PICN, ICN_Count);
+    // if (PICN < 0 || PICN >= ICN_Count)
+    //     verbose(LOG_ERR, "Telemetry Producer - Error PICN is set to an invalid value %d ICN_Count:%d\n", PICN, ICN_Count);
 
     // OCN data 
     data.PICN = PICN;

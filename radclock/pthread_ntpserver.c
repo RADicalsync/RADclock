@@ -60,107 +60,7 @@
 #include "misc.h"
 #include "jdebug.h"
 #include "config_mgr.h"
-
-
-/*
- * Convert char string into byte array
-*/
-char *
-cstr_2_bytes(char * key_str)
-{
-	int num_bytes = strlen(key_str) / 2;
-	
-	char * new_crypt_data = malloc(sizeof(char)*num_bytes);
-	char * pos = key_str;
-	for (size_t count = 0; count < num_bytes; count++) {
-        	sscanf(pos, "%2hhx", &new_crypt_data[count]);
-        	pos += 2;
-    	}
-	return new_crypt_data;
-}
-
-
-/*
- * Adds authentication key
-*/
-void
-add_auth_key(char ** key_data, char * buff)
-{
-	char crypt_type[16];
-	char crypt_key[64];
-	int key_id = -1;
-
-	if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key ) == 3)
-	{
-		if (0 < key_id && key_id < 129)
-		{
-			// Data for this key has already been inserted. Warn user
-			if (key_data[key_id])
-				verbose(LOG_WARNING, "Authentication file read: Key id %d has already been allocated", key_id);
-
-			if (strcmp("SHA1", crypt_type) == 0)
-			{           
-					key_data[key_id] = cstr_2_bytes(crypt_key);
-			}
-			else
-				verbose(LOG_WARNING, "Authentication file read: Invalid key type. Only MD5 is currently supported got %s", crypt_type);
-		}
-		else
-		{
-			verbose(LOG_WARNING, "Authentication file read: key ids must be in range 1-127");
-		}
-	}
-}
-
-/*
- * Read authentication keys to validate requests
- */
-char** read_keys()
-{
-	FILE * fp = fopen("/etc/radclock.keys", "r");
-	if (fp == 0)
-	{
-		verbose(LOG_WARNING, "No authentication keys present within /etc/radclock.keys");
-		return 0;
-	}
-	// Currently allow for up to 128 keys. We could make this more dynamic in future
-	char ** key_data = malloc(sizeof(char *)*128);
-	memset(key_data, 0, sizeof(char *)*128);
-	
-	char buff[128];
-	int buff_size = 0;
-	int ignore_content = 0;
-
-	buff[0] = 0;
-	char c;
-	while (! feof(fp) )
-	{
-		fread(&c, 1, 1, fp);
-		if (c == '#')
-			ignore_content = 1;
-
-		if (! ignore_content && buff_size < 126)
-		{
-			buff[buff_size] = c;
-			buff_size ++;
-		}
-
-		if (c == '\n')
-		{
-			buff[buff_size] = 0;
-			add_auth_key(key_data, buff);
-			buff_size = 0;
-			ignore_content = 0;
-		}
-	}
-
-	// Check if the last line with no '\n' had data
-	buff[buff_size] = 0;
-        add_auth_key(key_data, buff);
-	
-	fclose(fp);
-	return key_data;
-}
+#include "ntp_auth.h"
 
 
 
@@ -227,7 +127,7 @@ thread_ntp_server(void *c_handle)
 	unsigned char pck_dgst[20];
 	Sha sha;	
 
-	char ** key_data = read_keys();
+	char ** key_data = handle->ntp_keys;
 	
 
 	/* Bind socket */
@@ -326,28 +226,41 @@ thread_ntp_server(void *c_handle)
 		if (n > 48 && key_data)
 		{
 			key_id = ntohl( ((struct ntp_pkt*)pkt_in)->exten[0] );
-			if (key_id > 0 && key_id < 128 && key_data[key_id])
+
+			if (key_id >= 0 && key_id < MAX_NTP_KEYS && key_data[key_id])
 			{
+
 				wc_InitSha(&sha);
 				wc_ShaUpdate(&sha, key_data[key_id], 20);
 				wc_ShaUpdate(&sha, pkt_in, 48);
-				wc_ShaFinal(pck_dgst, &sha);
+				wc_ShaFinal(&sha, pck_dgst);
 				// printf("size:%d %s %d key\n", n, key_data[key_id], key_id);
 
 				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0)
 				{
-					verbose(LOG_WARNING, "NTP client authentication SUCCESS");
+					// verbose(LOG_WARNING, "NTP Server authentication SUCCESS");
+					if (IS_PRIVATE_KEY(key_id) && handle->conf->is_ocn) // If the key ID is a private NTP key, then this packet must have originated from the CN
+					{
+						// Check for CN inband signaling
+						if (((struct ntp_pkt*)pkt_in)->refid)
+						{
+							int inband_signal = ntohl(((struct ntp_pkt*)pkt_in)->refid);
+							handle->inband_signal = inband_signal;
+							verbose(LOG_WARNING, "NTP Server received CN inband signal: %d", inband_signal);
+						}
+					}
+
 					auth_pass = 1;
 				}
 				else
-					verbose(LOG_WARNING, "NTP client authentication FAILURE");
+					verbose(LOG_WARNING, "NTP Server authentication FAILURE");
 				auth_bytes = 24;
 			}
 			else
-				verbose(LOG_WARNING, "NTP client authentication request invalid key_id %d", key_id);
+				verbose(LOG_WARNING, "NTP Server authentication request invalid key_id %d", key_id);
 		}
 		else if ( !key_data )
-			verbose(LOG_WARNING, "NTP client authentication request when this server has no keys");
+			verbose(LOG_ERR, "NTP Server authentication request when this server has no keys");
 		/* Fill the outgoing packet
 		 * Fixed point conversion of rootdispersion and rootdelay with up-down round up
 		 * NTP_VERSION:  add an abusive value to enable RAD client<-->server testing
@@ -447,7 +360,7 @@ thread_ntp_server(void *c_handle)
 			wc_InitSha(&sha);
 			wc_ShaUpdate(&sha, key_data[key_id], 20);
 			wc_ShaUpdate(&sha, pkt_out, LEN_PKT_NOMAC);
-			wc_ShaFinal(pck_dgst, &sha);
+			wc_ShaFinal(&sha, pck_dgst);
 			memcpy(pkt_out->mac, pck_dgst, 20);
 		}
 

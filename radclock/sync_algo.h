@@ -128,6 +128,7 @@ struct stamp_t {
 	uint32_t refid;
 	double rootdelay;
 	double rootdispersion;
+	int auth_key_id; // -1 for non auth ntp, otherwise valid key id
 	union stamp_u {
 		struct unidir_stamp ustamp;
 		struct bidir_stamp  bstamp;

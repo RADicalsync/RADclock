@@ -5,44 +5,76 @@
 #define TELEMETRY_PRODUCER_LOG_PACKET_INTERVAL 1
 #define TRIGGER_CA_ERR_THRESHOLD 1e-3 // 1 ms
 
-int
-active_trigger(struct radclock_handle *handle, long double *radclock_ts)
+void
+update_prior_data(struct radclock_handle *handle)
 {
-
-    // If clock status word has changed
-    if (handle->telemetry_data.prior_status != handle->rad_data.status)
+    if (handle->conf->time_server_icn_count > handle->telemetry_data.prior_data_size)
     {
-        verbose(LOG_NOTICE, "Telemetry Producer - status changed");
-        return 1;
+        struct Ring_Buffer_Prior_Data * new_data = (struct Ring_Buffer_Prior_Data *) malloc( sizeof(struct Ring_Buffer_Prior_Data) * handle->conf->time_server_icn_count);
+        // Copy old data into larger data structure
+        memcpy(new_data, handle->telemetry_data.prior_data, sizeof(struct Ring_Buffer_Prior_Data) * handle->telemetry_data.prior_data_size);
+        // Zero the data in the data structures
+        memset(&new_data[handle->telemetry_data.prior_data_size+1], sizeof(struct Ring_Buffer_Prior_Data) * (handle->telemetry_data.prior_data_size - handle->conf->time_server_icn_count), 0);
+
+        free(handle->telemetry_data.prior_data);
+
+        // Set the newly allocated data last message time to current time.
+        // Allows some time for the stats on the clocks to get set instead of immediately timing out
+        // vcounter_t vcount;
+        // radclock_get_vcounter(handle->clock, &vcount);
+        // long double radclock_ts;
+        // read_RADabs_UTC(&handle->rad_data[handle->pref_sID], &vcount, &radclock_ts, 0);
+        // for (int i = handle->telemetry_data.prior_data_size; i < handle->conf->time_server_icn_count; i++)
+        //     new_data[i].last_msg_time = radclock_ts;
+
+        handle->telemetry_data.prior_data_size = handle->conf->time_server_icn_count;
+
+        handle->telemetry_data.prior_data = new_data;
     }
+}
 
-    // If PICN has changed - currently doesn't exist
-    // if (handle->telemetry_data.prior_PICN != handle->rad_data.PICN)
-    //     return true;
+int
+active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID, int PICN, int is_sID_ICN)
+{
+    // Check if the number of clocks has increased
+    update_prior_data(handle);
 
-    // If clock underlying asymmetry has changed - currently doesn't exist
-    // if (handle->telemetry_data.prior_uA != handle->rad_data.uA)
-        // return true;
+    // If PICN has changed
+    if (handle->telemetry_data.prior_PICN != PICN)
+        return 1;
 
-    // If clock underlying asymmetry has changed - currently doesn't exist
-    if (handle->rad_data.ca_err > TRIGGER_CA_ERR_THRESHOLD)
+
+    if (is_sID_ICN) // If the time_server is non ICN then we don't check that clocks data as a trigger. Mapping of -1 means time_server is non ICN
     {
-        verbose(LOG_NOTICE, "Telemetry Producer - Error bound exceeded");
-        return 1;
-    }
+        // If clock status word has changed
+        if (handle->telemetry_data.prior_data[sID].prior_status != handle->rad_data[sID].status)
+        {
+            verbose(LOG_NOTICE, "Telemetry Producer - status changed");
+            return 1;
+        }
 
-    // If clock has just passed a leap second
-    if (handle->rad_data.leapsec_total != handle->telemetry_data.prior_leapsec_total)
-    {
-        verbose(LOG_NOTICE, "Telemetry Producer - Change in leap seconds %d");
-        return 1;
-    }
+        // If clock underlying asymmetry has changed - currently doesn't exist
+        // if (handle->telemetry_data.prior_uA != handle->rad_data[sID].uA)
+            // return true;
 
+        // If clock underlying asymmetry has changed - currently doesn't exist
+        if (handle->rad_data[sID].ca_err > TRIGGER_CA_ERR_THRESHOLD)
+        {
+            verbose(LOG_NOTICE, "Telemetry Producer - Error bound exceeded");
+            return 1;
+        }
+
+        // If clock has just passed a leap second
+        if (handle->rad_data[sID].leapsec_total != handle->telemetry_data.prior_data[sID].prior_leapsec_total)
+        {
+            verbose(LOG_NOTICE, "Telemetry Producer - Change in leap seconds %d");
+            return 1;
+        }
+    }
 
     vcounter_t vcount;
     radclock_get_vcounter(handle->clock, &vcount);
-    read_RADabs_UTC(&handle->rad_data, &vcount, radclock_ts, 0);
-    long double a = 0.123456789;
+    read_RADabs_UTC(&handle->rad_data[handle->pref_sID], &vcount, radclock_ts, 0);
 
     if (*radclock_ts - handle->telemetry_data.last_msg_time >= TELEMETRY_KEEP_ALIVE_SECONDS)
     {
@@ -54,7 +86,7 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts)
 }
 
 int
-push_telemetry(struct radclock_handle *handle)
+push_telemetry(struct radclock_handle *handle, int sID)
 {
     // If telemetry is disabled return
     if (handle->conf->server_telemetry != BOOL_ON) {
@@ -64,39 +96,48 @@ push_telemetry(struct radclock_handle *handle)
     // Check if we need to send a keep alive message
     long double radclock_ts = 0;
     int keep_alive_trigger = 0;
+    int is_sID_ICN = 0;
+    int PICN = handle->conf->time_server_icn_mapping[handle->pref_sID]; // Transform the preferred sID as ICN id. If the pref SID is non ICN set to -1
 
-    if (active_trigger(handle, &radclock_ts))
+    if (sID > -1 && handle->conf->time_server_icn_mapping[sID] != -1)
+        is_sID_ICN = 1;
+
+    if (active_trigger(handle, &radclock_ts, sID, PICN, is_sID_ICN))
     {
         // If the telemetry data changed then use the time of the last packet
         // Otherwise use the current time as its a keep alive message - set flag keep_alive_trigger
         if (radclock_ts == 0)
-            read_RADabs_UTC(&handle->rad_data, &handle->rad_data.last_changed,  &radclock_ts, 0);
+            read_RADabs_UTC(&handle->rad_data[sID], &handle->rad_data[sID].last_changed,  &radclock_ts, 0);
         else
             keep_alive_trigger = 1;
         
-        push_telemetry_batch(handle->telemetry_data.packetId, &handle->telemetry_data.write_pos, handle->telemetry_data.buffer, &handle->telemetry_data.holding_buffer_size, handle->telemetry_data.holding_buffer, handle, radclock_ts, keep_alive_trigger);
+        push_telemetry_batch(handle->telemetry_data.packetId, &handle->telemetry_data.write_pos, handle->telemetry_data.buffer, &handle->telemetry_data.holding_buffer_size, handle->telemetry_data.holding_buffer, handle, radclock_ts, keep_alive_trigger, PICN, handle->conf->time_server_icn_count);
 
         handle->telemetry_data.packetId += 1;
         handle->telemetry_data.last_msg_time = radclock_ts;
-        handle->telemetry_data.prior_status = handle->rad_data.status;
-        handle->telemetry_data.prior_PICN = 0;  // doesn't exist yet
-        handle->telemetry_data.prior_uA = 0; // doesn't exist yet
-        handle->telemetry_data.prior_leapsec_total = handle->rad_data.leapsec_total;
-    }
+        handle->telemetry_data.prior_PICN = PICN; 
+        
+        if (is_sID_ICN)
+        {
+            handle->telemetry_data.prior_data[sID].prior_status = handle->rad_data[sID].status;
+            handle->telemetry_data.prior_data[sID].prior_uA = 0; // doesn't exist yet
+            handle->telemetry_data.prior_data[sID].prior_leapsec_total = handle->rad_data[sID].leapsec_total;
+        }
 
+    }
 
     return (0);
 }
 
 int 
-push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_handle, int *holding_buffer_size, void* holding_buffer, struct radclock_handle *handle, long double timestamp, int keep_alive_trigger)
+push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_handle, int *holding_buffer_size, void* holding_buffer, struct radclock_handle *handle, long double timestamp, int keep_alive_trigger,  int PICN, int ICN_Count)
 {
     int bytes_written = 0;
 
     // Setup dummy clock stats
     double asym = 234;
-    int ICN_Count = 30;
-    int PICN = 25; 
+    // int ICN_Count = 30;
+    // int PICN = psID;
 
     // If the packet is larger than the holding buffer then make a new larger holding buffer
     int packet_size = sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_ICN_Latest) * ICN_Count  + sizeof(Radclock_Telemetry_Footer);
@@ -127,11 +168,11 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
         // bytes_written += ring_buffer_write(&header_data, sizeof(Radclock_Telemetry_Latest), shared_memory_handle, ring_write_pos);
         for (int i = 0; i < ICN_Count; i++)
         {
-            // Dummy ICN data
-            unsigned int status_word = handle->rad_data.status;
-            int ICN_id = i+1;
+            int time_server_id = handle->conf->time_server_icn_indexes[time_server_id];
+            unsigned int status_word = handle->rad_data[time_server_id].status;
+            int ICN_id = handle->conf->time_server_icn_mapping[time_server_id]; ;
             double uA = (float)(rand()%1000) * 0.001; 
-            double err_bound = handle->rad_data.ca_err;
+            double err_bound = handle->rad_data[time_server_id].ca_err;
 
             // Create a telemetry ICN specific packet
             Radclock_Telemetry_ICN_Latest * ICN_data = (Radclock_Telemetry_ICN_Latest *) (holding_buffer + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_ICN_Latest)*i);

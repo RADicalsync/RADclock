@@ -61,7 +61,7 @@ struct radclock_shm_ts {
 	long double	Te;		// timestamp [sec] of departure from server
 	vcounter_t	Tf;		// vcount timestamp [counter value] of pkt returning to client
 	char server_ipaddr[INET6_ADDRSTRLEN];
-
+	int icn_id;
 	uint64_t id;
 };
 
@@ -164,6 +164,9 @@ struct radclock_handle {
 	/* Telemetry shared memory handle */
 	Ring_Buffer_Producer_Data telemetry_data;	
 
+	/* Keys used to authenticate NTP packets */
+	char** ntp_keys;
+
 	/* Common data for the daemon */
 	int is_daemon;
 	radclock_runmode_t 		run_mode;
@@ -201,7 +204,10 @@ struct radclock_handle {
 	 * of parameters for output.
 	 */
 	void *peers;
-	
+
+	/* Inband signaling data. Set by CN received by OCNs */
+	int inband_signal;
+
 };
 
 

@@ -52,6 +52,7 @@ radclock_SOURCES = \
 		create_stamp.c \
 		fixedpoint.c \
 		config_mgr.c \
+		ntp_auth.c \
 		rawdata.c \
 		pthread_mgr.c \
 		pthread_ntpserver.c \

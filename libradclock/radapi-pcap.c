@@ -46,13 +46,14 @@
 int
 pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode, u_int custom)
 {
+
 	if (clock == NULL) {
 		logger(RADLOG_ERR, "Clock handle is null, can't set mode");
 		return (-1);
 	}
 
 	/* working from non-live capture return silently */
-	if (!pcap_fileno(p_handle)) {
+	if (pcap_fileno(p_handle) == -1) {
 		return (0);
 	}
 

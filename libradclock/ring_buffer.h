@@ -54,6 +54,14 @@
 #define RADCLOCK_ERROR_DATA_TOO_LARGE -4
 #define RADCLOCK_ERROR_OVERIDDEN_DURING_COPY -5
 
+struct Ring_Buffer_Prior_Data
+{
+    unsigned int prior_status;
+    double prior_uA;
+    int prior_leapsec_total;
+	// long double last_msg_time;
+};
+
 struct Ring_Buffer_Producer_Data
 {
     int buffer_size;
@@ -66,10 +74,13 @@ struct Ring_Buffer_Producer_Data
     int holding_buffer_size;
     void* holding_buffer;
 
-    unsigned int prior_status;
     int prior_PICN;
-    double prior_uA;
-    int prior_leapsec_total;
+
+    struct Ring_Buffer_Prior_Data * prior_data;
+    int prior_data_size;
+    // unsigned int prior_status;
+    // double prior_uA;
+    // int prior_leapsec_total;
 	long double last_msg_time;
 };
 

@@ -72,31 +72,37 @@ void
 find_matching_shm_packets(struct dag_cap dag_msg, struct radclock_shm_ts * SHM_stamps, int queue_size)
 {
     uint64_t id = ((uint64_t) ntohl(dag_msg.server_reply_org.l_int)<<32) |((uint64_t) ntohl(dag_msg.server_reply_org.l_fra));
+    char server_ipaddr[INET6_ADDRSTRLEN];
+    strcpy( server_ipaddr, inet_ntoa(dag_msg.ip));
+    // verbose(LOG_INFO, "Attempting match on ip %s", server_ipaddr);
     for (int i =0; i < queue_size; i++)
     {
-        if (SHM_stamps[i].id == id)
+        // if (SHM_stamps[i].id == id && strcmp(server_ipaddr, SHM_stamps[i].server_ipaddr) != 0)
+        //     verbose(LOG_INFO, "Mis match on ip %s %s ", server_ipaddr, SHM_stamps[i].server_ipaddr);
+
+        if (SHM_stamps[i].id == id && strcmp(server_ipaddr, SHM_stamps[i].server_ipaddr) == 0)
         {
             // Make temp copy of variable incase it gets overriden while reading
             struct radclock_shm_ts radclock_shm_ts_cpy = SHM_stamps[i];
 
             // Double check that the data didn't change while making temp copy
-            if (radclock_shm_ts_cpy.id == id)
+            if (radclock_shm_ts_cpy.id == id && strcmp(server_ipaddr, radclock_shm_ts_cpy.server_ipaddr) == 0)
             {
                 // We are now working on data in local function scope so we don't need to worry about thread race conditions
 
-                verbose(LOG_INFO, "Found matching SHM packet from DAG capture %lu\n", radclock_shm_ts_cpy.id);
+                verbose(LOG_INFO, "Found matching SHM packet from DAG capture %lu ICN:%d %s", radclock_shm_ts_cpy.id, radclock_shm_ts_cpy.icn_id, server_ipaddr);
                 return;
             }
         }
     }
-    verbose(LOG_INFO, "No match found matching SHM packet from DAG capture %lu (%d)\n", SHM_stamps[0].id, queue_size);
+    verbose(LOG_INFO, "No match found matching SHM packet from DAG capture %lu (%d)", SHM_stamps[0].id, queue_size);
 
 }
 
 /*
  * Integrated thread and thread-work function for SHM module
  */
-void *
+void 
 thread_shm(void *c_handle)
 {
 
@@ -109,7 +115,7 @@ thread_shm(void *c_handle)
     if (!handle->conf->is_cn)
     {
 		verbose(LOG_WARNING, "SHM: Disabled - This radclock must set is_cn to on");
-        return ;
+        return;
     }
 
     socket_desc = socket(AF_INET , SOCK_DGRAM , 0);
@@ -145,63 +151,24 @@ thread_shm(void *c_handle)
         return ;
 	}
     
-	
-	//Listen
-	// listen(socket_desc , 3);
-	
-	//Accept and incoming connection
-	// puts("Waiting for incoming connections...");
-	// c = sizeof(struct sockaddr_in);
     struct sockaddr_in client_add;
     while (1)
     {
-        // printf("SHM: awaiting DAG connection\n");
-        // new_socket = accept(socket_desc, (struct sockaddr *)&client, (socklen_t*)&c);
-        // if (new_socket<0)
-        // {
-        //     printf("SHM: no DAG connection - Retrying\n");
-        // }
-        // else
-        // {
-            // while (1)
-            // {
-                // Connected to DAG system
-		        int ret = recvfrom(socket_desc,
-				&dag_msg, sizeof(struct dag_cap), MSG_WAITALL,
-				&client_add, &socklen);
-                // printf("Packet size %d\n");
-                // int bytes = read(new_socket, &dag_msg , sizeof(struct dag_cap));
-                if (ret == sizeof(struct dag_cap) )
-                {
-                    // printf("1 Received packet %s %Lf (%s)\n", inet_ntoa(client_add.sin_addr), dag_msg.cn_send_xmit_ts, inet_ntoa(dag_msg.ip));
-                    // printf("2 Received packet %s\n", inet_ntoa(dag_msg.ip));
-                    if (strcmp(handle->conf->shm_dag_client, inet_ntoa(client_add.sin_addr)) == 0)
-                        find_matching_shm_packets(dag_msg, handle->SHM_stamps, handle->SHM_stamp_write_id);
-                    else
-                    {
-                        verbose(LOG_WARNING, "SHM packet received from unknown IP - Potiential attacker (%s)\n", inet_ntoa(client_add.sin_addr));    
-                    }                    
-                }
-                // else
-                // {
-                //     // printf("%d\n", bytes);
-                //     int tmp_socket = accept4(socket_desc, (struct sockaddr *)&client, (socklen_t*)&c, SOCK_NONBLOCK);
-                //     if (tmp_socket>=0)
-                //     {
-                //         printf("Accepting new connection\n");
-
-                //         close(new_socket);
-                //         new_socket = tmp_socket;
-                //     }
-                //     // else
-                //         // printf("No New connection\n");
-
-                // }
-                
-            // }
-        // }
-        
+        // Connected to DAG system
+        int ret = recvfrom(socket_desc,
+        &dag_msg, sizeof(struct dag_cap), MSG_WAITALL,
+        &client_add, &socklen);
+        if (ret == sizeof(struct dag_cap) )
+        {
+            if (strcmp(handle->conf->shm_dag_client, inet_ntoa(client_add.sin_addr)) == 0)
+                find_matching_shm_packets(dag_msg, handle->SHM_stamps, handle->SHM_stamp_write_id);
+            else
+            {
+                verbose(LOG_WARNING, "SHM packet received from unknown IP - Potiential attacker (%s)\n", inet_ntoa(client_add.sin_addr));    
+            }                    
+        }
     }
+
     if (new_socket>=0)
         close(new_socket);
     if (socket_desc>=0)
