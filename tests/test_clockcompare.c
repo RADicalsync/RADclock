@@ -198,9 +198,9 @@ main (int argc, char *argv[])
 	
 	
 	/* packet timestamp capture mode */
-	pktcap_tsmode_t tsmode;
+	//pktcap_tsmode_t tsmode;
 	// detailed bpf level tsmode used only if tsmode = PKTCAP_TSMODE_CUSTOM
-	u_int custom = 0x3012;	// like PKTCAP_TSMODE_FFNATIVECLOCK but returns bintime
+	//u_int custom = 0x3012;	// like PKTCAP_TSMODE_FFNATIVECLOCK but returns bintime
 
 	/* Misc */
 	int verbose_flag = 0;
@@ -221,10 +221,10 @@ main (int argc, char *argv[])
 			network_device = optarg;
 			break;
 		case 't':    //  tsmode selection amoung presets, to override default
-			tsmode = (pktcap_tsmode_t) strtol(optarg,NULL,10);	// base10
+			//tsmode = (pktcap_tsmode_t) strtol(optarg,NULL,10);	// base10
 			break;
 		case 'c':    //  custom bpf tsmode selection, to override default
-			custom = (u_int) strtol(optarg,NULL,16);	// base16
+			//custom = (u_int) strtol(optarg,NULL,16);	// base16
 			break;
 		case 'L':    //  local period mode to ON, else the default is OFF
  			lpm = RADCLOCK_LOCAL_PERIOD_ON;

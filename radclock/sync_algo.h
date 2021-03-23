@@ -44,9 +44,6 @@
 
 
 
-
-#define OUTPUT(handle, x) ((struct bidir_output*)handle->algo_output)->x
-
 /*
  * Internal algo parameters and default values
  */
@@ -123,7 +120,6 @@ struct bidir_stamp {
 // TODO this is very NTP centric
 struct stamp_t {
 	stamp_type_t type;
-	int qual_warning;	/* warning: route or server changes, server problem */
 	uint64_t id;
 	char server_ipaddr[INET6_ADDRSTRLEN];
 	int ttl;
@@ -138,6 +134,7 @@ struct stamp_t {
 	} st;
 };
 
+/* Here x is a pointer to a stamp_t, returns a pointer to the tuple */
 #define UST(x) (&((x)->st.ustamp))
 #define BST(x) (&((x)->st.bstamp))
 
@@ -161,7 +158,7 @@ struct bidir_output {
 	
 	/** Internal algo variables visible outside **/
 	/* Per-stamp output */
-	vcounter_t 	RTT;
+	vcounter_t 	RTT;			// Not in state [is RTT of last stamp]
 	double		phat;
 	double		perr;
 	double 		plocal;
@@ -173,20 +170,22 @@ struct bidir_output {
 	vcounter_t 	RTThat_shift;
 	double 		th_naive;
 	double 		minET;
-	double 		minET_last;
+	double 		minET_last;		// Not in state
 	double 		errTa;
 	double 		errTf;
 	double 		wsum;
 	vcounter_t 	best_Tf;
-	unsigned int status;
+	unsigned int status;			// Not in state
 };
 
 
 /* TODO this may not be too generic, but need it for cleanliness before
- * reworking the bidir_peer structure
+ * reworking the bidir_algostate structure
+ * TODO: needs a name change, leave until error reporting re-thought out
  */
 struct peer_error {
-	double Ebound_min_last;
+	double Ebound_min_last;		// value at last true update
+	double error_bound;			// value for last stamp
 	long nerror;
 	double cumsum;
 	double sq_cumsum;
@@ -196,23 +195,14 @@ struct peer_error {
 };
 
 
-// TODO
-// Should have a generic peer structure with data common to all and union for
-// specific params
-struct bidir_peer {
-	/* Main index
-	 * unique stamp index (C notation [ 0 1 2 ...])
+struct bidir_algostate {
+
+	/* Unique stamp index (C notation [ 0 1 2 ...])
 	 * 136 yrs @ 1 stamp/[sec] if 32bit
 	 */
 	index_t stamp_i;
 
-	/* TODO Very NTP centric */
-	int ttl;
-	int stratum;
-	int LI;
-	uint32_t refid;
-
-	struct bidir_stamp stamp;	// record previous input stamp (hence leap-free)
+	struct bidir_stamp stamp;	// previous input bidir stamp (hence leap-free)
 
 	/* Histories */
 	history stamp_hist;
@@ -284,7 +274,7 @@ struct bidir_peer {
 	int plocal_problem;				// something wrong with plocal windows
 
 	/* Offset estimation */
-	long double K;		// Uncorrected clock origin alignement constant
+	long double K;		// Uncorrected clock origin alignment constant
 						// must hold [sec] since timescale origin, and at least 1mus precision
 	double thetahat;	// Drift correction for uncorrected clock
 	double minET;		// Estimate of thetahat error
@@ -292,7 +282,7 @@ struct bidir_peer {
 	int offset_quality_count;		// Offset quality events counter
 	int offset_sanity_count;		// Offset sanity events counter
 
-	/* Error metrics */
+	/* Statistics to track error in the Absolute clock */
 	struct peer_error peer_err;
 
 	/* Statistics */
@@ -300,20 +290,41 @@ struct bidir_peer {
 // TODO should this be in source structure or peer structure?
 //	struct timeref_stats stats;		// FIXME: this is a mess
 
-	/* Queue of stamps to be processed */
-	struct stamp_queue *q;
 };
 
 #define	PEER_ERROR(x)	(&(x->peer_err))
 
+
+
+/* The structure contains the information that must be kept per-server
+ * for the mRADclock. The queue is common to stamps from all servers.
+ * The other pointers point to dynamically allocated `arrays` indexed into
+ * by serverID: 0, 1,.. nservers-1
+ */
+struct bidir_peers {	
+	struct stamp_t *laststamp;
+	struct bidir_output *output;
+	struct bidir_algostate *state;
+	
+	/* Queue of stamps to be processed, all peers combined */
+	struct stamp_queue *q;
+};
+
+
+//#define OUTPUT(handle, x) ((struct bidir_output*)handle->algo_output)->x
+#define SOUTPUT(h,sID,x) ((struct bidir_peers*)h->peers)->output[sID].x
+#define OUTPUT(h,x) (SOUTPUT(h,h->pref_sID,x))
+
+
 /*
  * Functions declarations
  */
+int process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *state,
+		struct bidir_stamp *input_stamp, int qual_warning,
+		struct radclock_data *rad_data, struct radclock_error *rad_error,
+		struct bidir_output *output);
 
-int process_bidir_stamp(struct radclock_handle *handle, struct bidir_peer *peer,
-		struct bidir_stamp *input_stamp, int qual_warning);
-
-void init_peer_stamp_queue(struct bidir_peer *peer);
-void destroy_peer_stamp_queue(struct bidir_peer *peer);
+void init_peer_stamp_queue(struct bidir_peers *peers);
+void destroy_peer_stamp_queue(struct bidir_peers *peers);
 
 #endif

@@ -28,9 +28,6 @@
 
 #include "../config.h"
 
-#ifdef HAVE_POSIX_TIMER
-#include <sys/time.h>
-#endif
 //#include <sys/types.h>
 //#include <sys/socket.h>
 
@@ -40,7 +37,7 @@
 //#include <errno.h>
 //#include <netdb.h>
 #include <pthread.h>
-//#include <signal.h>
+#include <signal.h>
 //#include <string.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -84,14 +81,21 @@ dummy_client() { JDEBUG
 	return (0);
 }
 
+extern struct radclock_handle *clock_handle;
+
 /*
  * Timer handler
+ * Timers are created with the sID recorded, recoverable via passed *info.
+ * We record this under the handle so ntp_client can know whose alarm fired.
  */
-void catch_alarm(int sig)
+void catch_alarm(int sig, siginfo_t *info, void *uap)
 {
 	JDEBUG
-
+	
 	pthread_mutex_lock(&alarm_mutex);
+	//tid = info->si_timerid;	// fails! not equal to timer_create's timerid!
+	clock_handle->lastalarm_sID = info->si_value.sival_int;
+	//verbose(LOG_DEBUG, "Alarm caught with si_value = %d", val);
 	pthread_cond_signal(&alarm_cwait);
 	pthread_mutex_unlock(&alarm_mutex);
 }
@@ -112,7 +116,9 @@ set_ptimer(timer_t timer, float next, float period)
 	return (timer_settime(timer, 0 /*!TIMER_ABSTIME*/, &itimer_ts, NULL));
 }
 
-/* Is there a need for change? */
+/* Adjust period interval of timer, preserving current next firing time.
+ * Should only be called if needed for efficiency, double checks this.
+ */
 int
 assess_ptimer(timer_t timer, float period)
 {
@@ -130,7 +136,7 @@ assess_ptimer(timer_t timer, float period)
 	ptnext   = its.it_value.tv_sec + (float)its.it_value.tv_nsec / 1e9;
 	ptperiod = its.it_interval.tv_sec + (float)its.it_interval.tv_nsec / 1e9;
 
-	if (ptperiod != period)
+	if (ptperiod != period)	// skip change if will have no impact
 		err = set_ptimer(timer, ptnext, period);
 
 	return (err);

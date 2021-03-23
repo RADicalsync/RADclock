@@ -258,7 +258,11 @@ struct radclock_config {
 	int     ntp_upstream_port;       /* NTP Upstream port */
 	int     ntp_downstream_port;     /* NTP Downstream port */
 	char 	hostname[MAXLINE]; 			/* Client hostname */
-	char 	time_server[MAXLINE]; 		/* Server name */
+	char 	*time_server;			 		/* Server names, concatenated in MAXLINE blocks */
+	int		*time_server_icn_mapping;	/* Maps timer_server id to ICN ids, non ICN servers get -1 */
+	int		*time_server_icn_indexes;	/* Lists the ICN indexes relative to the time_server ordering. Eg given time_servers A B C. If A and C are ICN then this would be 0,2 */
+	int		time_server_icn_count;		/* The number of time_servers that are ICNs */
+	int		*time_server_ocn_mapping;	/* Maps timer_server id to OCN ids, non OCN servers get -1 */
 	char 	network_device[MAXLINE];	/* physical device string, eg xl0, eth0 */ 
 	char 	sync_in_pcap[MAXLINE];	 	/* read from stored instead of live input */
 	char 	sync_in_ascii[MAXLINE]; 	/* input is a preprocessed stamp file */
@@ -268,7 +272,7 @@ struct radclock_config {
 	char 	vm_udp_list[MAXLINE];  		/* File containing list of udp vm's */
 	char 	shm_dag_client[MAXLINE];  	/* Ip address of SHM DAG client */
 	struct ICN_Config 	icn[MAX_ICNS];  				/* ICN definition */
-	struct ICN_Config 	ocn[MAX_OCNS];  				/* ICN definition */
+	struct ICN_Config 	ocn[MAX_OCNS];  				/* OCN definition */
 };
 
 
@@ -283,12 +287,12 @@ void config_init(struct radclock_config *conf);
 /**
  * Parse a configuration file
  */
-int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon);
+int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns);
 
 /**
  * Output the config in config to verbose using level
  */
-void config_print(int level, struct radclock_config *conf);
+void config_print(int level, struct radclock_config *conf, int ns);
 
 
 #endif

@@ -42,6 +42,7 @@
 
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -356,7 +357,7 @@ thread_ntp_server(void *c_handle)
 		u_char ntpversion = NTP_VERSION;
 	
 		/* NTP Standard requires special stratum and LI if server not in sync */
-		if (HAS_STATUS(handle, STARAD_UNSYNC)) {
+		if (HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
 			pkt_out->stratum = 0;	// STRATUM_UNSPEC not used in responses, mapped to 0
 			pkt_out->li_vn_mode = PKT_LI_VN_MODE(LEAP_NOTINSYNC, ntpversion, MODE_SERVER);
 		} else {
@@ -403,7 +404,7 @@ thread_ntp_server(void *c_handle)
 		//memset((char *) &xmt, 0, sizeof(l_fp));
 		
 		/* Reference time (time RADclock was last updated on this server) */
-		read_RADabs_UTC(&handle->rad_data, &rdata.last_changed, &time, PLOCAL_ACTIVE);
+		read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
 		UTCld_to_NTPtime(&time, &reftime);
 		pkt_out->reftime.l_int = htonl(reftime.l_int);
 		pkt_out->reftime.l_fra = htonl(reftime.l_fra);
@@ -412,7 +413,7 @@ thread_ntp_server(void *c_handle)
 		pkt_out->org = ((struct ntp_pkt*)pkt_in)->xmt;
 
 		/* Receive Timestamp (Tb in algo language) */
-		read_RADabs_UTC(&handle->rad_data, &vcount_rec, &time, PLOCAL_ACTIVE);
+		read_RADabs_UTC(RAD_DATA(handle), &vcount_rec, &time, PLOCAL_ACTIVE);
 		UTCld_to_NTPtime(&time, &rec);
 		pkt_out->rec.l_int = htonl(rec.l_int);
 		pkt_out->rec.l_fra = htonl(rec.l_fra);
@@ -432,7 +433,7 @@ thread_ntp_server(void *c_handle)
 		/* Use difference clock:  xmt = rec + Cd(vcount_xmt) - Cd(vcount_rec)
 		 * Ignore plocal refinement for greater robustness and simplicity:
 		 * at these timescales, the difference is sub-ns */
-		time += handle->rad_data.phat*(vcount_xmt - vcount_rec);
+		time += RAD_DATA(handle)->phat*(vcount_xmt - vcount_rec);
 		UTCld_to_NTPtime(&time, &xmt);
 		pkt_out->xmt.l_int = htonl(xmt.l_int);
 		pkt_out->xmt.l_fra = htonl(xmt.l_fra);

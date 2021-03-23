@@ -109,7 +109,7 @@ found_ffwd_kernel_version (void)
  * do the job. The latter is a bit "hard coded"
  */
 int
-has_vm_vcounter(struct radclock *handle)
+has_vm_vcounter(struct radclock *clock)
 {
 	int passthrough_counter = 0;
 	char clocksource[32];
@@ -185,7 +185,7 @@ radclock_readtsc(void)
 
 // TODO We could afford some cleaning in here
 inline int
-radclock_get_vcounter_rdtsc(struct radclock *handle, vcounter_t *vcount)
+radclock_get_vcounter_rdtsc(struct radclock *clock, vcounter_t *vcount)
 {
 	*vcount = radclock_readtsc();
 	return (0);
@@ -193,22 +193,22 @@ radclock_get_vcounter_rdtsc(struct radclock *handle, vcounter_t *vcount)
 
 
 int
-radclock_init_vcounter_syscall(struct radclock *handle)
+radclock_init_vcounter_syscall(struct radclock *clock)
 {
-	switch (handle->kernel_version) {
+	switch (clock->kernel_version) {
 	case 0:
 	case 1:
 		/* From config.h */
-		handle->syscall_get_vcounter = LINUX_SYSCALL_GET_VCOUNTER;
+		clock->syscall_get_vcounter = LINUX_SYSCALL_GET_VCOUNTER;
 		logger(RADLOG_NOTICE, "registered get_vcounter syscall at %d",
-				handle->syscall_get_vcounter);
+				clock->syscall_get_vcounter);
 		break;
 
 	case 2:
 		/* From config.h */
-		handle->syscall_get_vcounter = LINUX_SYSCALL_GET_VCOUNTER;
+		clock->syscall_get_vcounter = LINUX_SYSCALL_GET_VCOUNTER;
 		logger(RADLOG_NOTICE, "registered get_ffcounter syscall at %d",
-				handle->syscall_get_vcounter);
+				clock->syscall_get_vcounter);
 		break;
 
 	default:
@@ -222,13 +222,13 @@ radclock_init_vcounter_syscall(struct radclock *handle)
 
 
 int
-radclock_get_vcounter_syscall(struct radclock *handle, vcounter_t *vcount)
+radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
 {
 	int ret;
 	if (vcount == NULL)
 		return (-1);
 
-	ret = syscall(handle->syscall_get_vcounter, vcount);
+	ret = syscall(clock->syscall_get_vcounter, vcount);
 	
 	if (ret < 0) {
 		logger(RADLOG_ERR, "error on syscall get_vcounter: %s", strerror(errno));
@@ -243,13 +243,13 @@ radclock_get_vcounter_syscall(struct radclock *handle, vcounter_t *vcount)
  * Otherwise fall back to syscalls
  */
 int
-radclock_init_vcounter(struct radclock *handle)
+radclock_init_vcounter(struct radclock *clock)
 {
 	int passthrough_counter = 0;
 	char clocksource[32];
 	FILE *fd = NULL;
 	
-	if (handle->kernel_version < 1)
+	if (clock->kernel_version < 1)
 		passthrough_counter = 0;
 	else {
 		fd = fopen ("/sys/devices/system/clocksource/clocksource0/"
@@ -273,17 +273,17 @@ radclock_init_vcounter(struct radclock *handle)
 	logger(RADLOG_NOTICE, "Clocksource used is %s", clocksource);
 
 	if (passthrough_counter == 0) {
-		handle->get_vcounter = &radclock_get_vcounter_syscall;
+		clock->get_vcounter = &radclock_get_vcounter_syscall;
 		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter with syscall.");
 		return (0);
 	}
 
 	if (strcmp(clocksource, "tsc") == 0) {
-		handle->get_vcounter = &radclock_get_vcounter_rdtsc;
+		clock->get_vcounter = &radclock_get_vcounter_rdtsc;
 		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using rdtsc(). "
 						"* Make sure TSC is reliable *");
 	} else {
-		handle->get_vcounter = &radclock_get_vcounter_syscall;
+		clock->get_vcounter = &radclock_get_vcounter_syscall;
 		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using syscall.");
 	}
 

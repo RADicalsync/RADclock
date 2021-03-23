@@ -126,14 +126,20 @@ struct vm_reply {
 
 struct radclock_handle {
 
+	/* Number of different servers/peers */
+	int nservers;
+
+	/* ID (array index) of preferred RADclock */  // perhaps call sI = server Index
+	int pref_sID;
+	
 	/* Library radclock structure */
 	struct radclock *clock;
 
-	/* Clock data, the real stuff */
-	struct radclock_data rad_data;
+	/* Points to an array of RADclock parameter sets, one per server */
+	struct radclock_data *rad_data;
 
-	/* Clock error estimates */
-	struct radclock_error rad_error;
+	/* Corresponding RADclock error estimate sets */
+	struct radclock_error *rad_error;
 
 	/* Virtual Machine management */
 	struct radclock_vm rad_vm;
@@ -164,8 +170,9 @@ struct radclock_handle {
 	char hostIP[16];		// IP address of the host
 
 	/* UNIX signals */
-	unsigned int unix_signal;
-
+	unsigned int unix_signal;		// for recording of HUP and TERM
+	int lastalarm_sID;				// sID of last timer SIGALRM
+	
 	/* Output file descriptors */
 	FILE* stampout_fd;
 	FILE* matout_fd;
@@ -183,28 +190,51 @@ struct radclock_handle {
 
 	/* Algo output */
 	radclock_syncalgo_mode_t syncalgo_mode;
-	void *algo_output; 	/* Defined as void* since not part of the library */
+	//void *algo_output; 	/* Defined as void* since not part of the library */
 
 	/* Stamp source */
 	void *stamp_source; /* Defined as void* since not part of the library */
 
-	/* Synchronisation Peers. Peers are of different nature (bidir, oneway) will
-	 * cast
+	/* Points to an array of Synchronisation Peers (servers)
+	 * Contains information on the latest data from peers, and state information
+	 * for the corresponding RADclocks using them as reference sources, and sets
+	 * of parameters for output.
 	 */
-	void *active_peer;
+	void *peers;
 	
 };
 
 
-#define NTP_CLIENT(x) (x->ntp_client)
-#define NTP_SERVER(x) (x->ntp_server)
-#define RAD_DATA(x) (&(x->rad_data))
-#define RAD_ERROR(x) (&(x->rad_error))
+/* These macros facilitate access to the data for the s-th server.
+ *    SMACRO(h,s,..)    macro where the s the ID of the desired server
+ *     MACRO(h,..  )    macro where s = h->pref_sID, the preferred server
+ */
+#define SNTP_CLIENT(h,s) (&(h->ntp_client[s]))
+#define SNTP_SERVER(h,s) (&(h->ntp_server[s]))
+#define NTP_CLIENT(h) (SNTP_CLIENT(h,h->pref_sID))
+#define NTP_SERVER(h) (SNTP_SERVER(h,h->pref_sID))
+
+#define SRAD_DATA(h,s)  (&(h->rad_data[s]))		// ptr to data of server s
+#define SRAD_ERROR(h,s) (&(h->rad_error[s]))
+#define RAD_DATA(h)  (SRAD_DATA(h,h->pref_sID))	// ptr to data of preferred s
+#define RAD_ERROR(h) (SRAD_ERROR(h,h->pref_sID))
+
 #define RAD_VM(x) (&(x->rad_vm))
 
-#define ADD_STATUS(x,y) (RAD_DATA(x)->status = RAD_DATA(x)->status | y )
-#define DEL_STATUS(x,y) (RAD_DATA(x)->status = RAD_DATA(x)->status & ~y )
-#define HAS_STATUS(x,y) ((RAD_DATA(x)->status & y ) == y )
+/* Old: based on h being a pointer to handle, awkward when also need to know s */
+//#define SADD_STATUS(h,s,y) (SRAD_DATA(h,s)->status = SRAD_DATA(h,s)->status | y )
+//#define SDEL_STATUS(h,s,y) (SRAD_DATA(h,s)->status = SRAD_DATA(h,s)->status & ~y )
+//#define SHAS_STATUS(h,s,y) ((SRAD_DATA(h,s)->status & y ) == y )
+//#define ADD_STATUS(h,y) (SADD_STATUS(h,h->pref_sID,y))
+//#define DEL_STATUS(h,y) (SDEL_STATUS(h,h->pref_sID,y))
+//#define HAS_STATUS(h,y) (SHAS_STATUS(h,h->pref_sID,y))
+
+/* New: based on r pointing to the desired rad_data */
+#define ADD_STATUS(r,y) ((r)->status = (r)->status | y )
+#define DEL_STATUS(r,y) ((r)->status = (r)->status & ~y )
+#define HAS_STATUS(r,y) (((r)->status & y) == y )
+
+
 
 
 /*

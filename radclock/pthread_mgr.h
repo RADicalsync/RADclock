@@ -84,7 +84,7 @@ void* thread_shm(void *c_handle);
 
 
 int trigger_work(struct radclock_handle *handle);
-int process_stamp(struct radclock_handle *handle, struct bidir_peer *peer);
+int process_stamp(struct radclock_handle *handle);
 
 
 /*
@@ -97,8 +97,9 @@ int trigger_init(struct radclock_handle *handle);
 /*
  * Posix Timers and Alarm routines
  */
-void catch_alarm(int sig);
-#ifdef HAVE_POSIX_TIMER 
+//void catch_alarm(int sig);
+void catch_alarm(int sig, siginfo_t *info, void *uap);
+#ifdef HAVE_POSIX_TIMER
 int set_ptimer(timer_t timer, float next, float period);
 int assess_ptimer(timer_t timer, float period);
 #else

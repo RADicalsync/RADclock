@@ -74,6 +74,7 @@
 #include "proto_ntp.h"
 #include "jdebug.h"
 #include "ring_buffer.h"
+#include "ntp_auth.h"
 
 #include <sys/sysctl.h>
 
@@ -159,14 +160,14 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 {
 	struct radclock_config *conf;
 	int err;
-
+	
 	JDEBUG
 
 	conf = handle->conf;
 
 	verbose(LOG_NOTICE, "Rereading configuration and acting on allowed changes");
 	/* Parse the configuration file, update all conf values */
-	if (!(config_parse(conf, &param_mask, handle->is_daemon))) {
+	if (!(config_parse(conf, &param_mask, handle->is_daemon, &handle->nservers))) {
 		verbose(LOG_ERR, " Error: Rehash of configuration file failed");
 		return (1);
 	}
@@ -291,7 +292,7 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	}
 
 	/*  Print configuration actually used */
-	config_print(LOG_NOTICE, conf);
+	config_print(LOG_NOTICE, conf, handle->nservers);
 
 	/* Push param_mask into the config so that the algo sees it,
 	 * since only algo related thing should be remaining
@@ -367,7 +368,11 @@ signal_handler(int sig)
 		break;
 
 	/* user signal 2 */
+
 	case SIGUSR2:
+		// This signal should be executed via ansible C&C - (sudo killall -31 radclock)
+		verbose(LOG_NOTICE, "SIGUSR2 received, light recheck of config - check public serving.");
+
 		break;
 	}
 }
@@ -541,19 +546,21 @@ static struct radclock_handle *
 create_handle(struct radclock_config *conf, int is_daemon)
 {
 	struct radclock_handle *handle;
-
-	handle = (struct radclock_handle *) malloc(sizeof(struct radclock_handle));
-
+	handle = malloc(sizeof(struct radclock_handle));
 	if (!handle)
 		return (NULL);
 
 	handle->clock = radclock_create();
-
-	handle->is_daemon = is_daemon;
-	strcpy(handle->hostIP, "");
 	handle->conf= conf;
+	handle->is_daemon = is_daemon;
 
+	/* Multiple server management */
+	handle->nservers = 0;
+	handle->pref_sID = 0;
+	handle->lastalarm_sID = -1;
+	
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
+	strcpy(handle->hostIP, "");
 
 	/* Output files */
 	handle->stampout_fd = NULL;
@@ -564,15 +571,21 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->telemetry_data.buffer = NULL;
 	handle->telemetry_data.holding_buffer_size = 0;
 	handle->telemetry_data.holding_buffer = NULL;
+
+	handle->telemetry_data.prior_data = NULL;
+	handle->telemetry_data.prior_data_size = 0;
+
+	/* Set the inband signaling to initialise at 0 */
+	handle->inband_signal = 0;
+
 	// These values won't matter too much as the first push will set them
-	handle->telemetry_data.prior_status = 0;
-	handle->telemetry_data.prior_PICN = 0;
-	handle->telemetry_data.prior_uA = 0;
-	handle->telemetry_data.prior_leapsec_total = 0;
+	// handle->telemetry_data.prior_status = 0;
+	// handle->telemetry_data.prior_PICN = 0;
+	// handle->telemetry_data.prior_uA = 0;
+	// handle->telemetry_data.prior_leapsec_total = 0;
 	gettimeofday(&handle->telemetry_data.last_msg_time,NULL);
 
 	// Set id to 0 to flag initial blank stamp
-	// handle->SHM_stamp.xmit = 0;
 	int SHM_QUEUE_SIZE = 1024;
 	handle->SHM_stamps = (struct radclock_shm_ts *) malloc(sizeof(struct radclock_shm_ts) * SHM_QUEUE_SIZE);
 	handle->SHM_stamp_write_id = 0;
@@ -580,11 +593,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	// Set all data in shm stamp queue to 0 to flag no data
 	memset(handle->SHM_stamps, 0, sizeof(struct radclock_shm_ts) * SHM_QUEUE_SIZE);
 
-
-	// struct radclock_shm_ts * SHM_stamps = malloc(sizeof(struct radclock_shm_ts));
-	// int SHM_stamp_write_id;
-	// int SHM_stamps_queue_size;
-
+	handle->ntp_keys = read_keys();
 
 	/*
 	 * Thread related stuff
@@ -596,44 +605,8 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	pthread_mutex_init(&(handle->wakeup_mutex), NULL);
 	pthread_cond_init(&(handle->wakeup_cond), NULL);
 
-	handle->syncalgo_mode = RADCLOCK_BIDIR;
+	handle->syncalgo_mode = RADCLOCK_BIDIR; // hardwired, as yet not really used
 	handle->stamp_source = NULL;
-
-	/* Default values for the RADclock global data */
-	RAD_DATA(handle)->phat 			= 1e-9;
-	RAD_DATA(handle)->phat_err 		= 0;
-	RAD_DATA(handle)->phat_local 	= 1e-9;
-	RAD_DATA(handle)->phat_local_err = 0;
-	RAD_DATA(handle)->ca 			= 0;
-	RAD_DATA(handle)->ca_err 		= 0;
-	RAD_DATA(handle)->status 		= STARAD_UNSYNC | STARAD_WARMUP;
-	RAD_DATA(handle)->last_changed 	= 0;
-	RAD_DATA(handle)->next_expected 	= 0;
-
-	/* Clock error bound */
-	RAD_ERROR(handle)->error_bound 		= 0;
-	RAD_ERROR(handle)->error_bound_avg 	= 0;
-	RAD_ERROR(handle)->error_bound_std 	= 0;
-	RAD_ERROR(handle)->min_RTT 			= 0;
-
-	/* NTP client data */
-	NTP_CLIENT(handle) = (struct radclock_ntp_client *)
-			malloc(sizeof(struct radclock_ntp_client));
-	JDEBUG_MEMORY(JDBG_MALLOC, NTP_CLIENT(handle));
-	memset(NTP_CLIENT(handle), 0, sizeof(struct radclock_ntp_client));
-
-	/* NTP server data */
-	NTP_SERVER(handle) = (struct radclock_ntp_server *)
-			malloc(sizeof(struct radclock_ntp_server));
-	JDEBUG_MEMORY(JDBG_MALLOC, NTP_SERVER(handle));
-	memset(NTP_SERVER(handle), 0, sizeof(struct radclock_ntp_server));
-
-	/* Set 8 burst packets at startup for the NTP client (just like ntpd) */
-	NTP_SERVER(handle)->burst = NTP_BURST;
-
-	/* Initialise with unspect stratum */
-	NTP_SERVER(handle)->stratum = STRATUM_UNSPEC;
-
 
 	/* Raw data queues */
 	handle->pcap_queue = (void*) malloc(sizeof(struct raw_data_bundle));
@@ -650,19 +623,62 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->ieee1588eq_queue->rdb_start = NULL;
 	handle->ieee1588eq_queue->rdb_end = NULL;
 
-	/* Sync algo output data */
-	handle->algo_output = (void*) malloc(sizeof(struct bidir_output));
-	JDEBUG_MEMORY(JDBG_MALLOC, handle->algo_output);
-	memset(handle->algo_output, 0, sizeof(struct bidir_output));
+	/* Handle structure for per-server data, and generic stamp queue */
+	struct bidir_peers *peers;
+	peers = malloc(sizeof *peers);
+	handle->peers = (void*) peers;	// enduring copy of ptr to peers data
+	init_peer_stamp_queue(peers);
 
 	return (handle);
+}
+
+
+/* Allocate space, and initialize, `arrays' of structures for ns RADclocks. */
+static void
+init_mRADclocks(struct radclock_handle *handle, int ns)
+{
+	int s;
+	struct bidir_peers *peers;
+
+	handle->nservers = ns;	// just in case, should already be true
+	
+	/* RADclock data. Initialize all to zero then override some members */
+	handle->rad_data = calloc(ns,sizeof(struct radclock_data));
+	for (s=0; s<ns; s++) {
+		handle->rad_data[s].phat 			= 1e-9;
+		handle->rad_data[s].phat_local 	= 1e-9;
+		handle->rad_data[s].status 		= STARAD_UNSYNC | STARAD_WARMUP;
+	}
+	/* Clock error bound. All members initialized to zero */
+	handle->rad_error = calloc(ns,sizeof(struct radclock_error));
+
+	/* NTP client data */
+	handle->ntp_client = calloc(ns,sizeof(struct radclock_ntp_client));
+
+	/* NTP server data */
+	handle->ntp_server = calloc(ns,sizeof(struct radclock_ntp_server));
+	for (s=0; s<ns; s++) {
+		SNTP_SERVER(handle,s)->burst = NTP_BURST;	// burst at startup, like ntpd
+		SNTP_SERVER(handle,s)->stratum = STRATUM_UNSPEC;
+	}
+	
+	/* Initialize remaining members of peers */
+	peers = handle->peers;
+	peers->laststamp = calloc(ns,sizeof(struct stamp_t));
+	peers->output = calloc(ns,sizeof(struct bidir_output));
+	peers->state = calloc(ns,sizeof(struct bidir_algostate));
+
+
+
+	return;
 }
 
 
 
 
 static int
-clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
+clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
+	struct radclock_error *rad_error)
 {
 	struct ffclock_estimate cest;
 	int err;
@@ -701,7 +717,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data)
 	fill_radclock_data(&cest, rad_data);
 	if ( VERB_LEVEL>2 ) {  // check conversion, and inversion, are as expected
 		printout_raddata(rad_data);
-		fill_ffclock_estimate(rad_data, &clock_handle->rad_error, &cest);
+		fill_ffclock_estimate(rad_data, rad_error, &cest);
 		printout_FFdata(&cest);
 	}
 	
@@ -828,7 +844,7 @@ init_handle(struct radclock_handle *handle)
 {
 	/* Input source */
 	struct stampsource *stamp_source;
-	int err;
+	int err, s;
 
 	JDEBUG
 
@@ -839,13 +855,12 @@ init_handle(struct radclock_handle *handle)
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
 
 		/* Initial status words */
-		// TODO there should be more of them set in here, some are for live and
-		// dead runs, but not all!
-		ADD_STATUS(handle, STARAD_STARVING);
-	
-		/*
-		 * Initialise IPC shared memory segment
-		 */
+		// TODO: more should be set here?  and in dead case?
+		for (s=0; s < handle->nservers; s++) {
+			ADD_STATUS(&handle->rad_data[s], STARAD_STARVING);
+		}
+
+		/* Initialise IPC shared memory segment */
 		if (handle->conf->server_ipc == BOOL_ON) {
 			err = shm_init_writer(handle->clock);
 			if (err)
@@ -1023,6 +1038,8 @@ start_live(struct radclock_handle *handle)
 	 */
 	err = capture_raw_data(handle);
 
+
+
 	if (err == -1) {
 		handle->unix_signal = SIGTERM;	// some abuse here, not a true signal
 		verbose(LOG_NOTICE, "Reached end of input");
@@ -1079,6 +1096,8 @@ start_live(struct radclock_handle *handle)
 
 	return (0);
 }
+
+
 
 
 
@@ -1324,7 +1343,7 @@ main(int argc, char *argv[])
 	/* Daemonize now, so that we can open the log files and close connection to
 	 * stdin since we parsed the command line
 	 */
-	if (handle->is_daemon) {
+	if (is_daemon) {
 		struct stat sb;
 		if (stat(RADCLOCK_RUN_DIRECTORY, &sb) < 0) {
 			if (mkdir(RADCLOCK_RUN_DIRECTORY, 0755) < 0) {
@@ -1350,15 +1369,21 @@ main(int argc, char *argv[])
 	 * TODO: in case file doesnt exist, handle->conf not updated to the values
 	 *    written. Eg, Time server is left blank, requiring a 2nd run to pick up.
 	 */
-	if (!config_parse(handle->conf, &param_mask, handle->is_daemon))
+	if (!config_parse(handle->conf, &param_mask, is_daemon, &handle->nservers))
 		return (0);
+
+	/* Knowing the number of servers, create space for corresponding RADclocks */
+	init_mRADclocks(handle, handle->nservers);
 
 	/*
 	 * Now that we have the configuration to use (verbose level), let's
 	 * initialise the verbose level to the correct value
 	 */
 	set_verbose(handle, handle->conf->verbose_level, 0);
+
 	set_logger(logger_verbose_bridge);
+
+
 
 	/* Check for incompatible configurations and correct them */
 	if (( handle->conf->synchro_type == SYNCTYPE_SPY ) ||
@@ -1369,16 +1394,18 @@ main(int argc, char *argv[])
 					"(incompatible with spy or piggy mode).");
 			handle->conf->server_ntp = BOOL_OFF;
 		}
-		if ( handle->conf->adjust_FBclock == BOOL_ON )
-		{
+		if ( handle->conf->adjust_FBclock == BOOL_ON ) {
 			verbose(LOG_ERR, "Configuration error. Disabling adjust FBclock "
 					"(incompatible with spy or piggy mode).");
 			handle->conf->adjust_FBclock = BOOL_OFF;
 		}
 	}
 	
-	/* Diagnosis output for the configuration used */
-	config_print(LOG_NOTICE, handle->conf);
+
+
+	/* Confirmation output of the final configuration used */
+	config_print(LOG_NOTICE, handle->conf, handle->nservers);
+	verbose(LOG_NOTICE, "Configuration parsing found %d servers", handle->nservers);
 
 	/* Reinit the mask that counts updated values */
 	param_mask = UPDMASK_NOUPD;
@@ -1399,9 +1426,9 @@ main(int argc, char *argv[])
 	else
 		handle->run_mode = RADCLOCK_SYNC_LIVE;
 
-	/* Init clock handle and private data */
+	/* Setup kernel interactions: init clock handle and private data */
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
-		err = clock_init_live(handle->clock, &handle->rad_data);
+		err = clock_init_live(handle->clock, RAD_DATA(handle), RAD_ERROR(handle));
 		if (err) {
 			verbose(LOG_ERR, "Could not initialise the RADclock");
 			return (1);
@@ -1423,25 +1450,13 @@ main(int argc, char *argv[])
 	 */
 	if (handle->run_mode == RADCLOCK_SYNC_DEAD) {
 
-// TODO : manage peers better !!
-
-		struct bidir_peer peer;
-		/* Some basic initialisation which is required */
-		init_peer_stamp_queue(&peer);
-		peer.stamp_i = 0;
-		// TODO XXX Need to manage peers better !!
-		/* Register active peer */
-		handle->active_peer = (void *)&peer;
 		while (1) {
-			err = process_stamp(handle, &peer);
+			err = process_stamp(handle);
 			if (err < 0)
 				break;
 		}
-
-		destroy_peer_stamp_queue(&peer);
 	}
-
-	/*
+	/*s
 	 * We loop in here in case we are rehashed. Threads are (re-)created every
 	 * time we loop in
 	 */
@@ -1455,16 +1470,18 @@ main(int argc, char *argv[])
 		}
 	}
 
-
-	// TODO: look into making the stats a separate structure. Could be much
-	// TODO: easier to manage
+	/* These final stats based on the preferred clock only
+	 * TODO: look into making the stats a separate structure. Could be much
+	 *       easier to manage
+	 */
 	long int n_stamp;
 	unsigned int ref_count;
-	n_stamp = ((struct bidir_output *)handle->algo_output)->n_stamps;
+	n_stamp = OUTPUT(handle, n_stamps);
 	ref_count = ((struct stampsource*)(handle->stamp_source))->ntp_stats.ref_count;
 	verbose(LOG_NOTICE, "%u NTP packets captured", ref_count);
 	verbose(LOG_NOTICE,"%ld missed NTP packets", ref_count - 2 * n_stamp);
 	verbose(LOG_NOTICE, "%ld valid timestamp tuples extracted", n_stamp);
+
 
 	/* Close output files */
 	close_output_stamp(handle);
@@ -1475,12 +1492,12 @@ main(int argc, char *argv[])
 
 	/* Say bye and close syslog */
 	verbose(LOG_NOTICE, "RADclock stopped");
-	if (handle->is_daemon)
+	if (is_daemon)
 		closelog ();
 	unset_verbose();
 
 	/* Free the lock file */
-	if (handle->is_daemon) {
+	if (is_daemon) {
 		write(daemon_pid_fd, "", 0);
 		lockf(daemon_pid_fd, F_ULOCK, 0);
 	}
@@ -1498,11 +1515,30 @@ main(int argc, char *argv[])
 	if (handle->conf->server_ipc == BOOL_ON)
 		shm_detach(handle->clock);
 
-	/* Free the clock structure. All done. */
+	/* Free the clock handle members and itself. */
+	free(handle->conf->time_server);
+	free(handle->rad_data);
+	free(handle->rad_error);
+	free(handle->ntp_client);
+	free(handle->ntp_server);
+
+	// Clear the memory data for the NTP keys so it isn't released into another process that may be able to see it
+	for (int i = 0 ; i < MAX_NTP_KEYS; i++)
+		if (handle->ntp_keys[i])
+		{
+			memset(handle->ntp_keys[i], 0, 20);
+			free(handle->ntp_keys[i]);
+		}
+
+	free(handle->ntp_keys);
 	pthread_mutex_destroy(&(handle->pcap_queue->rdb_mutex));
 	pthread_mutex_destroy(&(handle->ieee1588eq_queue->rdb_mutex));
 	free(handle->pcap_queue);
 	free(handle->ieee1588eq_queue);
+	free(((struct bidir_peers*)handle->peers)->laststamp);
+	free(((struct bidir_peers*)handle->peers)->output);
+	free(((struct bidir_peers*)handle->peers)->state);
+	destroy_peer_stamp_queue((struct bidir_peers*)handle->peers);
 	free(handle);
 	handle = NULL;
 	clock_handle = NULL;

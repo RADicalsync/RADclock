@@ -286,7 +286,7 @@ get_packet_livepcap(struct radclock_handle *handle, void *userdata,
 	 * overwrite existing ts in copied pcap header
 	 */
 	if (handle->clock->tsmode == PKTCAP_TSMODE_RADCLOCK) {
-		read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
+		read_RADabs_UTC(RAD_DATA(handle), &vcount, &time, PLOCAL_ACTIVE);
 		pcap_hdr = (struct pcap_pkthdr *)radpkt->header;
 		pcap_hdr->ts.tv_sec = (time_t) time;
 		pcap_hdr->ts.tv_usec = (suseconds_t)(1e6 * (time - (time_t)time));
@@ -486,6 +486,9 @@ int get_address_by_name(char* addr, char* hostname)
 }
 
 
+/* Maximum length of the bpf filter char array */
+#define MAXBPFLINE			(10*MAXLINE)
+
 /* Create a BPF filter expression
  * Filter appends additional rules passed in pattern qualifier
  * (port number, remote host name, etc).
@@ -493,27 +496,47 @@ int get_address_by_name(char* addr, char* hostname)
  * TODO: should accept IP addresses only, and make it IPv6 friendly
  */
 int
-build_BPFfilter(struct radclock_handle *handle, char *fltstr, int maxsize,
-		char *host, char *ntp_host)
+build_BPFfilter(struct radclock_handle *handle, char *fltstr, int maxsize, char *host)
 {
+	int s;
 	int strsize;
-	char ntp_filter[150];
+	char *this_s;		// string from configuration for this server
+	char s_filter[MAXLINE];
 	
 	if (strlen(host) == 0) {
 		verbose(LOG_ERR, "No host info, no BPF filter");
 		return (-1);
 	}
-	if (strlen(ntp_host) == 0) {
-		verbose(LOG_WARNING, "No NTP server specified, BPF filter not tight enough !!");
-		sprintf(ntp_filter, ") or (");
-	}
-	else
-		sprintf(ntp_filter, "and dst host %s) or (src host %s and", ntp_host, ntp_host);
 
-	strsize = snprintf(fltstr, maxsize, "(src host %s and dst port %d %s "
-			"dst host %s and src port %d)", host,
-			handle->conf->ntp_upstream_port, ntp_filter, host,
-			handle->conf->ntp_upstream_port);
+	if (strlen(handle->conf->time_server) == 0) {
+		verbose(LOG_WARNING, "No NTP server specified, BPF filter not tight enough !!");
+		strsize = snprintf(fltstr, maxsize,
+			"(src host %s and dst port %d) or "
+			"(dst host %s and src port %d)",
+			host, handle->conf->ntp_upstream_port,
+			host, handle->conf->ntp_upstream_port);
+		verbose(LOG_NOTICE, "Packet filter : %s ", fltstr);
+	} else {
+		strcpy(s_filter, "");
+		for (s=0; s<handle->nservers; s++) {
+			this_s = handle->conf->time_server + s*MAXLINE;
+			/* Write a complete filter for server s */
+			strsize = snprintf(s_filter, MAXLINE,
+					"(src host %s and dst port %d and dst host %s) or "
+					"(src host %s and dst host %s and src port %d)",
+					host, handle->conf->ntp_upstream_port, this_s, this_s,
+					host, handle->conf->ntp_upstream_port);
+			if (strsize > MAXLINE - 1)
+				verbose(LOG_ERR, "BPF filter string overflowed, filter is flawed");
+			verbose(LOG_DEBUG, "Packet filter for server %d : %s ", s, s_filter);
+			
+			/* Append filter for this server */
+			if (s==0)
+				strcpy(fltstr,s_filter);
+			else
+				strsize = snprintf(fltstr, maxsize, "%s or %s", fltstr, s_filter);
+		}
+	}
 
 	return (strsize);
 }
@@ -525,7 +548,7 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 {
 	pcap_t* p_handle = NULL;
 	struct bpf_program filter;
-	char fltstr[MAXLINE];		// bpf filter string
+	char fltstr[MAXBPFLINE];	// TODO: dynamically allocate, better if many servers
 	int strsize = 0;
 	int promiscuous = 0;
 	int bpf_timeout = 5;			// waiting time on BPF before exporting pkts [ms]
@@ -574,12 +597,12 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 
 	/* Build the BPF filter string */
 	strcpy(fltstr, "");
-	strsize = build_BPFfilter(handle, fltstr, MAXLINE, addr_if, conf->time_server);
-	if ((strsize < 0) || (strsize > MAXLINE-2)) {
+	strsize = build_BPFfilter(handle, fltstr, MAXBPFLINE, addr_if);
+	if ((strsize < 0) || (strsize > MAXBPFLINE-2)) {	// not -1 rather?
 		verbose(LOG_ERR, "BPF filter string error (too long?)");
 		return (NULL);
 	}
-	verbose(LOG_NOTICE, "Packet filter: %s", fltstr);
+	//verbose(LOG_NOTICE, "Packet filter: %s", fltstr);
 
 	/*
 	 * We got the parameters, open the live device. Set the timeout to 2ms before
@@ -735,7 +758,6 @@ livepcapstamp_get_next(struct radclock_handle *handle, struct stampsource *sourc
 
 	/* Ensure default stamp quality before filling timestamps */
 	stamp->type = STAMP_NTP;
-	stamp->qual_warning = 0;
 
 	err = get_network_stamp(handle, (void *)LIVEPCAP_DATA(source),
 			get_packet_livepcap, stamp, &source->ntp_stats);
@@ -776,17 +798,17 @@ static int
 livepcapstamp_update_filter(struct radclock_handle *handle, struct stampsource *source)
 {
 	struct bpf_program filter;
-	char fltstr[MAXLINE];               // bpf filter string
+	char fltstr[MAXBPFLINE];               // bpf filter string
 	int strsize;
 
-	strsize = build_BPFfilter(handle, fltstr, MAXLINE, handle->hostIP,
-			handle->conf->time_server);
+	strcpy(fltstr, "");
+	strsize = build_BPFfilter(handle, fltstr, MAXBPFLINE, handle->hostIP);
 
-	if ((strsize < 0) || (strsize > MAXLINE-2) ) {
+	if ((strsize < 0) || (strsize > MAXBPFLINE-2) ) {
 		verbose(LOG_ERR, "BPF filter string error (too long?)");
 		goto err_out;
 	}
-	verbose(LOG_NOTICE, "Packet filter      : %s", fltstr);
+	//verbose(LOG_NOTICE, "Packet filter      : %s", fltstr);
 
 	// Compile and set up the BPF filter
 	// no need to test broadcast addresses

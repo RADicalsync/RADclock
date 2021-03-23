@@ -406,31 +406,35 @@ get_vcount(radpcap_packet_t *packet, vcounter_t *vcount) {
 }
 
 
+/* Routines to create and destroy a stamp queue. The queue is anchored
+ * to a pointer within the passed argument, so storage for the
+ * queue can be allocated and freed here.
+ */
 void
-init_peer_stamp_queue(struct bidir_peer *peer)
+init_peer_stamp_queue(struct bidir_peers *peers)
 {
-	peer->q = (struct stamp_queue *) calloc(1, sizeof(struct stamp_queue));
-	peer->q->start = NULL;
-	peer->q->end = NULL;
-	peer->q->size = 0;
+	peers->q = calloc(1, sizeof(struct stamp_queue));
+	peers->q->start = NULL;
+	peers->q->end = NULL;
+	peers->q->size = 0;
 }
 
 void
-destroy_peer_stamp_queue(struct bidir_peer *peer)
+destroy_peer_stamp_queue(struct bidir_peers *peers)
 {
 	struct stq_elt *elt;
 
-	elt = peer->q->end;
-	while (peer->q->size) {
+	elt = peers->q->end;
+	while (peers->q->size) {
 		if (elt->prev == NULL)
 			break;
 		elt = elt->prev;
 		free(elt);
-		peer->q->size--;
+		peers->q->size--;
 	}
-	free(peer->q->end);
-	free(peer->q);
-	peer->q = NULL;
+	free(peers->q->end);
+	free(peers->q);
+	peers->q = NULL;
 }
 
 
@@ -506,7 +510,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 		}
 
       /* Create blank element, *qel, and insert at head */
-		qel = (struct stq_elt *) calloc(1, sizeof(struct stq_elt));
+		qel = calloc(1, sizeof(struct stq_elt));
 		qel->prev = NULL;
 		qel->next = q->start;		// will be NULL as reqd if queue empty
 		if (q->start == NULL)		// queue was empty
@@ -517,16 +521,15 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 		q->size++;
 	}
 
-
 	/* Selectively copy content of new halfstamp into stamp to fill (*qel). */
 	stamp = &qel->stamp;
 	stamp->type = STAMP_NTP;
 	if (mode == MODE_CLIENT) {
 		stamp->id = new->id;
 		BST(stamp)->Ta = BST(new)->Ta;
+		strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
 	} else {
 		stamp->id = new->id;
-		strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
 		stamp->ttl = new->ttl;
 		stamp->refid = new->refid;
 		stamp->stratum = new->stratum;
@@ -543,9 +546,10 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 		qel = q->start;
 		while (qel != NULL) {
 			stamp = &qel->stamp;
-			verbose(VERB_DEBUG, "  stamp queue dump: %llu %.6Lf %.6Lf %llu %llu",
+			verbose(VERB_DEBUG, "  stamp queue dump: %llu %.6Lf %.6Lf %llu %llu %s",
 				(long long unsigned) BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-				(long long unsigned) BST(stamp)->Tf, (long long unsigned) stamp->id);
+				(long long unsigned) BST(stamp)->Tf, (long long unsigned) stamp->id,
+				stamp->server_ipaddr);
 			qel = qel->next;
 		}
 	}
@@ -557,6 +561,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 }
 
 
+/* Returns {0,1} if {identical,different} */
 int
 compare_sockaddr_storage(struct sockaddr_storage *first,
 		struct sockaddr_storage *second)
@@ -647,12 +652,12 @@ bad_packet_server(struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
 	}
 
 	/* Check if the server is a RADserver */
-	static int c = 0;
-	u_char NTPv;
-	if ( c<1 && (NTPv = PKT_VERSION(ntp->li_vn_mode)) != NTP_VERSION) {
-		verbose(LOG_WARNING, "NTP version of %d non-standard", NTPv);
-		c++;
-	}
+//	static int c = 0;
+//	u_char NTPv;
+//	if ( c<1 && (NTPv = PKT_VERSION(ntp->li_vn_mode)) != NTP_VERSION) {
+//		verbose(LOG_WARNING, "NTP version of %d non-standard", NTPv);
+//		c++;
+//	}
 
 	/* If the server is unsynchronised we skip this packet */
 	if (PKT_LEAP(ntp->li_vn_mode) == LEAP_NOTINSYNC) {
@@ -672,10 +677,12 @@ bad_packet_server(struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
 
 /*
  * Create a stamp structure, fill it with client side information and pass it
- * for insertion in the peer's stamp queue.
+ * for insertion in the stamp queue.  The server address used by the client
+ * to send the request is essentially a serverID: record it here.
  */
 int
-push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp, vcounter_t *vcount)
+push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
+	vcounter_t *vcount, struct sockaddr_storage *ss_dst)
 {
 	struct stamp_t stamp;
 
@@ -684,6 +691,16 @@ push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp, vcounter_t *vc
 	stamp.id = ((uint64_t) ntohl(ntp->xmt.l_int)) << 32;
 	stamp.id |= (uint64_t) ntohl(ntp->xmt.l_fra);
 	stamp.type = STAMP_NTP;
+	
+	if (ss_dst->ss_family == AF_INET)
+		inet_ntop(ss_dst->ss_family,
+			&((struct sockaddr_in *)ss_dst)->sin_addr, stamp.server_ipaddr,
+			INET6_ADDRSTRLEN);
+	else
+		inet_ntop(ss_dst->ss_family,
+			&((struct sockaddr_in6 *)ss_dst)->sin6_addr, stamp.server_ipaddr,
+			INET6_ADDRSTRLEN);
+			
 	BST(&stamp)->Ta = *vcount;
 
 	verbose(VERB_DEBUG, "Stamp queue: inserting client stamp->id: %llu",
@@ -695,11 +712,11 @@ push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp, vcounter_t *vc
 
 /*
  * Create a stamp structure, fill it with server side information and pass it
- * for insertion in the peer's stamp queue.
+ * for insertion in the stamp queue.
  */
 int
 push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
-		vcounter_t *vcount, struct sockaddr_storage *ss_src, int *ttl)
+		vcounter_t *vcount, int *ttl)
 {
 	struct stamp_t stamp;
 
@@ -708,16 +725,6 @@ push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 	stamp.type = STAMP_NTP;
 	stamp.id = ((uint64_t) ntohl(ntp->org.l_int)) << 32;
 	stamp.id |= (uint64_t) ntohl(ntp->org.l_fra);
-
-	// TODO not protocol independent. Getaddrinfo instead?
-	if (ss_src->ss_family == AF_INET)
-		inet_ntop(ss_src->ss_family,
-			&((struct sockaddr_in *)ss_src)->sin_addr, stamp.server_ipaddr,
-			INET6_ADDRSTRLEN);
-	else
-		inet_ntop(ss_src->ss_family,
-			&((struct sockaddr_in6 *)ss_src)->sin6_addr, stamp.server_ipaddr,
-			INET6_ADDRSTRLEN);
 
 	stamp.ttl = *ttl;
 	stamp.refid = ntohl(ntp->refid);
@@ -739,7 +746,7 @@ push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 /*
  * Check that packet captured is a sane input, independent from its direction
  * (client request or server reply). Pass it to subroutines for additional
- * checks and insertion/matching in the peer's stamp queue.
+ * checks and insertion/matching in the stamp queue.
  */
 int
 update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
@@ -766,7 +773,7 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
 		return (1);
 	}
 
-	ss = &packet->ss_if;
+	ss = &packet->ss_if;		// host's interface address
 	err = 0;
 	switch (PKT_MODE(ntp->li_vn_mode)) {
 	case MODE_BROADCAST:
@@ -781,18 +788,18 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
 				ipaddr);
 		break;
 
-	case MODE_CLIENT:
+	case MODE_CLIENT:		// here ss_dst is the server address TRIGGER sent to
 		err = bad_packet_client(ntp, ss, &ss_dst, stats);
 		if (err)
 			break;
-		err = push_client_halfstamp(q, ntp, &vcount);
+		err = push_client_halfstamp(q, ntp, &vcount, &ss_dst);
 		break;
 
-	case MODE_SERVER:
+	case MODE_SERVER:		// here ss_src is the address the server responded with
 		err = bad_packet_server(ntp, ss, &ss_src, stats);
 		if (err)
 			break;
-		err = push_server_halfstamp(q, ntp, &vcount, &ss_src, &ttl);
+		err = push_server_halfstamp(q, ntp, &vcount, &ttl);
 		break;
 
 	default:
@@ -815,7 +822,7 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
  * halfstamps older than the fullstamp should be cleaned out, since should they
  * ever be filled, they would be out of order when removed. This also prevents
  * c-halfstamps which are never matched (missing server replies) from bloating
- * the queue permanently. 
+ * the queue permanently.
  * An alternative ordering based on Tf is possible, but has more disadvantages.
  * Note:  older = in queue longer = smaller value.
  * 
@@ -828,6 +835,10 @@ update_stamp_queue(struct stamp_queue *q, radpcap_packet_t *packet,
  * This routine makes NO assumptions on element ordering within the queue, and
  * in particular uses the stamp.id field (see insertandmatch_halfstamp)
  * only to match two halfstamps into a fullstamp, not to establish stamp order).
+ *
+ * To support stamps from multiple servers coexisting in the queue, c-halfstamp
+ * cleanout is only performed when the serverID matches that of the full stamp.
+ * This check is dropped for s-halfstamps, as they shouldn't be there anyway.
  *
  * The prev direction is toward the queue head/start.
  * Error codes:  err = 0 : success, fullstamp found and returned
@@ -884,8 +895,9 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 		if (s_halfstamp)
 			verbose(LOG_WARNING, "Found server halfstamp in stamp queue");
 		
-		if (st == full_st || (c_halfstamp && BST(st)->Ta < full_time) ||
-		     						(s_halfstamp && BST(st)->Tf < BST(full_st)->Tf) )
+		if (st == full_st || (s_halfstamp && BST(st)->Tf < BST(full_st)->Tf)
+			|| (c_halfstamp && BST(st)->Ta < full_time &&
+				 strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) )
 	   {	/* Remove *qel from queue, reset qel to continue loop */
 			if (qel==q->end) {
 				if (qel==q->start) {			// only 1 stamp in queue
@@ -942,21 +954,18 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	int (*get_packet)(struct radclock_handle *, void *, radpcap_packet_t **),
 	struct stamp_t *stamp, struct timeref_stats *stats)
 {
-	struct bidir_peer *peer;
+	struct stamp_queue *q;
 	radpcap_packet_t *packet;
 	int attempt, maxattempts;
 	int err;
 	useconds_t attempt_wait;
-	unsigned char *c;		// essential this be unsigned !
-	unsigned char refid [16];
 
 	JDEBUG
 
 	err = 0;
 	attempt_wait = 1000;					/* [mus]  500 suitable for LAN RTT */
 	maxattempts = 20;						// should be even,  VM needs 20
-	// TODO manage peeers better
-	peer = handle->active_peer;
+	q = ((struct bidir_peers*)handle->peers)->q;
 	packet = create_radpcap_packet();
 
 	/*
@@ -984,7 +993,7 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 		 *     [ do not want to fill stamp queue with the entire trace file ! ]
 		 *  1: halfstamp didn't result in match
 	 	*/
-		err = update_stamp_queue(peer->q, packet, stats);
+		err = update_stamp_queue(q, packet, stats);
 		switch (err) {
 		case -1:
 			verbose(LOG_ERR, "Stamp queue error");
@@ -1020,7 +1029,7 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 			} else {		// found a packet, process it
 				stats->ref_count++;
 				/* Convert packet to stamp and push it to the stamp queue */
-				err = update_stamp_queue(peer->q, packet, stats);
+				err = update_stamp_queue(q, packet, stats);
 
 				/* Error codes as for dead case */
 				if (err == -1)
@@ -1062,77 +1071,10 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	if (err == 1)
 		return (1);
 
-	/* At least one full stamp in the queue, get it. (err=0) */
-	err = get_fullstamp_from_queue_andclean(peer->q, stamp);
+	/* At least one full stamp in the queue (err=0), get it. */
+	err = get_fullstamp_from_queue_andclean(q, stamp);
 	if (err)
 		return (1);
-
-	verbose(VERB_DEBUG, "Popped stamp queue: %llu %.6Lf %.6Lf %llu %llu",
-			(long long unsigned) BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-			(long long unsigned) BST(stamp)->Tf, (long long unsigned) stamp->id);
-
-
-	// TODO: add timingloop test: if NTP_SERV running, test if server's refid
-	//       not the daemon's own server IP
-
-	/* Monitor change in server: logging and quality warning flag */
-	if ((peer->ttl != stamp->ttl) || (peer->LI != stamp->LI) ||
-			(peer->refid != stamp->refid) || (peer->stratum != stamp->stratum)) {
-			
-		if (stamp->qual_warning == 0) stamp->qual_warning = 1;	// signal to algo
-
-		verbose(LOG_WARNING, "Change in NTP server info in stamp %lu (packet %u).",
-				peer->stamp_i, stats->ref_count);
-	
-	
-		/* Print out refid reliably [bit of a monster] */
-		c = (unsigned char *) &(peer->refid);
-		if (stamp->stratum <= STRATUM_REFPRIM) // a string if S0 (KissCode) or S1
-			snprintf(refid, 16, ".%c%c%c%c" ".", *(c+3), *(c+2), *(c+1), *(c+0));  // EOS+ 6 = 7 chars
-		else
-			snprintf(refid, 16, "%u.%u.%u.%u", *(c+3), *(c+2), *(c+1), *(c+0)); // EOS+ 4*3+3 = 16
-		verbose(LOG_WARNING, " OLD:: IP: %s  STRATUM: %d  LI: %u  RefID: %s  TTL: %d",
-			inet_ntoa(NTP_CLIENT(handle)->s_from.sin_addr), peer->stratum, peer->LI, refid, peer->ttl);
-
-		c = (unsigned char *) &(stamp->refid);
-		if (stamp->stratum <= STRATUM_REFPRIM) // a string if S0 (KissCode) or S1
-			snprintf(refid, 16, ".%c%c%c%c" ".", *(c+3), *(c+2), *(c+1), *(c+0));  // EOS+ 6 = 7 chars
-		else
-			snprintf(refid, 16, "%u.%u.%u.%u", *(c+3), *(c+2), *(c+1), *(c+0)); // EOS+ 4*3+3 = 16
-		verbose(LOG_WARNING, " NEW:: IP: %s  STRATUM: %d  LI: %u  RefID: %s  TTL: %d",
-				stamp->server_ipaddr, stamp->stratum, stamp->LI, refid, stamp->ttl);
-
-//		/* Verbosity for refid sanity checking */
-//		// Hack:  Check this format in all cases
-//		snprintf(refid, 16, "%c%c%c%c", *(c+3), *(c+2), *(c+1), *(c+0));
-//		verbose(LOG_WARNING, " Stratum-1 style RefID: %s", refid);
-//		//verbose(LOG_WARNING, "refid manually: IP: %d.%d.%d.%d  .%d",*(c+3), *(c+2), *(c+1), *(c+0), *(c-1));
-//		verbose(LOG_WARNING, "refid manually: %X", stamp->refid );
-//		verbose(LOG_WARNING, "refid manually: %X.%X.%X.%X", *(c+3), *(c+2), *(c+1), *(c+0));
-//		struct in_addr IPrefid;
-//		IPrefid.s_addr = htonl(stamp->refid);
-//		verbose(LOG_WARNING, "IP style refid the easy way: %s", inet_ntoa(IPrefid) );
-
-	}
-
-
-	// TODO do we have to keep this in both structures ?
-	NTP_SERVER(handle)->refid = stamp->refid;
-	peer->refid = stamp->refid;
-	peer->ttl = stamp->ttl;
-	peer->stratum = stamp->stratum;
-	peer->LI = stamp->LI;
-
-	/* Record NTP protocol specific values but only if not crazy */
-	if ((stamp->stratum > STRATUM_REFCLOCK) && (stamp->stratum < STRATUM_UNSPEC) &&
-			(stamp->LI != LEAP_NOTINSYNC)) {
-		NTP_SERVER(handle)->stratum = stamp->stratum;
-		NTP_SERVER(handle)->rootdelay = stamp->rootdelay;
-		NTP_SERVER(handle)->rootdispersion = stamp->rootdispersion;
-		verbose(VERB_DEBUG, "Received pkt stratum= %u, rootdelay= %.9f, "
-				"rootdispersion= %.9f", stamp->stratum, stamp->rootdelay,
-				stamp->rootdispersion);
-	}
 
 	return (0);
 }

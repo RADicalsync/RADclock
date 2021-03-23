@@ -200,11 +200,14 @@ complex OS dependence, though what is covered here is the foundation of it.
 The main OS code dependency is controlled using the guard macros
 # WITH_FFKERNEL_{LINUX,FBSD,NONE} 
 only one of which is defined in the compile configuration.
-This is achieved by including the relevant lines:
+This is achieved by the includion of the lines
 #undef/def WITH_FFKERNEL_FBSD
 #undef/def WITH_FFKERNEL_LINUX
 #undef/def WITH_FFKERNEL_NONE
-in configure.in (the configuration input file for autoconf, automake and makeheader).
+in configure.in (the configuration input file for autoconf, automake and makeheader)
+which are created following the definition of MK_FFKERNEL_{NONE,LINUX,FBSD}
+variables in configure.ac, which are populated in configure.ac using the system
+detected value of target_os.
 
 The macros protect all code in the respective library files
 {ffkernel,kclock,pcap}-{fbsd,linux,none}.c
@@ -353,7 +356,7 @@ sys_ffclock_setestimate			ffclock_setestimate(cest)	set_kernel_ffclock(clock, ce
 sys_ffclock_getestimate			ffclock_getestimate(cest)	get_kernel_ffclock(clock, cest)
 
 
-			- many advances on the kernel side, both for the FFclock suppport itsel
+			- many advances on the kernel side, both for the FFclock suppport itself
 			  and bpf based timestamping, and tsmode processing. However these are
 			  FF changes rather than RAD changes.  See FFclockDoc_FreeBSD for details.
 			  
@@ -372,7 +375,7 @@ To properly support FF clocks in the kernel the central importance of the raw
 timestamp should be make explicit. This led to KV3.
 
 KV=3	Added:
-	  - a new vcounter_t vcount member to the bpf header structure within bpf
+	  - a new vcounter_t vcount member to the bpf header structures within bpf
 	    (not just a hacked header structure used by RADclock)
 	  - the interaction with the universal sysclock infrastructure and TSMODE needs some
 	    sorting out.
@@ -394,8 +397,8 @@ This header, and hence flag, is only defined when KV>1 .
 The flag is used to :
 					 		kclock.h:  ensures timeffc.h is only included if it is available
 	           ffkernel-fbsd.c:  include timeffc.h if available to gain access to syscalls
+										  provide dummy   if KV<2 for ffclock_getcounter
 					 kclock-fbsd.c:  provide dummies if KV<2 for {set,get}_kernel_ffclock
-				  ffkernel-fbsd.c:  provide dummy   if KV<2 for ffclock_getcounter
 
 
 

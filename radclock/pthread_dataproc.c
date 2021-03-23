@@ -32,6 +32,7 @@
 #include <math.h>
 #include <syslog.h>
 #include <time.h>
+#include <signal.h>
 
 #include "../config.h"
 #include "radclock.h"
@@ -104,9 +105,9 @@ update_ipc_shared_memory(struct radclock_handle *handle)
 
 	shm = (struct radclock_shm *) handle->clock->ipc_shm;
 
-	memcpy((void *)shm + shm->data_off_old, &handle->rad_data,
+	memcpy((void *)shm + shm->data_off_old, RAD_DATA(handle),
 			sizeof(struct radclock_data));
-	memcpy((void *)shm + shm->error_off_old, &handle->rad_data,
+	memcpy((void *)shm + shm->error_off_old, RAD_ERROR(handle),
 			sizeof(struct radclock_error));
 	generation = shm->gen;
 
@@ -162,7 +163,7 @@ read_clocks(struct radclock_handle *handle, struct timeval *sys_tv,
 		(after - before) * RAD_DATA(handle)->phat * 1e6 );
 
 	*counter = (vcounter_t) ((before + after)/2);
-	read_RADabs_UTC(&handle->rad_data, counter, &time, PLOCAL_ACTIVE);
+	read_RADabs_UTC(RAD_DATA(handle), counter, &time, PLOCAL_ACTIVE);
 	UTCld_to_timeval(&time, rad_tv);
 }
 
@@ -208,7 +209,7 @@ update_FBclock(struct radclock_handle *handle)
 	 */
 	if (OUTPUT(handle, n_stamps) == NTP_BURST) {
 		radclock_get_vcounter(handle->clock, &vcount);
-		read_RADabs_UTC(&handle->rad_data, &vcount, &time, PLOCAL_ACTIVE);
+		read_RADabs_UTC(RAD_DATA(handle), &vcount, &time, PLOCAL_ACTIVE);
 		UTCld_to_timeval(&time, &rad_tv);
 		err = settimeofday(&rad_tv, NULL);
 		if ( err < 0 )
@@ -263,7 +264,7 @@ update_FBclock(struct radclock_handle *handle)
 		 */
 		if (RAD_DATA(handle)->phat_err < 5e-7  && ( fabs(offset) < 1e-3)) {
 			next_stamp = (int) (60 / handle->conf->poll_period) + 1;
-			next_stamp = next_stamp + ((struct bidir_output*)handle->algo_output)->n_stamps;
+			next_stamp = next_stamp + OUTPUT(handle, n_stamps);
 
 			memset(&tx, 0, sizeof(struct timex));
 			tx.modes = MOD_FREQUENCY | MOD_STATUS;
@@ -352,9 +353,9 @@ update_FBclock(struct radclock_handle *handle)
 	 */
 	if (fabs(offset) > 100e-6) {
 		tx.constant = TIME_CONSTANT - 2;
-		DEL_STATUS(handle, STARAD_SYSCLOCK);
+		DEL_STATUS(RAD_DATA(handle), STARAD_SYSCLOCK);
 	} else {
-		ADD_STATUS(handle, STARAD_SYSCLOCK);
+		ADD_STATUS(RAD_DATA(handle), STARAD_SYSCLOCK);
 		if (fabs(offset) > 40e-6)
 			tx.constant = TIME_CONSTANT - 1;
 		else
@@ -368,7 +369,7 @@ update_FBclock(struct radclock_handle *handle)
 		(double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
 		tx.status, (double)tx.maxerror/1e6, (double)tx.esterror/1e6 );
 
-	poll_period = ((struct bidir_peer*)(handle->active_peer))->poll_period;
+	poll_period = ((struct bidir_peers*)handle->peers)->state[handle->pref_sID].poll_period;
 
 	if (VERB_LEVEL && !(OUTPUT(handle, n_stamps) % (int)(3600*6/poll_period))) {
 		verbose(VERB_CONTROL, "System clock PLL adjusted (offset freq status "
@@ -384,6 +385,162 @@ update_FBclock(struct radclock_handle *handle)
 
 
 
+/* Manage and set the three leapsecond state variables held in rad_data
+ * The detection of leap seconds, and reaction to them, involved keeping state
+ * over an extended period, held in static variables here.
+ * There are three elements to the leap second problem :
+ * 	i) detection of an upcoming leap
+ * 	ii) processing of clock data before and after a leap
+ * 	iii) protection of the algo from leap effects  [ done in process_stamp ]
+ * TODO: work in progress, finish it in due course!
+ */
+static void
+manage_leapseconds(struct radclock_handle *handle, struct stamp_t *stamp,
+	struct radclock_data *rad_data, struct bidir_output *output, int sID)
+{
+	/* Leap second management */
+	static int postleap_freeze = 0;		// inhibit leap actions after a leap
+	static int leap_warningcount = 0;	// >=0, accumulate count of LI warnings
+	static int leap_imminent = 0;			// flag detection of an impending leap
+	static long double tleap = 0;			// the UTC second of the expected leap
+
+	long double radtime;
+	vcounter_t now;
+
+	
+/* Hacks for leapsecond testing */
+/*	if (output->n_stamps == 10) {
+		leap_imminent = 1;		// set once, will stay set until cleared by leap
+		//  put a leap 6 stamps in future
+		tleap = stamp.st.bstamp.Te + 6 * peer->poll_period;
+		stamp.LI = LEAP_ADDSECOND;
+	}
+*/
+	
+	/* (i) Determine if there is enough evidence of an impending leap to declare
+	 * leap_imminent. However, only do this and other leap processing if outside
+	 * of the moratoriam following a recent leap, to avoid possible leap jitter.
+	 */
+	if (postleap_freeze > 0)
+		postleap_freeze--;
+	else
+		//if ((date(stamp.Tf) in 24hr before Jan or July) { // in zone where leaps can occur
+		if (leap_imminent) { // deactivating placeholder for compilation, shouldnt be leap_imminent here !!
+			/* Collect information on potential leap */
+			switch (stamp->LI) {
+				case LEAP_ADDSECOND:
+					output->leapsec_next = 1;	leap_warningcount++;	break;
+				case LEAP_DELSECOND:
+					output->leapsec_next = -1;	leap_warningcount++;	break;
+				default:		if (leap_warningcount>0) leap_warningcount--;
+			}
+			/* Conclude imminent if critical mass of warnings present in final hours */
+			/* Once triggered, imminent state remains until cleared by leap */
+			if (leap_warningcount > 10 && leap_imminent != 1) {
+				verbose(VERB_CONTROL, "** Leapsec ctrl: critical mass of LI warnings reached on server %d", sID);
+				//tleap = (vcounter_t) lastsecofmonth + leapsec_next;	// get this somehow, assume ignores leap!
+				tleap = 1; // placeholder for compilation only
+				if (tleap - stamp->st.bstamp.Tf < 2*3600)
+					leap_imminent = 1;
+			}
+		}
+
+	/* (ii) If a leap coming, set up clock data to signal this and to cope with
+	 * its arrival inbetween algo updates. If already past, incorporate it into
+	 * the leapsec_total and silence the signal. The predicted vcount for the
+	 * leap instant, leapsec_expected, will be updated on each stamp before the
+	 * leap, and if ever exceeded, radclock must leap for consistency with
+	 * RADclock reads which may already have occurred, eg in libprocesses.
+	 */
+	if (leap_imminent) {
+		if (handle->run_mode == RADCLOCK_SYNC_LIVE)
+			radclock_get_vcounter(handle->clock, &now);
+		else
+			now = 0;
+		//verbose(LOG_NOTICE, "** Leapsec ctrl: now = %llu", now);
+		
+		if	( stamp->st.bstamp.Te >= tleap || ( output->leapsec_expected > 0
+					&& now >= output->leapsec_expected ) ) { // radclock must leap
+			/* Reset radclock leap parameters */
+			output->leapsec_total += output->leapsec_next;
+			output->leapsec_expected = 0;    // signal no leap is imminent
+			output->leapsec_next = 0;
+			verbose(LOG_ALERT, "** Leapsec ctrl: RADclock %d just leapt by %d [s],"
+				" leapsec_total now %d [s]", sID,
+				output->leapsec_next, output->leapsec_total);
+			/* Reset leap management parameters */
+			postleap_freeze = 1000;
+			leap_warningcount = 0;
+			leap_imminent = 0;
+		} else {							// leap still ahead, update preparations
+			read_RADabs_UTC(rad_data, &(stamp->st.bstamp.Tf), &radtime, 1);
+			output->leapsec_expected = stamp->st.bstamp.Tf +
+					(vcounter_t) ((tleap - radtime)/rad_data->phat_local);
+			verbose(LOG_NOTICE, "** Leapsec ctrl: jump imminent for RADclock %d, "
+				"leap of %d expected in %4.2Lf [sec] (leapsec_expected = %llu)", sID,
+				output->leapsec_next, tleap - radtime, output->leapsec_expected);
+			//verbose(LOG_NOTICE, "** Leapsec ctrl: jump imminent, leap of %d expected"
+			// "in %4.2Lf [sec] (%4.2Lf  %4.2Lf  counter = %llu)",
+			//  output->leapsec_next, tleap - radtime, tleap, radtime, output->leapsec_expected);
+		}
+	}
+}
+
+
+/* Monitor change in server by comparing against the last stamp from it.
+ * TODO: add timingloop test: if NTP_SERV running, test if server's refid
+ *       not the daemon's own server IP
+ */
+static void
+flag_serverchange(struct stamp_t *laststamp, struct stamp_t *stamp, int *qual_warning)
+{
+	unsigned char *c;		// essential this be unsigned !
+	unsigned char refid [16];
+
+	if ((laststamp->ttl != stamp->ttl) || (laststamp->LI != stamp->LI) ||
+	(laststamp->refid != stamp->refid) || (laststamp->stratum != stamp->stratum)) {
+
+		verbose(LOG_WARNING, "Change in server info compared to previous stamp.");
+
+		/* Signal to algo something dodgy, without overriding existing signal */
+		if (*qual_warning == 0) *qual_warning = 1;
+
+		/* Print out refid reliably [bit of a monster] */
+		c = (unsigned char *) &(laststamp->refid);
+		if (stamp->stratum <= STRATUM_REFPRIM) // a string if S0 (KissCode) or S1
+			snprintf(refid, 16, ".%c%c%c%c" ".", *(c+3), *(c+2), *(c+1), *(c+0));  // EOS+ 6 = 7 chars
+		else
+			snprintf(refid, 16, "%u.%u.%u.%u", *(c+3), *(c+2), *(c+1), *(c+0)); // EOS+ 4*3+3 = 16
+
+		verbose(LOG_WARNING, " OLD:: IP: %s  STRATUM: %d  LI: %u  RefID: %s  TTL: %d",
+			laststamp->server_ipaddr, laststamp->stratum, laststamp->LI, refid, laststamp->ttl);
+			//inet_ntoa(SNTP_CLIENT(handle,sID)->s_from.sin_addr),
+
+		c = (unsigned char *) &(stamp->refid);
+		if (stamp->stratum <= STRATUM_REFPRIM) // a string if S0 (KissCode) or S1
+			snprintf(refid, 16, ".%c%c%c%c" ".", *(c+3), *(c+2), *(c+1), *(c+0));  // EOS+ 6 = 7 chars
+		else
+			snprintf(refid, 16, "%u.%u.%u.%u", *(c+3), *(c+2), *(c+1), *(c+0)); // EOS+ 4*3+3 = 16
+			
+		verbose(LOG_WARNING, " NEW:: IP: %s  STRATUM: %d  LI: %u  RefID: %s  TTL: %d",
+				stamp->server_ipaddr, stamp->stratum, stamp->LI, refid, stamp->ttl);
+
+//		/* Verbosity for refid sanity checking */
+//		// Hack:  Check this format in all cases
+//		snprintf(refid, 16, "%c%c%c%c", *(c+3), *(c+2), *(c+1), *(c+0));
+//		verbose(LOG_WARNING, " Stratum-1 style RefID: %s", refid);
+//		//verbose(LOG_WARNING, "refid manually: IP: %d.%d.%d.%d  .%d",*(c+3), *(c+2), *(c+1), *(c+0), *(c-1));
+//		verbose(LOG_WARNING, "refid manually: %X", stamp->refid );
+//		verbose(LOG_WARNING, "refid manually: %X.%X.%X.%X", *(c+3), *(c+2), *(c+1), *(c+0));
+//		struct in_addr IPrefid;
+//		IPrefid.s_addr = htonl(stamp->refid);
+//		verbose(LOG_WARNING, "IP style refid the easy way: %s", inet_ntoa(IPrefid) );
+	}
+	
+}
+
+
+
 
 /*
  * Check stamps are not insane. The world is divided in black, white and ...
@@ -391,8 +548,10 @@ update_FBclock(struct radclock_handle *handle)
  * is not clear what to do, and that's up to the algo to deal with them. Black
  * stamps are insane and could break processing (e.g. induce zero division, NaN
  * results, etc.). We get rid of them here.
+ * Temporal order testing comparing stamp and laststamp assumes they should be
+ * ordered. This will be the case if they are from the same server.
  */
-int
+static int
 insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct stamp_t *laststamp)
 {
 	/* Sanity check if two consecutive stamps are identical
@@ -492,34 +651,144 @@ insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct
 }
 
 
+/* Returns the server ID given its resolved IP address, or -1 if no match
+ * If running dead, IDs are allocated in order of first occurrence of IP address
+ * 	 pcap input:  actual IP addresses are available
+ *		ascii input:  fake local addresses were created based on sID column in file
+ */
+static int
+serverIPtoID(struct radclock_handle *handle, char *server_ipaddr)
+{
+	int s;
+	struct radclock_ntp_client	*client;
 
-/**
- * XXX TODO: so far we suppose bidir paradigm only and a single source at a time!!
+	for (s=0; s < handle->nservers; s++) {
+		client = &handle->ntp_client[s];
+		//verbose(LOG_NOTICE, "  Comparing stamp IP %s against client %d (%s)",
+		//	server_ipaddr, s,inet_ntoa(client->s_to.sin_addr) );
+		
+		/* Assign s to server IP addresses in order of input */
+		if (handle->run_mode == RADCLOCK_SYNC_DEAD) {
+//			if (strcmp("", inet_ntoa(client->s_to.sin_addr)) == 0)
+			if (client->s_to.sin_addr.s_addr == 0) {	// address is null
+				if (inet_aton(server_ipaddr,&client->s_to.sin_addr) == 0)
+					verbose(LOG_ERR, "IP address %s failed to translate", server_ipaddr);
+				verbose(LOG_NOTICE, "serverID %d assigned to IP address %s", s, server_ipaddr);
+			}
+		}
+		
+		if (strcmp(server_ipaddr, inet_ntoa(client->s_to.sin_addr)) == 0)
+			return (s); // found it
+	}
+	
+	return (-1);
+}
+
+
+/* Returns the serverID (array index) of the radclock deemed to be of the
+ * highest quality at this time (among clocks with at least one stamp)
+ * Algorithm 1:  select clock with smallest minRTT, subject to quality
+ * 	sanity check. If none pass check, select one with smallest minRTT.
+ *		At start of warmup, all error_bounds = 0 so initial selection will
+ *		follow minRTT order.
+ */
+static int
+preferred_RADclock(struct radclock_handle *handle)
+{
+	vcounter_t mRTThat;		// minimum RTT
+	int s_mRTThat = -1;		// matching serverID
+	vcounter_t RTThat;		// minimum RTT among acceptable servers
+	int s_RTThat = -1;		// matching serverID
+	double error_thres = 10e-3;	// acceptable level of rAdclock error
+
+	int s;
+	struct bidir_algostate *state;
+
+	for (s=0; s < handle->nservers; s++) {
+		state = &((struct bidir_peers *)handle->peers)->state[s];
+		if (state->stamp_i == 0) continue;		// no stamp for this server yet
+
+		/* Find minimum RTT */
+		if (s_mRTThat<0) {	// initialize to first server with a stamp
+			mRTThat = state->RTThat;
+			s_mRTThat = s;
+		} else
+			if (state->RTThat < mRTThat) {
+				mRTThat = state->RTThat;
+				s_mRTThat = s;
+			}
+
+		/* Find minimum with acceptable error */
+		if ( state->peer_err.error_bound < error_thres )
+			if (s_RTThat<0) {	// initialize to this s
+				RTThat = state->RTThat;
+				s_RTThat = s;
+			} else
+				if (state->RTThat < RTThat) {
+					RTThat = state->RTThat;
+					s_RTThat = s;
+				}
+	}
+
+	if (s_RTThat < 0) {
+		verbose(LOG_WARNING, "No server has acceptable error (< %3.1lf), preferred "
+			"server based on minimum RTT only", error_thres);
+		s_RTThat = s_mRTThat;
+	}
+
+	if (s_RTThat != handle->pref_sID) {
+		state = &((struct bidir_peers *)handle->peers)->state[s_RTThat];
+		verbose(LOG_NOTICE, "New preferred clock %d has minRTT %3.1lf ms and error bound %3.1lf ms",
+			s_RTThat, 1000*RTThat*state->phat, 1000*state->peer_err.error_bound);
+	}
+
+	return (s_RTThat);
+}
+
+
+
+/*
+ * This function is the core of the RADclock daemon.
+ * It checks to see if any of the maintained RADclocks (one per server) is being
+ * starved of data.  It then looks for a new stamp. If one is available, it:
+ * 	assesses it
+ *		determines the server it came from (which RADclock it will feed)
+ *			- manages the leapsecond issues
+ *			- feeds a vetted and leapsecond-safe RAD-stamp to the algo
+ *			- updates the central handle->rad_data containing this clock's params and state
+ *		Once the new stamp is processed, the preferred clock decision is updated
+ *		If running live:
+ *			- the parameters of the preferred clock are sent to the relevant
+ *			  IPC consumers (FF and/or FB kernel clocks, SHM)
+ *			- keeps summaries of the new stamp and server state
+ *			- if the daemon is an NTC OCN node, outputs a critical summary into a telemetry feed
  */
 int
-process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
+process_stamp(struct radclock_handle *handle)
 {
-	/* Bi-directionnal stamp passed to the algo for processing */
-	struct stamp_t stamp;
-	static struct stamp_t laststamp;		// remember last stamp (with original Te,Tf)
-	struct ffclock_estimate cest;
-
-	/* Leap second management */
-	static int postleap_freeze = 0;		// inhibit leap actions after a leap
-	static int leap_warningcount = 0;	// >=0, accumulate count of LI warnings
-	static int leap_imminent = 0;			// flag detection of an impending leap
-	static long double tleap = 0;			// the UTC second of the expected leap
-	struct bidir_stamp stamp_noleap;
 	vcounter_t now, vcount;
-	long double radtime;
-	
+
+	/* Bi-directional stamp passed to the algo for processing */
+	struct stamp_t stamp;
+	struct ffclock_estimate cest;
+	int qual_warning = 0;
+	struct bidir_stamp bdstamp_noleap;
+
+	/* Multiple server management */
+	int sID; 							// server ID of new stamp popped here
+	int s;
+	struct radclock_data *rad_data;
+	struct radclock_error *rad_error;
+	struct bidir_peers *peers;
+	struct stamp_t *laststamp;		// access last stamp (with original Te,Tf)
+	struct bidir_output *output;
+	struct bidir_algostate *state;
+	int pref_updated = 0;
+	int pref_sID_new;
+
 	/* Error control logging */
 	long double currtime 	= 0;
-	double min_RTT 			= 0;
-	double timediff 		= 0;
-	double error_bound 		= 0;
-	double error_bound_avg 	= 0;
-	double error_bound_std 	= 0;
+	double timediff 			= 0;
 	int err, err_read;
 	
 	/* Check hardware counter has not changed */
@@ -538,198 +807,195 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	/* Signal big error */
 	if (err == -1)
 	{
-		push_telemetry(handle); // Check if telemetry message needs to be sent
+		push_telemetry(handle, -1); // Check if telemetry message needs to be sent
 		return (-1);
 	}
 
-	/* Starvation test:  have valid stamps stopped arriving to algo?
+	/* Starvation test: have valid stamps stopped arriving to the algo?
+	 * Test is applied to all clocks, even that of the current stamp (if any).
 	 * Definition based on algo input only, as cannot be evaluated by the algo.
 	 * Hence is a function of the duration of the missing stamp gap, measured in
 	 * poll period units. Stamps can be missing, or invalid, or any reason.
 	 * Test should run once per trigger-grid point. Due to structure of TRIGGER--
 	 * PROC interactions, process_stamp runs each time, so this is true.
 	 */
+	peers = (struct bidir_peers*)handle->peers;
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
-		err_read = radclock_get_vcounter(handle->clock, &vcount);
-		if (err_read < 0)
-		{
-			push_telemetry(handle); // Check if telemetry message needs to be sent
+		err_read = radclock_get_vcounter(handle->clock, &now);
+		// if (err_read < 0)
+		// {
+		// 	push_telemetry(handle, -1); // Check if telemetry message needs to be sent
 
-			return (-1);
+		// 	return (-1);
+	
+		for (s=0; s < handle->nservers; s++) {
+			rad_data = &handle->rad_data[s];
+			state = &peers->state[s];
+			if ((now - rad_data->last_changed) * rad_data->phat > 10*state->poll_period) {
+				if (!HAS_STATUS(rad_data, STARAD_STARVING)) {
+					verbose(LOG_WARNING, "Clock %d is starving. Gap has exceeded 10 stamps", s);
+					ADD_STATUS(rad_data, STARAD_STARVING);
+				}
+			}
 		}
 
-		if ((vcount - RAD_DATA(handle)->last_changed) * RAD_DATA(handle)->phat >
-				10*(((struct bidir_peer*)(handle->active_peer))->poll_period)) {
-			if (!HAS_STATUS(handle, STARAD_STARVING)) {
-				verbose(LOG_WARNING, "Clock is starving. Gap has exceeded 10 stamps");
-				ADD_STATUS(handle, STARAD_STARVING);
-			}
+		/* **FreeBSD** Terminate if find a RTC reset, as currently can't handle this.
+		 * Detection can fail if reset occurs before the first setting of kernel data
+		 * Test is based on the preferred clock as it disciplines the FFclock.
+		 */
+		get_kernel_ffclock(handle->clock, &cest);
+		if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
+			state = &peers->state[handle->pref_sID];
+			verbose(LOG_WARNING, "RADclock noticed a kernel RTC reset after stamp %d, "
+										"will require a restart I'm afraid", state->stamp_i);
+			return -1;
 		}
 	}
 
+
+	/* TELEMETRY:  Test for timeout based telemetry trigger */
 	/* No error, but no stamp to process */
 	if (err == 1)
 	{
-		push_telemetry(handle); // Check if telemetry message needs to be sent
+		push_telemetry(handle, -1); // Check if telemetry message needs to be sent
 		return (1);
 	}
 
-	/* **FreeBSD** Terminate if find a RTC reset, as currently can't handle this.
-	 * Detection can fail if reset occurs before the first setting of kernel data
-	 */
-	get_kernel_ffclock(handle->clock, &cest);
-	if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(handle, STARAD_UNSYNC)) {
-		verbose(LOG_WARNING, "RADclock noticed a kernel RTC reset on stamp %d, "
-									"will require a restart I'm afraid", peer->stamp_i);
-		push_telemetry(handle); // Check if telemetry message needs to be sent
-
-		return -1;
+	/* If a recognized stamp is returned, record the server it came from */
+	sID = serverIPtoID(handle, stamp.server_ipaddr);
+	if (sID < 0) {
+		verbose(LOG_WARNING, "Unrecognized stamp popped, skipping it");
+		return (1);
 	}
-	
-	/* If the new stamp looks insane just don't pass it for processing, keep
-	 * going and look for the next one. Otherwise, record it.
-	 */
-	// TODO: this should be stored in a proper structure under the clock handle, why?
-	// check if insane_bidir_stamp wont kick a stamp out after a leap, or leap screw ups
-	if (OUTPUT(handle, n_stamps) > 1) {
-		if (insane_bidir_stamp(handle, &stamp, &laststamp))
-			return (0);
-	}
-	// Starvation release in case of a stamp passing through to algo
-	if (HAS_STATUS(handle, STARAD_STARVING)) {
-		verbose(LOG_NOTICE, "Clock no longer starving");
-		DEL_STATUS(handle, STARAD_STARVING);
-	}
-	
-	memcpy(&laststamp, &stamp, sizeof(struct stamp_t));
-
-	// TODO: - should be stored in a proper structure under the clock handle
-	// 		- check if insane_bidir_stamp wont kick a stamp out after a leap..
-	/* Valid stamp obtained, take note and pass to the algo */
-	OUTPUT(handle, n_stamps)++;
-
-
-
-	/* Leapsecond management 
-	 * There are three elements :
-	 * i) detection of an upcoming leap
-	 * ii) processing of clock data before and after a leap
-	 * iii) protection of the algo from leap effects
-	 */
-	
-/* Hacks for leapsecond testing */
-/*	if (OUTPUT(handle, n_stamps) == 10) {
-		leap_imminent = 1;		// set once, will stay set until cleared by leap
-		//  put a leap 6 stamps in future
-		tleap = stamp.st.bstamp.Te + 6 * peer->poll_period;
-		stamp.LI = LEAP_ADDSECOND;
-	}
-*/
-	
-	/* (i) Determine if there is enough evidence of an impending leap to declare
-	 * leap_imminent. However, only do this and other leap processing if outside 
-	 * of the moratoriam following a recent leap, to avoid possible leap jitter.
-	 */
-	if (postleap_freeze > 0)
-		postleap_freeze--;
-	else
-		//if ((date(stamp.Tf) in 24hr before Jan or July) { // in zone where leaps can occur
-		if (leap_imminent) { // deactivating placeholder for compilation, shouldnt be leap_imminent here !!
-			/* Collect information on potential leap */
-			switch (stamp.LI) {
-				case LEAP_ADDSECOND:
-					OUTPUT(handle, leapsec_next) = 1;	leap_warningcount++;	break;
-				case LEAP_DELSECOND:
-					OUTPUT(handle, leapsec_next) = -1;	leap_warningcount++;	break;
-				default:		if (leap_warningcount>0) leap_warningcount--;
-			}
-			/* Conclude imminent if critical mass of warnings present in final hours */
-			/* Once triggered, imminent state remains until cleared by leap */
-			if (leap_warningcount > 10 && leap_imminent != 1) {
-				verbose(VERB_CONTROL, "** Leapsec ctrl: critical mass of LI warnings reached");
-				//tleap = (vcounter_t) lastsecofmonth + leapsec_next;	// get this somehow, assume ignores leap!
-				tleap = 1; // placeholder for compilation only
-				if (tleap - stamp.st.bstamp.Tf < 2*3600)
-					leap_imminent = 1;
-			}
+	if (handle->conf->is_cn && handle->conf->time_server_ocn_mapping[sID] > -1)
+		if (stamp.auth_key_id != handle->conf->time_server_ocn_mapping[sID])
+		{
+			verbose(LOG_ERR, "CN received OCN NTP stamp with incorrect auth_key. Requires developer investigation");
+			return (1);
 		}
 
-	/* (ii) If a leap coming, set up clock data to signal this and to cope with
-	 * its arrival inbetween algo updates. If already past, incorporate it into
-	 * the leapsec_total and silence the signal. The predicted vcount for the 
-	 * leap instant, leapsec_expected, will be updated on each stamp before the 
-	 * leap, and if ever exceeded, radclock must leap for consistency with 
-	 * RADclock reads which may already have occurred, eg in libprocesses.
+	verbose(VERB_DEBUG, "Popped a stamp from server %d: %llu %.6Lf %.6Lf %llu %llu", sID,
+			(long long unsigned) BST(&stamp)->Ta, BST(&stamp)->Tb, BST(&stamp)->Te,
+			(long long unsigned) BST(&stamp)->Tf, (long long unsigned) stamp.id);
+	
+	/* Set pointers to data for this server */
+	rad_data  = &handle->rad_data[sID];		// = SRAD_DATA(handle,sID);
+	rad_error = &handle->rad_error[sID];
+	laststamp = &peers->laststamp[sID];
+	output = &peers->output[sID];
+	state = &peers->state[sID];
+
+	/* If the stamp fails basic tests we won't endanger the algo with it, just exit
+	 * If there is something potentially dangerous but not fatal, flag it.
+	 * Note that lower level tests already performed in bad_packet_server() which
+	 * could block stamp from ever reaching here.  If not blocked, no way of passing
+	 * the hint to the algo as qual_warning no longer in stamp_t.
+	 * TODO: consider if some (eg LI) checks in bad_packet_server should be
+	 *       centralized here instead, or seen by leap code.
+	 * TODO: check if insane_bidir_stamp wont kick a stamp out after a leap, or leap screw ups
 	 */
-	if (leap_imminent) {
-		if (handle->run_mode == RADCLOCK_SYNC_LIVE)
-			radclock_get_vcounter(handle->clock, &now);
-		else
-			now = 0;
-		//verbose(LOG_NOTICE, "** Leapsec ctrl: now = %llu", now);
-		
-		if	( stamp.st.bstamp.Te >= tleap || ( OUTPUT(handle, leapsec_expected) > 0
-					&& now >= OUTPUT(handle, leapsec_expected) )) { // radclock must leap
-			/* Reset radclock leap parameters */
-			OUTPUT(handle, leapsec_total) += OUTPUT(handle, leapsec_next);
-			OUTPUT(handle, leapsec_expected) = 0;    // signal no leap is imminent
-			OUTPUT(handle, leapsec_next) = 0;
-			verbose(LOG_ALERT, "** Leapsec ctrl: RADclock just leapt by %d [s], leapsec_total now %d [s]",
-				OUTPUT(handle, leapsec_next), OUTPUT(handle, leapsec_total));
-			/* Reset leap management parameters */
-			postleap_freeze = 1000;
-			leap_warningcount = 0;
-			leap_imminent = 0;
-		} else {							// leap still ahead, update preparations
-			read_RADabs_UTC(&handle->rad_data, &(stamp.st.bstamp.Tf), &radtime, 1);
-			OUTPUT(handle, leapsec_expected) = stamp.st.bstamp.Tf +
-					(vcounter_t) ((tleap - radtime)/(long double)peer->plocal);
-			verbose(LOG_NOTICE, "** Leapsec ctrl: jump imminent, leap of %d expected in %4.2Lf [sec] (leapsec_expected = %llu)",
-				OUTPUT(handle, leapsec_next), tleap - radtime, OUTPUT(handle, leapsec_expected));
-			//verbose(LOG_NOTICE, "** Leapsec ctrl: jump imminent, leap of %d expected in %4.2Lf [sec] (%4.2Lf  %4.2Lf  counter = %llu)", OUTPUT(handle, leapsec_next), tleap - radtime, tleap, radtime, OUTPUT(handle, leapsec_expected));
+	if (output->n_stamps > 0) {
+		/* Flag a change in this server's advertised NTP characteristics */
+		flag_serverchange(laststamp, &stamp, &qual_warning);
+		/* Check fundamental properties are satisfied */
+		if (insane_bidir_stamp(handle, &stamp, laststamp)) {
+			memcpy(laststamp, &stamp, sizeof(struct stamp_t));	// always record
+			return (0);		// starved clock remains starved if stamp insane
 		}
 	}
 
- 
-	/* (iii) Run RADclock algorithm to update radclock parameters with new stamp.
+	/* Valid stamp obtained: record and flag it, then continue to the algo */
+	output->n_stamps++;
+	memcpy(laststamp, &stamp, sizeof(struct stamp_t));
+	if (HAS_STATUS(rad_data, STARAD_STARVING)) {
+		verbose(LOG_NOTICE, "Clock %d no longer starving", sID);
+		DEL_STATUS(rad_data, STARAD_STARVING);
+	}
+
+	/* Manage the leapsecond state variables held in output */
+	manage_leapseconds(handle, &stamp, rad_data, output, sID);
+
+	/* Run the RADclock algorithm to update radclock parameters with new stamp.
 	 * Pass it server timestamps which have had leapseconds removed, so algo sees
-	 * a continuous timescale and is leapsecond oblivious.
+	 * a continuous timescale and is leap second oblivious.
 	 * After updating, also update leap second parameters, and incorporate all 
 	 * into rad_data ready for publication to the IPC and kernel.
 	 */
 
 	/* Update radclock parameters using leap-free stamp */
-	stamp_noleap = stamp.st.bstamp;
-	stamp_noleap.Tb += OUTPUT(handle, leapsec_total);	// adding means removing
-	stamp_noleap.Te += OUTPUT(handle, leapsec_total);
+	bdstamp_noleap = stamp.st.bstamp;
+	bdstamp_noleap.Tb += output->leapsec_total;	// adding means removing
+	bdstamp_noleap.Te += output->leapsec_total;
 	//get_kernel_ffclock(handle->clock, &cest);				// check for RTC reset
 	// TODO: need to make  RTCreset = secs_to_nextupdate==0 && not yet pushed to kernel
 	//  easy and definitive way to to record a stamp_firstpush = stamp_i  in peer
-	process_bidir_stamp(handle, peer, &stamp_noleap, stamp.qual_warning);
+	process_bidir_stamp(handle, state, &bdstamp_noleap, qual_warning, rad_data, rad_error, output);
 //						cest.secs_to_nextupdate == 0 && stamp_i > stamp_firstpush);
 
-	/* Update RADclock data with new algo outputs, and leap second update */
+	/* Update RADclock data with new algo outputs, and leap second update
+	 * the rad_data->status bits are jointly owned by the algo, and this function,
+	 * and are so no in algo state.  They are updated individually in-situ.
+	 */
 	pthread_mutex_lock(&handle->globaldata_mutex);	// ensure consistent reads
-
-	RAD_DATA(handle)->phat				= peer->phat;
-	RAD_DATA(handle)->phat_err			= peer->perr;
-	RAD_DATA(handle)->phat_local		= peer->plocal;
-	RAD_DATA(handle)->phat_local_err	= peer->plocalerr;
-	RAD_DATA(handle)->ca					= peer->K - (long double)peer->thetahat;
-	RAD_DATA(handle)->ca_err			= RAD_ERROR(handle)->error_bound;
-	RAD_DATA(handle)->last_changed	= stamp.st.bstamp.Tf;
-	RAD_DATA(handle)->next_expected	= stamp.st.bstamp.Tf +
-								(vcounter_t) ((double)peer->poll_period / peer->phat);
-	RAD_DATA(handle)->leapsec_total	= OUTPUT(handle, leapsec_total);
-	RAD_DATA(handle)->leapsec_next	= OUTPUT(handle, leapsec_next);
-	RAD_DATA(handle)->leapsec_expected	= OUTPUT(handle, leapsec_expected);
-	
+	rad_data->phat					= state->phat;
+	rad_data->phat_err			= state->perr;
+	rad_data->phat_local			= state->plocal;
+	rad_data->phat_local_err	= state->plocalerr;
+	rad_data->ca					= state->K - (long double)state->thetahat;
+	rad_data->ca_err				= state->peer_err.error_bound;
+	rad_data->last_changed		= stamp.st.bstamp.Tf;
+	rad_data->next_expected		= stamp.st.bstamp.Tf +
+								(vcounter_t) ((double)state->poll_period / state->phat);
+	rad_data->leapsec_total		= output->leapsec_total;
+	rad_data->leapsec_next		= output->leapsec_next;
+	rad_data->leapsec_expected = output->leapsec_expected;
+	/* Update all members of rad_error */
+	rad_error->error_bound 		= rad_data->ca_err;	// same by definition
+	if (state->peer_err.nerror > 0) {
+		rad_error->error_bound_avg = state->peer_err.cumsum / state->peer_err.nerror;
+		if (state->peer_err.nerror > 1) {
+			rad_error->error_bound_std = sqrt((state->peer_err.sq_cumsum -
+			(state->peer_err.cumsum * state->peer_err.cumsum / state->peer_err.nerror))
+				 / (state->peer_err.nerror - 1) );
+		}
+	}
+	rad_error->min_RTT = state->RTThat * state->phat;
 	pthread_mutex_unlock(&handle->globaldata_mutex);
 	
-	if ( VERB_LEVEL>1 ) {
-		verbose(LOG_DEBUG, "In process_stamp");
-		printout_raddata(RAD_DATA(handle));
+	/* Record typical NTP parameter values for this server */
+	if ((stamp.stratum > STRATUM_REFCLOCK) && (stamp.stratum < STRATUM_UNSPEC)
+			&& (stamp.LI != LEAP_NOTINSYNC)) {
+		handle->ntp_server[sID].stratum        = stamp.stratum;
+		handle->ntp_server[sID].rootdelay      = stamp.rootdelay;
+		handle->ntp_server[sID].rootdispersion = stamp.rootdispersion;
+		verbose(VERB_DEBUG, "Received pkt stratum= %u, rootdelay= %.9f, rootdispersion= %.9f",
+				stamp.stratum, stamp.rootdelay, stamp.rootdispersion);
 	}
+	handle->ntp_server[sID].refid  = stamp.refid;	// typical not defined, get each time
+	handle->ntp_server[sID].minRTT = rad_error->min_RTT;
+
+
+	if ( VERB_LEVEL>1 ) {
+		verbose(VERB_DEBUG, "rad_data updated in process_stamp: ");
+		printout_raddata(rad_data);
+	}
+
+
+
+	/* Processing complete on the new stamp wrt the corresponding RADclock.
+	 * Reevaluate preferred RADclock
+	 * Preferred clock is updated if it has changed, or if this stamp is from it
+	 */
+	pref_sID_new = preferred_RADclock(handle);
+	if (pref_sID_new != handle->pref_sID) {
+		pref_updated = 1;
+		verbose(LOG_NOTICE, "Preferred clock changed from %d to %d",
+			handle->pref_sID, pref_sID_new);
+		handle->pref_sID = pref_sID_new;		// register change
+	} else
+		if (sID == handle->pref_sID) pref_updated = 1;
+		
+
 
 	/*
 	 * RADdata copy actions, only relevant when running Live
@@ -737,17 +1003,19 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	 *		- FFclock kernel parameters update
 	 *		- VM store update
 	 *		- FBclock kernel parameters update
+	 *
+	 * The preferred clock only is used here.
 	 */
-  	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
+  	if (handle->run_mode == RADCLOCK_SYNC_LIVE && pref_updated) {
 
 		/* Update IPC shared memory segment for used by libprocesses */
 		if (handle->conf->server_ipc == BOOL_ON) {
-			if (!HAS_STATUS(handle, STARAD_UNSYNC))
+			if (!HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC))
 				update_ipc_shared_memory(handle);
 		}
 
 		/* Update FFclock parameters, provided RADclock is synchronized */
-		if (!HAS_STATUS(handle, STARAD_UNSYNC)) {
+		if (!HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
 			if (handle->clock->kernel_version < 2) {
 				update_kernel_fixed(handle);
 				verbose(VERB_DEBUG, "Sync pthread updated kernel fixed pt data.");
@@ -762,27 +1030,33 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 						&size_ctl, NULL, 0);
 				if (err == -1) {
 					verbose(LOG_ERR, "Can''t find kern.timecounter.hardware in sysctl");
-					push_telemetry(handle); // Check if telemetry message needs to be sent
+					push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 
 					return (-1);
 				}
 				
+				// TODO: great many things to do here to performm a clean reset, this
+				// is a very partial placeholder only, also not yet upgraded to
+				// mRADclock
 				if (strcmp(handle->clock->hw_counter, hw_counter) != 0) {
 					verbose(LOG_WARNING, "Hardware counter has changed (%s -> %s)."
 						" Reinitialising radclock.", handle->clock->hw_counter,
 						hw_counter);
 					OUTPUT(handle, n_stamps) = 0;
-					peer->stamp_i = 0;
+					//state->stamp_i = 0;
+					((struct bidir_peers *)handle->peers)->state[handle->pref_sID].stamp_i = 0;
+
 					NTP_SERVER(handle)->burst = NTP_BURST;
 					strcpy(handle->clock->hw_counter, hw_counter);
 
-					push_telemetry(handle); // Check if telemetry message needs to be sent
+					push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 
 				// TODO: algo needs to reset:  many things not done here, need big look
 					return (0);
 				}
 	#endif
-				fill_ffclock_estimate(&handle->rad_data, &handle->rad_error, &cest);
+	
+				fill_ffclock_estimate(RAD_DATA(handle), RAD_ERROR(handle), &cest);
 				if ( VERB_LEVEL>2 ) printout_FFdata(&cest);
 				
 				if (handle->conf->adjust_FFclock == BOOL_ON) {
@@ -801,10 +1075,10 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 				long double ca_compare, Ca_compare, CaFF;
 				struct radclock_data inverted_raddata;
 				if ( VERB_LEVEL>2 ) {
-				 	ca_compare = handle->rad_data.ca;
-				 	read_RADabs_UTC(&handle->rad_data, &handle->rad_data.last_changed, &Ca_compare, 0);
+				 	ca_compare = RAD_DATA(handle)->ca;
+				 	read_RADabs_UTC(RAD_DATA(handle), RAD_DATA(handle)->last_changed, &Ca_compare, 0);
 					verbose(LOG_NOTICE, "RADdata from daemon");
-					printout_raddata(&handle->rad_data);
+					printout_raddata(RAD_DATA(handle));
 					
 					get_kernel_ffclock(handle->clock, &cest);
 					fill_radclock_data(&cest, &inverted_raddata);
@@ -832,62 +1106,59 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 		if (VM_MASTER(handle)) {
 			err = push_data_vm(handle);
 			if (err < 0) {
-				push_telemetry(handle); // Check if telemetry message needs to be sent
+				push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 				verbose(LOG_WARNING, "Error attempting to push VM data");
 				return (1);
 			}
 		}
 
-        /* Push NTP stamp to SHM */
-		struct radclock_shm_ts SHM_stamp;
-		SHM_stamp.Ta = stamp.st.bstamp.Ta;
-		SHM_stamp.Tb = stamp.st.bstamp.Tb;
-		SHM_stamp.Te = stamp.st.bstamp.Te;
-		SHM_stamp.Tf = stamp.st.bstamp.Tf;
-		SHM_stamp.id = stamp.id;
-		// handle->SHM_stamp = SHM_stamp;
-		handle->SHM_stamps[handle->SHM_stamp_write_id] = SHM_stamp;
-		// Increment the write position of the queue. Wrap to start in case of full queue
-		handle->SHM_stamp_write_id = (handle->SHM_stamp_write_id + 1) % handle->SHM_stamps_queue_size;
-
-        /* Send telemetry data through ring buffer and eventually to NTC_CN */
-        push_telemetry(handle); // Check if telemetry message needs to be sent
-
    }  // RADCLOCK_SYNC_LIVE actions
 
 
-	/* Write algo output to matlab file, much less urgent than previous tasks */
-	print_out_files(handle, &stamp);
+	/* Push NTP stamp to SHM */
+	struct radclock_shm_ts SHM_stamp;
+	SHM_stamp.Ta = stamp.st.bstamp.Ta;
+	SHM_stamp.Tb = stamp.st.bstamp.Tb;
+	SHM_stamp.Te = stamp.st.bstamp.Te;
+	SHM_stamp.Tf = stamp.st.bstamp.Tf;
+	SHM_stamp.id = stamp.id;
+	SHM_stamp.icn_id = handle->conf->time_server_icn_mapping[sID];
+	strcpy(SHM_stamp.server_ipaddr, stamp.server_ipaddr);
+	// verbose(LOG_INFO, "Pushing shm packet ip %s", SHM_stamp.server_ipaddr);
+
+	handle->SHM_stamps[handle->SHM_stamp_write_id] = SHM_stamp;
+	// Increment the write position of the queue. Wrap to start in case of full queue
+	handle->SHM_stamp_write_id = (handle->SHM_stamp_write_id + 1) % handle->SHM_stamps_queue_size;
+
+	/* Send telemetry data through ring buffer and eventually to NTC_CN */
+	push_telemetry(handle, sID); // Check if telemetry message needs to be sent
+
+	/* Write ascii output files if open, much less urgent than previous tasks */
+	print_out_files(handle, &stamp, output, sID);
 
 	/* View updated RADclock data and compare with NTP server stamps in nice
 	 * format. The first 10 then every 6 hours (poll_period can change, but
 	 * should be fine with a long term average, do not have to be very precise
 	 * anyway).
 	 * Note: ->n_stamps has been incremented by the algo to prepare for next
-	 * stamp.
+	 * stamp. TODO: check this statement, is done here only I think
 	 */
-	//poll_period = ((struct bidir_peer *)(handle->active_peer))->poll_period;
-	if (VERB_LEVEL && ((OUTPUT(handle, n_stamps) < 10) ||
-			!(OUTPUT(handle, n_stamps) % ((int)(3600*6/peer->poll_period)))))
+	if (VERB_LEVEL && (output->n_stamps < 10) ||
+			!(output->n_stamps % ((int)(3600*6/state->poll_period))) )
 	{
-		read_RADabs_UTC(&handle->rad_data, &(RAD_DATA(handle)->last_changed),
-				&currtime, PLOCAL_ACTIVE);
-		min_RTT = RAD_ERROR(handle)->min_RTT;
+		read_RADabs_UTC(rad_data, &(rad_data->last_changed), &currtime, PLOCAL_ACTIVE);
 		timediff = (double) (currtime - (long double) BST(&stamp)->Te);
 
-		verbose(VERB_CONTROL, "i=%ld: Response timestamp %.6Lf, RAD - NTPserver "
-				"= %.3f [ms], RTT/2 = %.3f [ms]",
-				OUTPUT(handle, n_stamps) - 1,
-				BST(&stamp)->Te, 1000*timediff, 1000*min_RTT / 2 );
+		verbose(VERB_CONTROL, "i=%ld: (sID=%d) Response timestamp %.6Lf, "
+				"RAD - NTPserver = %.3f [ms], RTT/2 = %.3f [ms]",
+				output->n_stamps - 1, sID,
+				BST(&stamp)->Te, 1000 * timediff, 1000 * rad_error->min_RTT / 2 );
 
-		error_bound = RAD_ERROR(handle)->error_bound;
-		error_bound_avg = RAD_ERROR(handle)->error_bound_avg;
-		error_bound_std = RAD_ERROR(handle)->error_bound_std;
 		verbose(VERB_CONTROL, "i=%ld: Clock Error Bound (cur,avg,std) %.6f "
-				"%.6f %.6f [ms]",
-				OUTPUT(handle, n_stamps) - 1,
-				error_bound * 1000, error_bound_avg * 1000,
-				error_bound_std * 1000);
+				"%.6f %.6f [ms]", output->n_stamps - 1,
+				1000 * rad_error->error_bound,
+				1000 * rad_error->error_bound_avg,
+				1000 * rad_error->error_bound_std);
 	}
 
 	/* Set initial state of 'signals' - important !!
@@ -895,6 +1166,13 @@ process_stamp(struct radclock_handle *handle, struct bidir_peer *peer)
 	 * parameters, with the next packets coming.
 	 */
 	handle->conf->mask = UPDMASK_NOUPD;
+
+
+	/* TELEMETRY:  updates on all clocks and preferred clock are in. */
+//	if (telemetry_enabled)
+//    teletrig_other =  || ..  ||
+//		if (teletrig_thresh || teletrig_other ) send_telebundle;
+
 
 	JDEBUG_RUSAGE
 	return (0);

@@ -403,7 +403,6 @@ deliver_rawdata_spy(struct radclock_handle *handle, struct stamp_t *stamp)
 			(long double) (RD_SPY(rdb)->Te.tv_usec / 1e6);
 	BST(stamp)->Tf = RD_SPY(rdb)->Tf;
 	stamp->type = STAMP_SPY;
-	stamp->qual_warning = 0;
 
 	/* Mark this raw data element read */
 	rdb->read = 1;
