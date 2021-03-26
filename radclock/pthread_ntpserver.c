@@ -221,6 +221,7 @@ thread_ntp_server(void *c_handle)
 		int auth_bytes = 0;
 		int auth_pass = 0;
 		unsigned int key_id = 0;
+		int private_signed_ntp = 0;
 
 		// If the client has requested authentication and we have some key data
 		if (n > 48 && key_data)
@@ -248,6 +249,7 @@ thread_ntp_server(void *c_handle)
 							handle->inband_signal = inband_signal;
 							verbose(LOG_WARNING, "NTP Server received CN inband signal: %d", inband_signal);
 						}
+						private_signed_ntp = 1;
 					}
 
 					auth_pass = 1;
@@ -259,8 +261,24 @@ thread_ntp_server(void *c_handle)
 			else
 				verbose(LOG_WARNING, "NTP Server authentication request invalid key_id %d", key_id);
 		}
-		else if ( !key_data )
-			verbose(LOG_ERR, "NTP Server authentication request when this server has no keys");
+		else 
+		{
+			if ( !key_data )
+			{
+				verbose(LOG_ERR, "NTP Server authentication request when this server has no keys");
+				continue;
+			}
+		}
+
+		if ( ! handle->conf->public_ntp && !private_signed_ntp )
+		{
+			// The radclock indicated that it should stop serving public NTP requests so don't reply to this request
+			// Unless the request was from the CN (Control Node) which used the private CN-OCN key
+			continue;
+		}
+		
+
+
 		/* Fill the outgoing packet
 		 * Fixed point conversion of rootdispersion and rootdelay with up-down round up
 		 * NTP_VERSION:  add an abusive value to enable RAD client<-->server testing

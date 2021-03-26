@@ -385,12 +385,16 @@ ntp_client(struct radclock_handle *handle)
 
 	/* Set to data for this server */
 	int ocn_id = -1;
+	int key_id = -1;
 	if (handle->conf->is_cn) // Only attempt authenticated ntp communication to OCNs from CN
 		ocn_id = handle->conf->time_server_ocn_mapping[sID];
 
 	char * ntp_key = NULL;
-	if (ocn_id > -1 && ocn_id < MAX_NTP_KEYS && MAX_NTP_KEYS && handle->ntp_keys)
-		ntp_key = handle->ntp_keys[ocn_id];
+	if (ocn_id > -1 && ocn_id + PRIVATE_CN_NTP_KEYS < MAX_NTP_KEYS && handle->ntp_keys)
+	{
+		key_id = ocn_id + PRIVATE_CN_NTP_KEYS;
+		ntp_key = handle->ntp_keys[key_id];
+	}
 	
 	if (handle->conf->is_cn && ocn_id > -1 && !ntp_key ) // Only attempt authenticated ntp communication to OCNs from CN
 	{
@@ -455,7 +459,7 @@ ntp_client(struct radclock_handle *handle)
 	while (retry > 0) {
 		
 		/* Create and send an NTP packet */
-		ret = create_ntp_request(handle, &spkt, &tv, ntp_key, ocn_id, &auth_bytes);
+		ret = create_ntp_request(handle, &spkt, &tv, ntp_key, key_id, &auth_bytes);
 		if (ret)
 			continue;	// retry never decremented ==> inf loop if create always fails!
 

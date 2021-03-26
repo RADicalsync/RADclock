@@ -46,6 +46,7 @@
 #include "verbose.h"
 #include "proto_ntp.h"
 #include "misc.h"
+#include "ntp_auth.h"
 #include "stampinput.h"
 #include "stampoutput.h"
 #include "config_mgr.h"
@@ -868,7 +869,7 @@ process_stamp(struct radclock_handle *handle)
 		return (1);
 	}
 	if (handle->conf->is_cn && handle->conf->time_server_ocn_mapping[sID] > -1)
-		if (stamp.auth_key_id != handle->conf->time_server_ocn_mapping[sID])
+		if (stamp.auth_key_id != handle->conf->time_server_ocn_mapping[sID] + PRIVATE_CN_NTP_KEYS)
 		{
 			verbose(LOG_ERR, "CN received OCN NTP stamp with incorrect auth_key. Requires developer investigation");
 			return (1);

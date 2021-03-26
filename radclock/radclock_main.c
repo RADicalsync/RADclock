@@ -326,6 +326,8 @@ logger_verbose_bridge(int level, char *msg)
 static void
 signal_handler(int sig)
 {
+	uint32_t param_mask = UPDMASK_NOUPD;
+
 	switch(sig){
 
 // TODO fix this commment
@@ -372,7 +374,7 @@ signal_handler(int sig)
 	case SIGUSR2:
 		// This signal should be executed via ansible C&C - (sudo killall -31 radclock)
 		verbose(LOG_NOTICE, "SIGUSR2 received, light recheck of config - check public serving.");
-
+		light_config_parse(clock_handle->conf, &param_mask, clock_handle->is_daemon, &clock_handle->nservers);
 		break;
 	}
 }

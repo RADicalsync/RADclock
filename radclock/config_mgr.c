@@ -71,6 +71,7 @@ static struct _key keys[] = {
 	{ "shm_server",				CONFIG_SERVER_SHM},
 	{ "shm_dag_client",			CONFIG_SHM_DAG_CLIENT},
 	{ "ntp_server",				CONFIG_SERVER_NTP},
+	{ "public_ntp",				CONFIG_PUBLIC_NTP},
 	{ "vm_udp_server",			CONFIG_SERVER_VM_UDP},
 	{ "xen_server",				CONFIG_SERVER_XEN},
 	{ "vmware_server",			CONFIG_SERVER_VMWARE},
@@ -150,6 +151,8 @@ config_init(struct radclock_config *conf)
 	conf->adjust_FFclock		= DEFAULT_ADJUST_FFCLOCK;
 	conf->adjust_FBclock		= DEFAULT_ADJUST_FBCLOCK;
 	conf->server_shm			= DEFAULT_SERVER_SHM;
+	conf->public_ntp			= DEFAULT_PUBLIC_NTP;
+
 	strcpy(conf->shm_dag_client, "");
 
 	
@@ -380,6 +383,20 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 	else
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_TELEMETRY),
 				labels_bool[conf->server_telemetry]);
+
+	/* Defines if this server is serving public NTP requests */
+	fprintf(fd, "# Public NTP server.\n");
+	fprintf(fd, "# Defines if this server is serving public NTP requests .\n");
+	fprintf(fd, "#\ton : Start service - Replies to public NTP requests\n");
+	fprintf(fd, "#\toff: Stop service  - Refuses public NTP requests\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_PUBLIC_NTP),
+				labels_bool[DEFAULT_PUBLIC_NTP]);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_PUBLIC_NTP),
+				labels_bool[conf->public_ntp]);
+
+
 
 
 	/* Defines if this server is an OCN */
@@ -798,7 +815,7 @@ int have_all_tmpqual = 0; /* To know if we run expert mode */
  * this back for storage as handle->nservers .
  */
 static int
-update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *value, int *nf, int ns)
+update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *value, int *nf, int ns, int light_update)
 {
 	// The mask parameter should always be positioned to UPDMASK_NOUPD except
 	// for the first call to config_parse() after parsing the command line
@@ -817,6 +834,11 @@ update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *va
 
 	if (value == NULL || strlen(value)==0) {
 		verbose(LOG_ERR, "Empty value from the config file");
+		return 0;
+	}
+
+	// Currently the only light update option is the CONFIG_PUBLIC_NTP
+	if ( light_update && codekey != CONFIG_PUBLIC_NTP) {
 		return 0;
 	}
 
@@ -877,6 +899,23 @@ switch (codekey) {
 		}
 		else
 			conf->server_telemetry = ival;
+		break;
+
+	case CONFIG_PUBLIC_NTP:
+		// If value specified on the command line
+		if ( HAS_UPDATE(*mask, UPDMASK_PUBLIC_NTP) ) 
+			break;
+		ival = check_valid_option(value, labels_bool, 2);
+		// Indicate changed value
+		if ( conf->public_ntp != ival )
+			SET_UPDATE(*mask, UPDMASK_PUBLIC_NTP);
+		if ( ival < 0)
+		{
+			verbose(LOG_WARNING, "public_ntp value incorrect. Fall back to default.");
+			conf->public_ntp = DEFAULT_PUBLIC_NTP;
+		}
+		else
+			conf->public_ntp = ival;
 		break;
 
 	case CONFIG_IS_OCN:
@@ -1464,6 +1503,80 @@ return 1;
 
 
 /*
+ * Reads config file line by line, retrieve (key,value) and update global data\
+ * Only parses select inforation from config. Doesn't attempt to reread all data
+ * This allows avoids the need to shutdown and resetup running threads.
+ * This should be allowed to run without interferring with live radclock running threads
+ */
+int light_config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns)
+{
+	struct _key *pkey = keys;
+	int codekey=0;
+	int nf;		// count time servers found
+	char *c;
+	char line[MAXLINE];
+	char key[MAXLINE];
+	char value[MAXLINE];
+	FILE* fd = NULL;
+
+	/* Check input */
+	if (conf == NULL) {
+		verbose(LOG_ERR, "Configuration structure is NULL.");
+		return 0;
+	}
+	
+	/* Config and log files */
+	if (strlen(conf->conffile) == 0)
+	{
+		if ( is_daemon )
+			strcpy(conf->conffile, DAEMON_CONFIG_FILE);
+		else
+			strcpy(conf->conffile, BIN_CONFIG_FILE);
+	}
+
+	if (strlen(conf->logfile) == 0)
+	{
+		if ( is_daemon )
+			strcpy(conf->logfile, DAEMON_LOG_FILE);
+		else
+			strcpy(conf->logfile, BIN_LOG_FILE);
+	}
+
+	/* The file can't be opened. Ether it doesn't exist yet or I/O error.
+	 */
+	fd = fopen(conf->conffile, "r");
+	if (!fd) {
+		verbose(LOG_ERR, "Configuration file doesn't exist upon light config reparse.");
+		return 0;
+	}
+
+	while ((c=fgets(line, MAXLINE, fd))!=NULL) {
+
+		// Start with a reset of the value to avoid mistakes
+		strcpy(value, "");
+
+		// Extract key and values from the conf file
+		if ( !(extract_key_value(c, key, value) ))
+			continue;
+	
+		// Identify the key and update config values
+		codekey = match_key(pkey, key);
+
+		// This line is not a configuration line
+		if (codekey < 0)
+			continue;
+
+		/* Update in case we actually retrieved a value, update nf */
+		if ( strlen(value) > 0 )
+			update_data(conf, mask, codekey, value, &nf, *ns, 1);
+	}
+	fclose(fd);
+
+	return 1;
+}
+
+
+/*
  * Reads config file line by line, retrieve (key,value) and update global data
  */
 int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns)
@@ -1552,7 +1665,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 
 		/* Update in case we actually retrieved a value, update nf */
 		if ( strlen(value) > 0 )
-			update_data(conf, mask, codekey, value, &nf, *ns);
+			update_data(conf, mask, codekey, value, &nf, *ns, 0);
 	}
 	fclose(fd);
 	/* Trim any memory containing old servers, and update handle */

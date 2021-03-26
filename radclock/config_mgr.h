@@ -88,7 +88,6 @@
 #define DEFAULT_IS_OCN			    BOOL_OFF		// Defines if this server is an OCN
 #define DEFAULT_IS_CN			    BOOL_OFF		// Defines if this server is an CN
 #define DEFAULT_SERVER_TELEMETRY    BOOL_OFF		// Creates telemetry cache files in /radclock
-#define DEFAULT_SERVER_TELEMETRY    BOOL_OFF		// Creates telemetry cache files in /radclock
 #define DEFAULT_SERVER_SHM			BOOL_OFF		// Defines if SHM is active
 #define DEFAULT_SERVER_NTP			BOOL_OFF			// Don't act as a server
 #define DEFAULT_SERVER_VM_UDP		BOOL_OFF			// Don't Start VM servers
@@ -111,7 +110,7 @@
 #define DEFAULT_ICN_1				"ntp.waia.asn.au 1"
 #define DEFAULT_SHM_DAG_CLIENT  	"10.0.0.3"
 #define DEFAULT_VM_UDP_LIST			"vm_udp_list"
-
+#define DEFAULT_PUBLIC_NTP			BOOL_OFF
 
 /*
  *  Definition of keys for configuration file keywords
@@ -163,6 +162,8 @@
 /* radclock type */
 #define CONFIG_IS_OCN			70
 #define CONFIG_IS_CN			71
+/* NTP serving type */
+#define CONFIG_PUBLIC_NTP		80
 
 
 
@@ -214,6 +215,7 @@
 #define UPDMASK_SHM_DAG_CLIENT 0x40000000
 #define UPDMASK_IS_OCN 0x80000000
 #define UPDMASK_IS_CN 0x100000000
+#define UPDMASK_PUBLIC_NTP 0x200000000
 
 
 #define HAS_UPDATE(val,mask)	((val & mask) == mask)	
@@ -250,6 +252,7 @@ struct radclock_config {
 	int 	server_vmware;				/* Boolean */
 	int 	is_ocn;				/* Boolean */
 	int 	is_cn;				/* Boolean */
+	int 	public_ntp;				/* Boolean - Flag indicates whether radclock responds to public NTP requests*/
 	int 	adjust_FFclock;			/* Boolean */
 	int 	adjust_FBclock;			/* Boolean */
 	double 	phat_init;					/* Initial value for phat */
@@ -288,6 +291,14 @@ void config_init(struct radclock_config *conf);
  * Parse a configuration file
  */
 int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns);
+
+/*
+ * Reads config file line by line, retrieve (key,value) and update global data\
+ * Only parses select inforation from config. Doesn't attempt to reread all data
+ * This allows avoids the need to shutdown and resetup running threads.
+ * This should be allowed to run without interferring with live radclock running threads
+ */
+int light_config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns);
 
 /**
  * Output the config in config to verbose using level
