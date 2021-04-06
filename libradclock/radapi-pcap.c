@@ -52,7 +52,7 @@ pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode
 	}
 
 	/* working from non-live capture return silently */
-	if (!pcap_fileno(p_handle)) {
+	if (pcap_fileno(p_handle) == -1) {
 		return (0);
 	}
 
