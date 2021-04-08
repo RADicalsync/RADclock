@@ -903,7 +903,7 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 	int err;
 
 	/* Check we are running live */
-	if (pcap_fileno(p_handle) < 0)
+	if (pcap_fileno(p_handle) == -1)
 		return (1);
 
 	// FIXME : need a function pointer to the correct extract_vcount function

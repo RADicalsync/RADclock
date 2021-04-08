@@ -732,8 +732,8 @@ preferred_RADclock(struct radclock_handle *handle)
 	}
 
 	if (s_RTThat < 0) {
-		verbose(LOG_WARNING, "No server has acceptable error (< %3.1lf), preferred "
-			"server based on minimum RTT only", error_thres);
+		verbose(LOG_WARNING, "No server has acceptable error (< %3.1lf [ms]), preferred "
+			"server based on minimum RTT only", 1e3 * error_thres);
 		s_RTThat = s_mRTThat;
 	}
 

@@ -97,8 +97,8 @@
 #define DEFAULT_ADJUST_FBCLOCK		BOOL_OFF		// Not normally a FBclock daemon
 #define DEFAULT_NTP_POLL_PERIOD 	16				// 16 NTP pkts every [sec]
 #define DEFAULT_PHAT_INIT			1.e-9
-#define DEFAULT_ASYM_HOST			0.0				// 0 micro-sconds
-#define DEFAULT_ASYM_NET			0.0				// 0 micro-seconds 
+#define DEFAULT_ASYM_HOST			0.0				// [microseconds]
+#define DEFAULT_ASYM_NET			0.0				// [microseconds]
 #define DEFAULT_HOSTNAME			"platypus2.tklab.feit.uts.edu.au"
 #define DEFAULT_TIME_SERVER			"ntp.waia.asn.au"	// ntp1.net.monash.edu.au now buggy
 #define DEFAULT_NETWORKDEV			"em0"

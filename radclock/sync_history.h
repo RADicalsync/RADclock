@@ -32,6 +32,7 @@
 
 typedef unsigned long int index_t;
 
+/* Structure records the size of the type being stored, but not the type itself */
 typedef struct sync_hist
 {
 	void *buffer;				/* data buffer */
@@ -51,8 +52,15 @@ index_t history_end(history *hist);
 void *history_find(history *hist, index_t index);
 int history_resize(history *hist, unsigned int buffer_sz, unsigned long int index);
 
+/* Forms that operate on vcounter_t */
 index_t history_min(history *hist, index_t j, index_t i);
 index_t history_min_slide(history *hist,           index_t index_curr,  index_t j, index_t i);
 vcounter_t history_min_slide_value(history *hist, vcounter_t min_curr,  index_t j, index_t i);
+
+/* Forms that operate on double */
+index_t history_min_dbl(history *hist, index_t j, index_t i);
+index_t history_min_slide_dbl(history *hist,   index_t index_curr,  index_t j, index_t i);
+double history_min_slide_value_dbl(history *hist, double min_curr,  index_t j, index_t i);
+
 
 #endif   /* _SYNC_HISTORY_H */
