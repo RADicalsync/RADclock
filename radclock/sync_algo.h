@@ -207,22 +207,42 @@ struct bidir_algostate {
 
 	/* Histories */
 	history stamp_hist;
+	history Df_hist;
+	history Db_hist;
+	//history Asym_hist;      // currently Asymhat not based on filtering a raw asym
+	history Dfhat_hist;
+	history Dbhat_hist;
+	history Asymhat_hist;
 	history RTT_hist;
 	history RTThat_hist;
 	history thnaive_hist;
 
+	/* OWD */
+	double Dfhat;					// Estimate of minimal Df
+ 	double next_Dfhat;			// Df estimate to be in the next half top window
+	double Dfhat_shift;			// sliding window estimate for upward level shift detection
+	double Dfhat_shift_thres;	// threshold in [s] for triggering upward shift detection
+	double Dbhat;					// Estimate of minimal Db
+ 	double next_Dbhat;			// Db estimate to be in the next half top window
+	double Dbhat_shift;			// sliding window estimate for upward level shift detection
+	double Dbhat_shift_thres;	// threshold in [s] for triggering upward shift detection
+
+	/* Path Asymmetry */
+	double Asymhat;				// Estimate of underlying asymmetry
+
 	/* Window sizes, measured in [pkt index] These control algorithm, independent of implementation */
 	index_t warmup_win;			// warmup window, RTT estimation (indep of time and CPU, need samples)
-	index_t top_win;			// top level window, must forget past
+	index_t top_win;				// top level window, must forget past
 	index_t top_win_half;		// future stamp when top level window half is updated 
 	index_t shift_win;			// shift detection window size
-	index_t shift_end;			// shift detection record of oldest pkt in shift window
+	index_t shift_end;			// shift detection record of oldest pkt in shift window for RTT
+	index_t shift_end_OWD;		// shift detection record of oldest pkt in shift window for OWD
 	index_t plocal_win;			// local period estimation window based on SKM scale
 	index_t plocal_end;			// oldest pkt in local period estimation window
 	index_t offset_win;			// offset estimation, based on SKM scale (don't allow too small)
-	index_t jsearch_win;		// window width for choosing pkt j for phat estimation
+	index_t jsearch_win;			// window width for choosing pkt j for phat estimation
 
-	int poll_period;			// Current polling period for the peer
+	int poll_period;				// Current polling period for the peer
 	index_t poll_transition_th;	// Number of future stamps remaining to complete new polling period transition (thetahat business)
 	double poll_ratio;			// Ratio between new and old polling period after it changed
 	index_t poll_changed_i;		// First stamp after change in polling period
@@ -242,7 +262,7 @@ struct bidir_algostate {
 	/* Warmup phase */
 	index_t wwidth;			// warmup width of end windows in pkt units (also used for plocal)
 	index_t near_i;			// index of minimal RTT within near windows
-	index_t far_i;			// index of minimal RTT within far windows
+	index_t far_i;				// index of minimal RTT within far windows
  
 	/* RTT (in vcounter units to avoid pb if phat bad)
 	 * Records related to top window, and level shift

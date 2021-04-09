@@ -1,6 +1,6 @@
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/dev/e1000/if_em.c /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/dev/e1000/if_em.c
---- /usr/src/sys/dev/e1000/if_em.c	2020-11-16 13:22:42.152996000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/dev/e1000/if_em.c	2020-11-16 13:22:42.126455000 +1100
+--- /usr/src/sys/dev/e1000/if_em.c	2020-11-16 13:53:21.060294000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/dev/e1000/if_em.c	2020-11-16 13:53:21.041022000 +1100
 @@ -37,4 +37,5 @@
  #include "opt_inet.h"
  #include "opt_inet6.h"
@@ -89,8 +89,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/dev/e1000/if_em.c /root/FFk
  
  	/* Use extended rx descriptor formats */
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/dev/e1000/if_igb.c /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/dev/e1000/if_igb.c
---- /usr/src/sys/dev/e1000/if_igb.c	2020-11-16 13:22:42.153761000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/dev/e1000/if_igb.c	2020-11-16 13:22:42.127042000 +1100
+--- /usr/src/sys/dev/e1000/if_igb.c	2020-11-16 13:53:21.060408000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/dev/e1000/if_igb.c	2020-11-16 13:53:21.041129000 +1100
 @@ -37,4 +37,5 @@
  #include "opt_inet6.h"
  #include "opt_rss.h"
@@ -191,8 +191,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/dev/e1000/if_igb.c /root/FF
  static void
  igb_set_promisc(struct adapter *adapter)
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_ffclock.c /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/kern_ffclock.c
---- /usr/src/sys/kern/kern_ffclock.c	2020-11-16 13:22:42.155043000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/kern_ffclock.c	2020-11-16 13:22:42.119987000 +1100
+--- /usr/src/sys/kern/kern_ffclock.c	2020-11-16 13:53:21.061265000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/kern_ffclock.c	2020-11-16 13:53:21.038275000 +1100
 @@ -1,8 +1,7 @@
  /*-
   * Copyright (c) 2011 The University of Melbourne
@@ -388,8 +388,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_ffclock.c /root/F
  	return (ENOSYS);
  }
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/kern_tc.c
---- /usr/src/sys/kern/kern_tc.c	2020-11-16 13:22:42.155293000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/kern_tc.c	2020-11-16 13:22:42.120162000 +1100
+--- /usr/src/sys/kern/kern_tc.c	2020-11-16 13:53:21.061335000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/kern_tc.c	2020-11-16 13:53:21.038346000 +1100
 @@ -8,8 +8,7 @@
   *
   * Copyright (c) 2011, 2015, 2016 The FreeBSD Foundation
@@ -813,13 +813,13 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
 -			if (forward_jump)
 +		    ((cest->status & FFCLOCK_STA_UNSYNC) == 0) ) {
 +			if (forward_jump) {
-+				printf("** ffwindup:  Jumping monotonic FFclock forward by %llu.%03lu",
++				printf("ffwindup:  Jumping monotonic FFclock forward by %llu.%03lu",
 +							(unsigned long long)gap_lerp.sec,
 +			 				(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
  				bintime_add(&ffclock_boottime, &gap_lerp);
 -			else
 +			} else {
-+				printf("** ffwindup:  Jumping monotonic FFclock backward by %llu.%03lu",
++				printf("ffwindup:  Jumping monotonic FFclock backward by %llu.%03lu",
 +							(unsigned long long)gap_lerp.sec,
 +			 				(long unsigned)(gap_lerp.frac / MS_AS_BINFRAC) );
  				bintime_sub(&ffclock_boottime, &gap_lerp);
@@ -1392,8 +1392,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/kern_tc.c /root/FFkern
  		cpu_ticks = func;
  	}
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/subr_rtc.c /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/subr_rtc.c
---- /usr/src/sys/kern/subr_rtc.c	2020-11-16 13:22:42.155458000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/subr_rtc.c	2020-11-16 13:22:42.120275000 +1100
+--- /usr/src/sys/kern/subr_rtc.c	2020-11-16 13:53:21.061383000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/kern/subr_rtc.c	2020-11-16 13:53:21.038398000 +1100
 @@ -4,5 +4,4 @@
   *	The Regents of the University of California.
   * Copyright (c) 2011 The FreeBSD Foundation
@@ -1423,8 +1423,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/kern/subr_rtc.c /root/FFker
  }
  
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.c /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/net/bpf.c
---- /usr/src/sys/net/bpf.c	2020-11-16 13:22:42.157725000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/net/bpf.c	2020-11-16 13:22:42.122354000 +1100
+--- /usr/src/sys/net/bpf.c	2020-11-16 13:53:21.063011000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/net/bpf.c	2020-11-16 13:53:21.040115000 +1100
 @@ -1,5 +1,5 @@
  /*-
   * Copyright (c) 1990, 1991, 1993
@@ -1996,8 +1996,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.c /root/FFkernel_Wo
  		rw_destroy(&bp->bif_lock);
  		free(bp, M_BPF);
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.h /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/net/bpf.h
---- /usr/src/sys/net/bpf.h	2020-11-16 13:22:42.157827000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/net/bpf.h	2020-11-16 13:22:42.123976000 +1100
+--- /usr/src/sys/net/bpf.h	2020-11-16 13:53:21.063066000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/net/bpf.h	2020-11-16 13:53:21.040179000 +1100
 @@ -1,5 +1,5 @@
  /*-
   * Copyright (c) 1990, 1991, 1993
@@ -2105,8 +2105,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/net/bpf.h /root/FFkernel_Wo
  };
  #ifdef _KERNEL
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/sys/_ffcounter.h /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/sys/_ffcounter.h
---- /usr/src/sys/sys/_ffcounter.h	2020-11-16 13:22:42.156600000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/sys/_ffcounter.h	2020-11-16 13:22:42.121353000 +1100
+--- /usr/src/sys/sys/_ffcounter.h	2020-11-16 13:53:21.062221000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/sys/_ffcounter.h	2020-11-16 13:53:21.039261000 +1100
 @@ -1,8 +1,7 @@
  /*-
   * Copyright (c) 2011 The University of Melbourne
@@ -2119,8 +2119,8 @@ diff -ar -U 2 --unidirectional-new-file /usr/src/sys/sys/_ffcounter.h /root/FFke
   *
   * Redistribution and use in source and binary forms, with or without
 diff -ar -U 2 --unidirectional-new-file /usr/src/sys/sys/timeffc.h /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/sys/timeffc.h
---- /usr/src/sys/sys/timeffc.h	2020-11-16 13:22:42.156411000 +1100
-+++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/sys/timeffc.h	2020-11-16 13:22:42.121286000 +1100
+--- /usr/src/sys/sys/timeffc.h	2020-11-16 13:53:21.062172000 +1100
++++ /root/FFkernel_Work/FFCLOCK-FreeBSD-11.2/sys/sys/timeffc.h	2020-11-16 13:53:21.039209000 +1100
 @@ -1,8 +1,7 @@
  /*-
   * Copyright (c) 2011 The University of Melbourne

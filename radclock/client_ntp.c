@@ -282,9 +282,21 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	
 	UTCld_to_timeval(&time, xmt_tval);			// need to pass back a timeval
 
-	// If this host is the CN and communicating to a OCN then perform in band signaling
-	if (ntp_key && handle->conf->is_cn && IS_PRIVATE_KEY(key_id))
-		pkt->refid = htonl(1);
+
+	/* Placeholder icn_status variable and setting - to be replaced.
+	 * This should be populated by the SHM
+	 * server anomaly detection functions of the SHM thread, and be accessed by
+	 * some to-be-determined SHM output structures off the handle.
+	 * Those functions can take care of mapping the icn_ids into the flag form
+	 * required here (also needed in thread_ntp_server when extracting the inband signal).
+	 */
+	uint64_t icn_status;	// status of ICN i recorded in (i-1)th LSBit
+	icn_status = 6;		// test case: 6 = 00110 = Brisbane and Melbourne untrusted
+
+   /* If we are the CN, push the ICN status word to all OCNs inband */
+    if (ntp_key && handle->conf->is_cn && IS_PRIVATE_KEY(key_id))
+        pkt->refid = htonl((uint32_t)icn_status);
+
 
 	// Tell the client that the same key was used for auth in reply
 	if (ntp_key)

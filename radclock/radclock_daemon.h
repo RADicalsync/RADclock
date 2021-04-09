@@ -129,9 +129,6 @@ struct radclock_handle {
 	/* Number of different servers/peers */
 	int nservers;
 
-	/* ID (array index) of preferred RADclock */  // perhaps call sI = server Index
-	int pref_sID;
-	
 	/* Library radclock structure */
 	struct radclock *clock;
 
@@ -205,8 +202,15 @@ struct radclock_handle {
 	 */
 	void *peers;
 
-	/* Inband signaling data. Set by CN received by OCNs */
-	int inband_signal;
+	/* ID (array index) of preferred RADclock */  // perhaps call sI = server Index
+	int pref_sID;
+
+	/* Server trust status word: 1 bit per server, denoting
+	 *   0: server is trusted
+	 *   1: an issue has been detected, use with caution
+	 * Mask to access server sID's bit is  mask = (1ULL << sID)
+	 */
+	uint64_t servertrust;
 
 };
 

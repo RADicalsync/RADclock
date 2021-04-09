@@ -103,6 +103,7 @@ void history_add(history *hist, index_t i, const void *item)
 }
 
 
+/* Calculate the index corresponding to the tail entry */
 inline
 index_t history_end(history *hist)
 {
@@ -115,13 +116,18 @@ index_t history_end(history *hist)
 		return hist->curr_i - hist->item_count + 1; 
 }
 
-
+/* Get a pointer to the index'th element in history
+ * TODO: check all this: does not use hist->curr_i and look back to find index,
+ * then check its curr_i to confirm, it just assumes
+ * that the index goes to the right item like the good old days !!
+ */
 inline 
 void * history_find(history *hist, index_t index)
 {
 	return hist->buffer + ( index % hist->buffer_sz ) * hist->item_sz;
 }
 
+/* TODO: create a history_replace fn for in-situ replacment */
 
 /* Resize history
  * Called when configuration file is parsed and UPDATE flags are raised
@@ -191,10 +197,6 @@ int history_resize(history *hist, unsigned int buffer_sz, unsigned long int inde
 
 
 
-
-// TODO ... this is clearly dirty, but transitional .... fixme with history wide
-// meaningful ops, since this all assumes comparing vcounter_t values only
-
 /* =============================================================================
  * ROUTINES: MINIMUM DETECTION 
  * =============================================================================
@@ -204,42 +206,68 @@ int history_resize(history *hist, unsigned int buffer_sz, unsigned long int inde
  * Finds minimum between j and i inclusive,  j<=i .
  * Does NOT change array elements.
  * Returns index of minimal element.
- * - This version is for 64 bit integers, as needed for RTT times.
- * - i, j, and ind_curr are true indices. They are circularly mapped into 
+ * - i, j, and ind_curr are true indices. They are circularly mapped into
  *   the array x of length lenx.  It is up to the calling function to ensure
  *   that the values needed are still in the array.
  */
+
+/* Form that operates on vcounter_t */
 //index_t history_min(vcounter_t *x, index_t j, index_t i, index_t lenx)
 index_t history_min(history *hist, index_t j, index_t i)
 {
-   /* current minimum found and  corresponding index */
+   /* Current minimum found and corresponding index */
 	vcounter_t  *min_curr;
 	vcounter_t  *tmp;
 	index_t  ind_curr;
 
-	if ( i < j ) {
-		verbose(LOG_ERR,"Error in history_min,  index range bad, j= %u, i= %u", j,i);
-	}
+	if ( i < j )
+		verbose(LOG_ERR,"Error in history_min, index range bad, j= %u, i= %u", j,i);
 
-	/* initialise */
-//	min_curr = hist->buffer[j % hist->buffer_sz];
+	/* Initialise at j end */
+	//	min_curr = hist->buffer[j % hist->buffer_sz];		// old way
 	min_curr = (vcounter_t*) history_find(hist, j);  
 	ind_curr = j;
 
-	/* if i<=j, already done */
 	while ( j < i ) {
 		j++;
-		//if ( hist->buffer[j % hist->buffer_sz] < min_curr )
-		tmp = (vcounter_t*) history_find(hist, j);  
-		if ( *tmp < *min_curr )
-		{
-		//	min_curr = hist->buffer[j % hist->buffer_sz];
+		tmp = (vcounter_t*) history_find(hist, j);
+		if ( *tmp < *min_curr ) {
 			min_curr = tmp;
 			ind_curr = j;
 		}
 	}
 	return ind_curr;
 }
+
+/* Form that operates on doubles */
+index_t history_min_dbl(history *hist, index_t j, index_t i)
+{
+   /* Current minimum found and corresponding index */
+	double  *min_curr;
+	double  *tmp;
+	index_t  ind_curr;
+
+	if ( i < j )
+		verbose(LOG_ERR,"Error in history_min_dbl, index range bad, j= %u, i= %u", j,i);
+
+	/* Initialise at j end */
+	min_curr = history_find(hist, j);
+	ind_curr = j;
+
+	while ( j < i ) {
+		j++;
+		tmp = history_find(hist, j);
+		if ( *tmp < *min_curr ) {
+			min_curr = tmp;
+			ind_curr = j;
+		}
+	}
+
+	return ind_curr;
+}
+
+
+
 
   
 /* Subroutine to find the minimum of a number and a set of contiguous array elements.
@@ -248,11 +276,12 @@ index_t history_min(history *hist, index_t j, index_t i)
  * Specialized to efficiently find a minimum of a continuously sliding window over an array.
  * Window slides by 1:  old element j is dropped in favor of new element at i+1 .
  * This version takes the index of the current minimum and returns the new index.
- * - This version is for 64 bit integers, as needed for RTT times.
- * - i, j, and ind_curr are true indices. They are circularly mapped into 
+ * - i, j, and ind_curr are true indices. They are circularly mapped into
  *   the array x of length lenx.  It is up to the calling function to ensure
  *   that the values needed are still in the array.
  */
+
+/* Form that operates on vcounter_t */
 index_t history_min_slide(history *hist, index_t index_curr,  index_t j, index_t i)
 {
 	vcounter_t *tmp_curr;
@@ -262,25 +291,62 @@ index_t history_min_slide(history *hist, index_t index_curr,  index_t j, index_t
 		verbose(LOG_ERR,"Error in min_slide, window width less than 1: %u %u %u", j,i,i-j+1);
 		return i+1;
 	}
-	/* window only 1 wide anyway, easy */
+	/* Window only 1 wide anyway, easy */
 	if (i == j)
 		return i+1;
-	/* new one is new min */
-//	if ( x[(i+1)%lenx] < x[index_curr%lenx] )
+
+	/* New one must be new min */
+   //	if ( x[(i+1)%lenx] < x[index_curr%lenx] )		// old way
 	tmp = history_find(hist, i+1);
 	tmp_curr = history_find(hist, index_curr);
 	if ( *tmp < *tmp_curr )
 		return i+1;
-	/* one being dropped was min, must do work */
+
+	/* One being dropped was min, must do work */
 	if (j == index_curr)
-		return history_min(hist, j+1, i);
+		return history_min(hist, j+1, i+1);	// i+1 may be min now old min gone
+
 	/* min_curr inside window and still valid, easy */
 	return index_curr;
 }
 
+
+/* Form that operates on doubles */
+index_t history_min_slide_dbl(history *hist, index_t index_curr,  index_t j, index_t i)
+{
+	double *tmp_curr;
+	double *tmp;
+
+	if ( i < j ) {
+		verbose(LOG_ERR,"Error in min_slide_dbl, window width less than 1: %u %u %u", j,i,i-j+1);
+		return i+1;
+	}
+	/* Window only 1 wide anyway, easy */
+	if (i == j)
+		return i+1;
+
+	/* New one must be new min */
+	tmp = history_find(hist, i+1);
+	tmp_curr = history_find(hist, index_curr);
+	if ( *tmp < *tmp_curr )
+		return i+1;
+
+	/* One being dropped was min, must do work */
+	if (j == index_curr)
+		return history_min(hist, j+1, i+1);	// i+1 may be min now old min gone
+
+	/* min_curr inside window and still valid, easy */
+	return index_curr;
+}
+
+
+
+
 /* Version that operates on values rather than indices
  * Must initialise properly, if the min is not in the window, may never be replaced!
  */
+
+/* Form that operates on vcounter_t */
 vcounter_t history_min_slide_value(history *hist, vcounter_t min_curr, index_t j, index_t i)
 {
 	vcounter_t *tmp;
@@ -295,12 +361,12 @@ vcounter_t history_min_slide_value(history *hist, vcounter_t min_curr, index_t j
 		return *tmp;
 	}
 	
-	/* window only 1 wide anyway, easy */
+	/* Window only 1 wide anyway, easy */
 	if (i == j)
 		return *tmp;
 	
-	/* New one is the new min */
-//	if ( x[(i+1)%lenx] < min_curr)
+	/* New one must be new min */
+   //	if ( x[(i+1)%lenx] < min_curr)	// old way
 	if ( *tmp < min_curr ) {
 		//verbose(LOG_ERR,"new min case : %lu %lu mincurr =  %llu, newmin = %llu", j,i, min_curr, *tmp);
 		//catchmin_i = i+1;
@@ -328,13 +394,13 @@ vcounter_t history_min_slide_value(history *hist, vcounter_t min_curr, index_t j
 	
 
 	
-	/* one being dropped was min, must do work */
+	/* One being dropped was min, must do work */
 //	if ( x[j%lenx] == min_curr )
 	tmp = (vcounter_t *) history_find(hist, j);	// value exiting
 	if ( *tmp == min_curr ) {
 		//verbose(LOG_ERR,"min_slide_value, do work case : %llu %llu %llu", j,i,i-j+1);
-//		return x[history_min(x,j+1,i,lenx)%lenx];
-		tmp_i = history_min(hist, j+1, i);	// exclude i+1, already know is not min
+		//		return x[history_min(x,j+1,i,lenx)%lenx];
+		tmp_i = history_min(hist, j+1, i+1);	// i+1 may be min now old min gone
 		tmp = (vcounter_t *) history_find(hist, tmp_i);
 		return *tmp;
 	}
@@ -344,4 +410,37 @@ vcounter_t history_min_slide_value(history *hist, vcounter_t min_curr, index_t j
 	return min_curr;
 }
 
+
+/* Form that operates on doubles */
+double history_min_slide_value_dbl(history *hist, double min_curr, index_t j, index_t i)
+{
+	double *tmp;
+	index_t tmp_i;
+
+	tmp = history_find(hist, i+1);	// new value entering
+
+	if ( i < j ) {
+		verbose(LOG_ERR,"Error in min_slide_value_dbl, window width less than 1: %u %u %u", j,i,i-j+1);
+		return *tmp;
+	}
+
+	/* Window only 1 wide anyway, easy */
+	if (i == j)
+		return *tmp;
+
+	/* New one must be new min */
+	if ( *tmp < min_curr )
+		return *tmp;
+
+	/* One being dropped was min, must do work */
+	tmp = history_find(hist, j);	// value exiting
+	if ( *tmp == min_curr ) {
+		tmp_i = history_min_dbl(hist, j+1, i+1);	// i+1 may be min now old min gone
+		tmp = history_find(hist, tmp_i);
+		return *tmp;
+	}
+
+	/* min_curr inside window and still valid, easy */
+	return min_curr;
+}
 

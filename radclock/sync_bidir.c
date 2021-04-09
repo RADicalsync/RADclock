@@ -134,7 +134,7 @@ adjust_warmup_win(index_t i, struct bidir_algostate *p, unsigned int plocal_winr
 	}
 
    /* Adjust top window wrt warmup and shift windows */
-	/* Ensures warmup and shift windows < top_win/2 , so top win can be ignoreed in warmup */
+	/* Ensures warmup and shift windows < top_win/2 , so top win can be ignored in warmup */
 	if ( p->warmup_win + p->shift_win > p->top_win/2 ) {
 		win = 3*( (p->warmup_win + p->shift_win) * 2 + 1 ); // 3x minimum, as short history bad
 		verbose(VERB_CONTROL,
@@ -255,13 +255,20 @@ print_algo_parameters(struct radclock_phyparam *phyparam, struct bidir_algostate
 
 
 
-/* Peer initialisation */
+/* Peer initialisation
+ * TODO:  clean this up. Currently it mixes state preparation (allocating space, setting
+ * parameters), with actual state setting (much of which is superfluous since all
+ * already calloc set to zero), and setting of meaningful values corresponding to
+ * an interpretation of the `previous' stamp, with finally a little actual stamp0 proessing.
+ * the latter should be outside this fn for uniformity, that way RTT will be defined
+ * and the goto not needed.
+ */
 void init_state( struct radclock_handle *handle, struct radclock_phyparam *phyparam,
 				struct bidir_algostate *state, struct radclock_data *rad_data,
 				struct bidir_stamp *stamp, unsigned int plocal_winratio, int poll_period)
 {
 
-	vcounter_t RTT;			// current RTT value
+	vcounter_t RTT;		// current RTT
 	double th_naive;		// thetahat naive estimate
 
 	verbose(VERB_SYNC, "Initialising RADclock synchronization");
@@ -282,16 +289,10 @@ void init_state( struct radclock_handle *handle, struct radclock_phyparam *phypa
 
 	state->plocalerr = 0;
 
-	/* UPDATE The following was extracted from the block related to first packet
-	 * and reaction to poll period and external environment parameters
-	 */
-
 	/* Initialize the error thresholds */
 	init_errthresholds( phyparam, state );
 
-	/* Set pkt-index algo windows.
-	 * These control the algo, independent of implementation.
-	 */
+	/* Set pkt-index algo windows */
 	set_algo_windows( phyparam, state);
 
 	/* Ensure warmup_win consistent with algo windows for easy 
@@ -304,17 +305,20 @@ void init_state( struct radclock_handle *handle, struct radclock_phyparam *phypa
 	 * note: currently stamps [_end,i-1] in history, i not yet processed
 	 */
 	history_init(&state->stamp_hist, (unsigned int) state->warmup_win, sizeof(struct bidir_stamp) );
-	history_init(&state->RTT_hist, (unsigned int) state->warmup_win, sizeof(vcounter_t) );
-	history_init(&state->RTThat_hist, (unsigned int) state->warmup_win, sizeof(vcounter_t) );
+	history_init(&state->Df_hist, 	(unsigned int) state->warmup_win, sizeof(double) );
+	history_init(&state->Db_hist, 	(unsigned int) state->warmup_win, sizeof(double) );
+	history_init(&state->Dfhat_hist,	(unsigned int) state->warmup_win, sizeof(double) );
+	history_init(&state->Dbhat_hist, (unsigned int) state->warmup_win, sizeof(double) );
+	history_init(&state->Asymhat_hist, (unsigned int) state->warmup_win, sizeof(double) );
+	history_init(&state->RTT_hist,	  (unsigned int) state->warmup_win, sizeof(vcounter_t) );
+	history_init(&state->RTThat_hist,  (unsigned int) state->warmup_win, sizeof(vcounter_t) );
 	history_init(&state->thnaive_hist, (unsigned int) state->warmup_win, sizeof(double) );
 
-	/* Print out summary of parameters:
-	 * physical, network, thresholds, and sanity 
-	 */
+	/* Print out summary of parameters: physical, network, thresholds, and sanity */
 	print_algo_parameters( phyparam, state );
 
-	/* Initialise state stamp to default value */
-	memset(&state->stamp, 0, sizeof(struct bidir_stamp));	// previous, not current, stamp
+	/* Initialise state stamp. Taken to be the previous, not current stamp */
+	memset(&state->stamp, 0, sizeof(struct bidir_stamp));	//in fact already initialised by init_mRADclocks
 
 	/* Print the first timestamp tuple obtained */
 	verbose(VERB_SYNC, "i=%lu: Beginning Warmup Phase. Stamp read check: %llu %22.10Lf %22.10Lf %llu",
@@ -327,16 +331,14 @@ void init_state( struct radclock_handle *handle, struct radclock_phyparam *phypa
 			(double) (stamp->Tf - stamp->Ta) * 1e-9*1000, (stamp->Te - stamp->Tb) * 1e6);
 
 
-	/* MinET_old
-	 * Initialise to 0 on first packet (static variable) 
-	 */
-	state->minET = 0;
+	/* Taken to be 'MinET_old' from previous pkt? */
+	state->minET = 0;			// in fact already initialised by init_mRADclocks
 
 	/* Record stamp 0 */
 	history_add(&state->stamp_hist, state->stamp_i, stamp);
 
 	/* RTT */
-	RTT = MAX(1,stamp->Tf - stamp->Ta);
+	RTT = stamp->Tf - stamp->Ta;
 	state->RTThat = RTT;
 	history_add(&state->RTT_hist, state->stamp_i, &RTT);
 	state->pstamp_i = 0;
@@ -357,6 +359,22 @@ void init_state( struct radclock_handle *handle, struct radclock_phyparam *phypa
 		state->phat = handle->conf->phat_init;
 	state->perr = 0;
 	state->plocal = state->phat;
+
+	/* OWD and Asymmetry
+	 * RADclock not calibrated on first stamp, so base OWD on config setting of
+	 * Asym plus rough initializaed RTT.  Errors in OWDs can be very large here,
+	 * but will not impact the initial Asym value.
+	 */
+	double Df, Db, Asym;
+	Asym = 1e-6 * (handle->conf->asym_host + handle->conf->asym_net); // params in mus
+	Df = (RTT * state->phat + Asym) / 2;
+	Db = Df - Asym;
+	state->Dfhat = Df;
+	state->Dbhat = Db;
+	state->Asymhat = Asym;
+	history_add(&state->Df_hist, state->stamp_i, &Df);
+	history_add(&state->Db_hist, state->stamp_i, &Db);
+	//history_add(&state->Asym_hist, state->stamp_i, &Asym);
 
 	/* switch off pstamp_i search until initialised at top_win/2 */
 	state->jcount = 1;
@@ -540,32 +558,47 @@ void update_state(struct bidir_algostate *state, struct radclock_phyparam *phypa
 
 
 
-/* RTT Initializations for normal history and level_shift code */
-void end_warmup_RTT( struct bidir_algostate *state, struct bidir_stamp *stamp)
+/* Initializations for online minimum history and level_shift minima for
+ * RTT, OWD and Asym. As these share the same shift window, they
+ * share the same shift_end and _end indices.
+ * Currently there are no actions for Asym as it is not based on a direct minima.
+ */
+void end_warmup_RTTOWDAsym( struct bidir_algostate *state, struct bidir_stamp *stamp)
 {
-	index_t RTT_end;			// index of last pkts in RTT history
-	vcounter_t *RTT_tmp;		// RTT hat value holder
+	index_t end;			// index of last pkts in histories
+	vcounter_t *RTT_tmp;
+	double *D;
 
-	/* Start tracking next_RTThat instead of in middle of 1st window, even if it
-	 * is not used until then.
-	 */
+	/* Convenient to start tracking next_*hat now instead of in middle of 1st
+	 * top window, even if not used until then. */
+	state->next_Dfhat = state->Dfhat;
+	state->next_Dbhat = state->Dbhat;
 	state->next_RTThat = state->RTThat;
+	//state->next_Asym = state->Asym;
 
-	/* Start tracking shift_end and first RTThat_shift estimate.
-	 * shift_end = stamp_i-(shift_win-1) should work all the time, but some
-	 * extra care does not harm. We also make sure shift_end corresponds to a
-	 * stamp that is actually stored in history.
+	/* Initialize shift_end (index of left boundary of shift window).
+	 * Check to ensure stamps at shift_end are actually in history.
 	 */
 	if ( state->stamp_i > state->shift_win )
 		state->shift_end = state->stamp_i - (state->shift_win-1);
 	else
-		state->shift_end = 0;
-		
-	RTT_end = history_end(&state->RTT_hist);
-	state->shift_end = MAX(state->shift_end, RTT_end);
+		state->shift_end = 0;	// just in case window sizes incorrectly set
+	end = history_end(&state->RTT_hist);
+	end = MAX(state->shift_end, end);
+	state->shift_end 		= end;
+	state->shift_end_OWD = end;		// assumes history storage always in sync
 
-	RTT_tmp = history_find(&state->RTT_hist, history_min(&state->RTT_hist, state->shift_end, state->stamp_i) );
+   /* Initialize the variables holding the minima over the shift window.
+    * Needed so that the min is in window, so history_min_slide() will work later
+	 */
+	D = history_find(&state->Df_hist, history_min_dbl(&state->Df_hist, end, state->stamp_i) );
+	state->Dfhat_shift  = *D;
+	D = history_find(&state->Db_hist, history_min_dbl(&state->Db_hist, end, state->stamp_i) );
+	state->Dbhat_shift  = *D;
+
+	RTT_tmp = history_find(&state->RTT_hist, history_min(&state->RTT_hist, end, state->stamp_i) );
 	state->RTThat_shift  = *RTT_tmp;
+
 }
 
 
@@ -659,6 +692,7 @@ void end_warmup_thetahat(struct bidir_algostate *state, struct bidir_stamp *stam
 
 	/* fill entire RTThat history with current RTThat not a true history, but
 	 * appropriate for offset
+	 * TODO: reassess if this should be in end_warmup_RTT
 	 */
 	RTThat_sz = state->RTThat_hist.buffer_sz;
 	for ( j=0; j<RTThat_sz; j++ )
@@ -700,8 +734,7 @@ void parameters_calibration( struct bidir_algostate *state)
 		 * looser quality has no (or very small?) effect
 		 */
 		state->Eoffset_qual = 3 * state->Eoffset;
-	}
-	else {
+	} else {
 		verbose(VERB_CONTROL, "i=%lu: Detected far away server based on minimum RTT", state->stamp_i);
 		state->RTThat_shift_thres = (vcounter_t) ceil( 3*state->Eshift/state->phat );
 
@@ -717,12 +750,18 @@ void parameters_calibration( struct bidir_algostate *state)
 		state->Eplocal_qual = 2 * state->Eplocal_qual;  // adding path considerations to local physical ones
 	}
 
+	/* Select OWD upshift detection thresholds
+	 * TODO: make these more intelligent, ultimately adaptive to path conditions
+	 */
+	state->Dfhat_shift_thres = state->RTThat_shift_thres * state->phat;
+	state->Dbhat_shift_thres = state->Dfhat_shift_thres;
+
 	verbose(VERB_CONTROL, "i=%lu:   Adjusted Eoffset_qual %3.1lg [ms] (Eoffset %3.1lg [ms])",
 			state->stamp_i, 1000*state->Eoffset_qual, 1000*state->Eoffset);
 	verbose(VERB_CONTROL, "i=%lu:   Adjusted Eplocal_qual %4.2lg [PPM]",
 			state->stamp_i, 1000000*state->Eplocal_qual);
 
-	verbose(VERB_CONTROL, "i=%lu:   Upward shift detection activated, "
+	verbose(VERB_CONTROL, "i=%lu:   Upward RTT shift detection activated, "
 			"threshold set at %llu [vcounter] (%4.0lf [mus])",
 			state->stamp_i, state->RTThat_shift_thres,
 			state->RTThat_shift_thres * state->phat*1000000);
@@ -831,17 +870,17 @@ process_RTT_warmup(struct bidir_algostate *state, vcounter_t RTT)
 	 */
 //	if ( state->RTThat > (RTT + state->RTThat_shift_thres) ) {
 	if ( state->RTThat > RTT ) {		// flag all shifts, no matter how small
-		verbose(VERB_SYNC, "i=%lu: Downward shift of %5.1lf [mus]", state->stamp_i,
-				(state->RTThat - RTT) * state->phat * 1.e6);
+		verbose(VERB_SYNC, "i=%lu: Downward RTT shift of %5.1lf [mus], RTT now %4.1lf [ms]", state->stamp_i,
+				(state->RTThat - RTT) * state->phat * 1.e6, RTT * state->phat * 1.e3);
 	}
 	
-	/* Record the minimum of RTT
+	/* Record the new minimum
 	 * Record corresponding index for full phat processing */
 	if (RTT < state->RTThat) {
 		state->RTThat = RTT;
 		state->pstamp_i = state->stamp_i;
 	}
-	
+
 	
 	/* Upward Shifts.  Information only.
 	 * This checks for detection over window of width shift_win prior to stamp i
@@ -856,6 +895,168 @@ process_RTT_warmup(struct bidir_algostate *state, vcounter_t RTT)
 
 }
 
+
+/* Over warmup window, simple global minimum over all stamps :
+ *   - no upward detection (not even informational, as has window complexities)
+ *     An exception is made in case of an increase from an impossible 0
+ *   - no storage into defined *hat_hist histories, as never used
+ * Filtering is skipped during a OWDwarmup period, since RADclock parameters are
+ * unreliable, and minimum estimate could be trapped at an incorrect low value.
+ * Negative values for estimates are forbidden at all times, but raw values stored.
+ * All downshifts are flagged, no matter how small for simplicity (are rare).
+ *
+ * Subtlety: effectively, the current clock is used to evaluate a shift in the new stamp,
+ * which will immediately be factored into the clock subsequently in thetanaive,
+ * but not necessarilty int the new theta until later.
+ * TODO: consider if good to merge with RTT_warmup to form _Path_warmup
+ */
+void
+process_OWDAsym_warmup(struct bidir_algostate *state, struct bidir_stamp *stamp)
+{
+	double Df, Db, Asym;	// `raw' values calculated for this stamp
+	double TS;				// central server value, defines asym, ensures Df+Db=RTT
+	int filstart = 10;	// don't use minimum filtering before this
+
+	/* Calculate raw OWD values for this stamp, and record */
+	TS = (stamp->Tb + stamp->Te) / 2;
+	Df = -((long double)state->phat * (long double)stamp->Ta + state->K - state->thetahat - TS);
+	Db =   (long double)state->phat * (long double)stamp->Tf + state->K - state->thetahat - TS;
+	history_add(&state->Df_hist, state->stamp_i, &Df);
+	history_add(&state->Db_hist, state->stamp_i, &Db);
+
+	/* Perform minimum filtering after OWDwarmup for each OWD separately */
+	/* Update Df minimum */
+	if ( state->stamp_i < filstart )
+		state->Dfhat = MIN(1,MAX(0,Df));	// insist early estimates lie in [0,1]
+	else
+		if (state->Dfhat == 0 && Df > 0)	// allow Upjump immediately if Dfhat bogus
+			state->Dfhat = Df;
+		else
+			if (Df < state->Dfhat && Df > 0) {
+				verbose(VERB_SYNC, "i=%lu: Downward Df shift of %5.2lf [mus], minDf now %5.2lf [ms]",
+						state->stamp_i, (state->Dfhat - Df) * 1.e6, Df * 1e3);
+				state->Dfhat = Df;
+			}
+
+	/* Update Db minimum */
+	if ( state->stamp_i < filstart )
+		state->Dbhat = MIN(1,MAX(0,Db));	// insist estimates lie in [0,1]
+	else
+		if (state->Dbhat == 0 && Db > 0)	// allow Upjump immediately if Dbhat bogus
+			state->Dbhat = Db;
+		else
+			if (Db < state->Dbhat && Db > 0) {
+				verbose(VERB_SYNC, "i=%lu: Downward Db shift of %5.2lf [mus], minDb now %5.2lf [ms]",
+						state->stamp_i, (state->Dbhat - Db) * 1.e6, Db * 1e3);
+				state->Dbhat = Db;
+			}
+
+	/* Asym */
+	Asym = state->Dfhat - state->Dbhat;
+	state->Asymhat = Asym;
+
+}
+
+
+/* Normal updating of OWD minima tracking, and OWD Upshift detection.
+ * Resultant Asym estimate.
+ * Windows are the same as for RTT
+ * Negative values for estimates are forbidden at all times, but raw values stored.
+ * TODO: consider adding status bits for OWD upshift detection
+ */
+void
+process_OWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
+{
+	double Df, Db, Asym;		// `raw' values calculated for this stamp
+	double TS;			// central server value, defines asym, ensures Df+Db=RTT
+
+	index_t lastshift = 0;	// index of first stamp after last detected upward shift
+	index_t j;					// loop index, signed to avoid problem when j hits zero
+	index_t jmin = 0;			// index that hits low end of loop
+	double* D_ptr;				// points to a given entry in in D#hat_hist
+	double next_Df, last_Df;
+	double next_Db, last_Db;
+
+	/* Calculate raw OWD values for this stamp, and record */
+	TS = (stamp->Tb + stamp->Te) / 2;
+	Df = -((long double)state->phat * (long double)stamp->Ta + state->K - state->thetahat - TS);
+	Db =   (long double)state->phat * (long double)stamp->Tf + state->K - state->thetahat - TS;
+	history_add(&state->Df_hist, state->stamp_i, &Df);
+	history_add(&state->Db_hist, state->stamp_i, &Db);
+
+	/* Perform minimum filtering for each OWD separately.
+	 * Update both D#hat and next_D#hat
+	 * All downshifts are flagged, no matter how small for simplicity (are rare).
+	 * TODO: add informational Dshift detections
+	 */
+	last_Df = state->Dfhat;
+	last_Db = state->Dbhat;
+	if (Df < state->Dfhat && Df > 0) {
+		verbose(VERB_SYNC, "i=%lu: Downward Df shift of %5.2lf [mus], minDf now %5.2lf [ms]",
+					state->stamp_i, (state->Dfhat - Df) * 1.e6, Df*1e3);
+		state->Dfhat = Df;
+	}
+	if (Db < state->Dbhat && Db > 0) {
+		verbose(VERB_SYNC, "i=%lu: Downward Db shift of %5.2lf [mus], minDb now %5.2lf [ms]",
+					state->stamp_i, (state->Dbhat - Db) * 1.e6, Db*1e3);
+		state->Dbhat = Db;
+
+	}
+	state->next_Dfhat = MAX(0,MIN(state->next_Dfhat, Df));
+	state->next_Dbhat = MAX(0,MIN(state->next_Dbhat, Db));
+
+	/* Update shift window minima and the window itself (shared over both OWDs) */
+	if ( state->stamp_i < (state->shift_win-1) + state->shift_end_OWD ) {
+		verbose(VERB_CONTROL, "In shift_win_OWD transition following window change, "
+				"[shift transition] windows are [%lu %lu] wide",
+				state->shift_win, state->stamp_i - state->shift_end_OWD + 1);
+		state->Dfhat_shift =  MIN(state->Dfhat_shift,Df);
+		state->Dbhat_shift =  MIN(state->Dbhat_shift,Db);
+	} else {
+		state->Dfhat_shift = history_min_slide_value_dbl(&state->Df_hist,
+							state->Dfhat_shift, state->shift_end_OWD, state->stamp_i-1);
+		state->Dbhat_shift = history_min_slide_value_dbl(&state->Db_hist,
+							state->Dbhat_shift, state->shift_end_OWD, state->stamp_i-1);
+		state->shift_end_OWD++;
+	}
+
+
+	/* Perform OWD Upshift detection [general comments as for RTT case]
+	 * Currently D*hat_hist records the post-shift value if any, but does not
+	 * overwrite history back to shift point, unlike RTT.
+	 */
+	/* Df */
+	if ( state->Dfhat_shift > (state->Dfhat + state->Dfhat_shift_thres) ) {
+		lastshift = state->stamp_i - state->shift_win + 1;
+		verbose(VERB_SYNC, "i=%lu: Upward Df shift of %5.1lf [mus], detected at stamp %lu, minDf now %5.2lf [ms]",
+			state->stamp_i, (state->Dfhat_shift - state->Dfhat)*1.e6, lastshift, 1e3 * state->Dfhat_shift);
+
+		/* Reset online estimators to match post-shift value */
+		state->Dfhat 		= state->Dfhat_shift;
+		state->next_Dfhat = state->Dfhat_shift;
+		//verbose(VERB_SYNC, "i=%lu: Minima(Df,Db) = (%5.2lf, %5.2lf) [ms]", state->stamp_i,
+								//1e3*state->Dfhat, 1e3*state->Dbhat);
+	}
+	history_add(&state->Dfhat_hist, state->stamp_i, &state->Dfhat);
+
+	/* Db */
+	if ( state->Dbhat_shift > (state->Dbhat + state->Dbhat_shift_thres) ) {
+		lastshift = state->stamp_i - state->shift_win + 1;
+		verbose(VERB_SYNC, "i=%lu: Upward Db shift of %5.1lf [mus], detected at stamp %lu, minDb now %5.2lf [ms]",
+			state->stamp_i, (state->Dbhat_shift - state->Dbhat)*1.e6, lastshift, 1e3 * state->Dbhat_shift);
+
+		/* Reset online estimators to match post-shift value */
+		state->Dbhat 		= state->Dbhat_shift;
+		state->next_Dbhat = state->Dbhat_shift;
+	}
+	history_add(&state->Dbhat_hist, state->stamp_i, &state->Dbhat);
+
+	/* Asym */
+	Asym = state->Dfhat - state->Dbhat;	// raw value for this stamp
+	state->Asymhat = Asym;					// is also final estimate, already a fn of minima filtering
+	history_add(&state->Asymhat_hist, state->stamp_i, &Asym);
+
+}
 
 
 /* Normal RTT updating.
@@ -875,47 +1076,47 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 	vcounter_t* RTThat_ptr;	// points to a given RTThat in RTThat_hist
 	vcounter_t next_RTT, last_RTT;
 
+	/* Update on-line RTT minima:  RTThat and next_RTThat */
 	last_RTT = state->RTThat;
 	state->RTThat = MIN(state->RTThat, RTT);
 	history_add(&state->RTThat_hist, state->stamp_i, &state->RTThat);
 	state->next_RTThat = MIN(state->next_RTThat, RTT);
 
-	/* if window (including processing of i) is not full,
+	/* Update of shift window minima and the window itself.
+	 * If window (including processing of i) not full,
 	 * keep left hand side (ie shift_end) fixed and add pkt i on the right.
-	 * Otherwise, window is full, and min inside it (thanks to reinit), can slide
+	 * Else window is full, and min inside it (thanks to reinit), can slide.
 	 */
-	// MAX not safe with subtracting unsigned
-//	if ( MAX(0, state->stamp_i - state->shift_win+1) < state->shift_end ) {
-	if ( state->stamp_i < (state->shift_win-1) + state->shift_end )
-	{
+	//	if ( MAX(0, state->stamp_i - state->shift_win+1) < state->shift_end ) { // not safe
+	if ( state->stamp_i < (state->shift_win-1) + state->shift_end ) {
 		verbose(VERB_CONTROL, "In shift_win transition following window change, "
 				"[shift transition] windows are [%lu %lu] wide", 
-				state->shift_win, state->stamp_i-state->shift_end+1);
+				state->shift_win, state->stamp_i - state->shift_end + 1);
 		state->RTThat_shift =  MIN(state->RTThat_shift,RTT);
-	}
-	else
-	{
-		 state->RTThat_shift = history_min_slide_value(&state->RTT_hist, state->RTThat_shift, state->shift_end, state->stamp_i-1);
-		 state->shift_end++;
+	} else {
+		state->RTThat_shift = history_min_slide_value(&state->RTT_hist,
+							state->RTThat_shift, state->shift_end, state->stamp_i-1);
+		state->shift_end++;
 	}
 
 	/* Upward Shifts.
 	 * This checks for detection over window of width shift_win prior to stamp i 
+	 * At this point all minima have been updated so detection at stamp i visible
 	 * Detection about reaction to RTThat_shift. RTThat_shift itself is simple,
 	 * always just a sliding window.
 	 * lastshift is the index of first known stamp after shift
 	 */
 	if ( state->RTThat_shift > (state->RTThat + state->RTThat_shift_thres) ) {
 		lastshift = state->stamp_i - state->shift_win + 1;
-		verbose(VERB_SYNC, "i=%lu: Upward shift of %5.1lf [mus], detected at stamp %lu",
-				state->stamp_i, (state->RTThat_shift - state->RTThat)*state->phat*1.e6, lastshift);
-				// DV:  bug?  is stamp_i my "i" ? in fact triggered at stamp_i + 1 ?
-	
-		/* Recalc from [i-lastshift+1 i]
-		 * - note by design, won't run into last history change 
+		verbose(VERB_SYNC, "i=%lu: Upward RTT shift of %5.1lf [mus], detected at stamp %lu, minRTT now %4.1lf [ms]",
+			state->stamp_i, (state->RTThat_shift - state->RTThat)*state->phat*1.e6,
+					lastshift, state->RTThat_shift * state->phat*1.e3 );
+
+		/* Recalc from  [lastshift, i] = [i-shift_win+1 i]
+		 * By design, won't run into last history change.
 		 */
 		state->RTThat = state->RTThat_shift;
-		state->next_RTThat = state->RTThat;
+		state->next_RTThat = state->RTThat;		// ensure successor Upshift corrected
 
 		/* Recalc necessary for phat
 		 * - note pstamp_i must be before lastshift by design
@@ -928,15 +1129,14 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 			state->next_pstamp_perr = state->phat*((double)next_RTT - state->RTThat);
 			state->next_pstamp_RTThat = state->RTThat;
 		} else
-			verbose(VERB_SYNC, "        Recalc not need for RTT state recorded at"
-				"next_pstamp_i = %lu", state->next_pstamp_i);
+			verbose(VERB_SYNC, "        Recalc not needed for RTT state recorded at"
+				" next_pstamp_i = %lu", state->next_pstamp_i);
 
 
-		/* Recalc necessary for offset 
-		 * typically shift_win >> offset_win, so lastshift won't bite
-		 * correct RTThat history back as far as necessary or possible
+		/* Recalc of RTThist necessary for offset
+		 * Correct RTThat history back as far as necessary or possible
+		 * (typically shift_win >> offset_win, so lastshift won't bite)
 		 */
-		// MAX not safe with subtracting unsigned
 		//for ( j=state->stamp_i; j>=MAX(lastshift,state->stamp_i-state->offset_win+1); j--)
 		if ( state->stamp_i > (state->offset_win-1) )
 			jmin = state->stamp_i - (state->offset_win-1);
@@ -949,10 +1149,11 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 			*RTThat_ptr = state->RTThat;
 		}
 		verbose(VERB_SYNC, "i=%lu: Recalc necessary for RTThat for %lu stamps back to i=%lu",
-				state->stamp_i, state->shift_win, lastshift);
+				state->stamp_i, state->shift_win, lastshift);	// TODO: fix the values here
 		ADD_STATUS(rad_data, STARAD_RTT_UPSHIFT);
 	} else
 		DEL_STATUS(rad_data, STARAD_RTT_UPSHIFT);
+
 
 	/* Downward Shifts.
 	 * Informational only, reaction is automatic and already achieved.
@@ -960,10 +1161,9 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 	 * TODO: establish a dedicated downward threshold parameter and setting code
 	 */
 	if ( last_RTT > (state->RTThat + (state->RTThat_shift_thres)/4) ) {
-		verbose(VERB_SYNC, "i=%lu: Downward shift of %5.1lf [mus]", state->stamp_i,
-				(last_RTT - state->RTThat) * state->phat * 1.e6);
+		verbose(VERB_SYNC, "i=%lu: Downward RTT shift of %5.1lf [mus], RTT now %4.1lf [ms]", state->stamp_i,
+				(last_RTT - state->RTThat) * state->phat * 1.e6, RTT * state->phat*1.e3);
 	}
-
 }
 
 
@@ -1412,7 +1612,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 				(double)(stamp->Te-stamp->Tb)/RTT/state->phat );
 	}
 	/* Calculate naive estimate at stamp i
-	 * Also track last element stored in thnaive_end
+	 * Also track last element stored in thnaive_end TODO: this comment out of date
 	 */
 	th_naive = (state->phat*((long double)stamp->Ta + (long double)stamp->Tf) +
 				(2*state->K - (stamp->Tb + stamp->Te)))/2.0;
@@ -1437,7 +1637,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 			jmin = state->stamp_i - (adj_win - 1);
 		else
 			jmin = 0;
-		jmin = MAX (1, jmin);
+		jmin = MAX(1,jmin);
 		state->poll_transition_th--;
 	}
 	else {
@@ -1467,11 +1667,10 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
 
 		/* Per point bound error is simply ET in here */
-		Ebound  = ET;
+		//Ebound  = ET;
 
-		/* Record best in window, smaller the better. When i<offset_win, bound
-		 * to be zero since arg minRTT also in win. Initialise minET to first
-		 * one in window.
+		/* Record best in window, smaller the better. When i<offset_win, must
+		 * to be zero since arg minRTT is at the new stamp, which has no aging
 		 */
 		if ( j == state->stamp_i ) {
 			minET = ET;
@@ -1480,7 +1679,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 			if ( ET < minET ) {
 				minET = ET;
 				jbest = j;
-				Ebound_min = Ebound;    // could give weighted version instead
+				//Ebound_min = Ebound;    // could give weighted version instead
 			}
 		}
 		/* calculate weight, is <=1
@@ -1490,6 +1689,24 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 		wsum += wj;
 		thnaive_tmp = history_find(&state->thnaive_hist, j);
 		thetahat = thetahat + wj * *thnaive_tmp;
+	}
+
+	/* Set Ebound_min to second best ET in window */
+	for ( j = state->stamp_i; j >= jmin; j-- ) {
+
+		if ( j == jbest ) continue;
+
+		RTT_tmp   = history_find(&state->RTT_hist, j);
+		stamp_tmp = history_find(&state->stamp_hist, j);
+		ET  = state->phat * ((double)(*RTT_tmp) - state->RTThat );
+		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
+
+		/* Record best in window excluding jbest */
+		if ( j == state->stamp_i || (jbest == 1) && (j == state->stamp_i - 1) )
+			Ebound_min = ET;		// initialize
+		else
+			if ( ET < Ebound_min ) Ebound_min = ET;
+
 	}
 
 
@@ -1544,7 +1761,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 			 * Also need to track last time we updated theta to do proper aging of
 			 * clock error bound in warmup
 			 */
-			PEER_ERROR(state)->Ebound_min_last = Ebound_min;
+			PEER_ERROR(state)->Ebound_min_last = Ebound_min;	// if quality bad, old value naturally remains
 			copystamp(stamp, &state->thetastamp);
 		}
 		
@@ -1755,12 +1972,11 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 		ET += state->phat * (double) ( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
 
 		/* Per point bound error is ET without the SD penalty */
-		Ebound  = ET;
+		//Ebound  = ET;
 
 		/* Add SD penalty to ET
 		 * XXX: SD quality measure has been problematic in different cases:
-		 * - kernel timestamping with hardware based servers(DAG, 1588), punish
-		 *   good packets
+		 * - kernel timestamping with hardware based servers(DAG, 1588), punish good packets
 		 * - with bad NTP servers that have SD > Eoffset_qual all the time.
 		 * Definitively removed on 28/07/2011
 		 */
@@ -1775,7 +1991,7 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 			minET = ET; jbest = j; Ebound_min = Ebound;
 		} else {
 			if (ET < minET) { minET = ET; jbest = j; }
-			if (Ebound < Ebound_min) { Ebound_min = Ebound; } // dont assume min index same here
+			//if (Ebound < Ebound_min) { Ebound_min = Ebound; } // dont assume min index same here
 		}
 		/* Calculate weight, is <=1 Note: Eoffset initialised to non-0 value, safe to divide */
 		wj = exp(- ET * ET / state->Eoffset / state->Eoffset); wsum += wj;
@@ -1788,6 +2004,29 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 			thetahat += wj * (*thnaive_tmp - (state->plocal / state->phat - 1) *
 				state->phat * (double) (stamp->Tf - stamp_tmp->Tf));
 	}
+
+	/* Set Ebound_min to second best ET in window */
+	for ( j = state->stamp_i; j >= jmin; j-- ) {
+
+		if ( j == jbest ) continue;
+
+		RTT_tmp   = history_find(&state->RTT_hist, j);
+		stamp_tmp = history_find(&state->stamp_hist, j);
+		ET  = state->phat * ((double)(*RTT_tmp) - state->RTThat );
+		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
+
+		/* Record best in window excluding jbest */
+		if ( j == state->stamp_i || (jbest == 1) && (j == state->stamp_i - 1) )
+			Ebound_min = ET;		// initialize
+		else
+			if ( ET < Ebound_min ) Ebound_min = ET;
+
+	}
+
+
+
+
+
 
 	/* Check Quality and Calculate new candidate estimate
 	 * quality over window looks good, use weights over window
@@ -1971,7 +2210,7 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
  	
 // TODO fixme, just a side effect
 // Make sure we have a valid RTT for the output file
-		RTT = MAX(1,stamp->Tf - stamp->Ta);
+		RTT = stamp->Tf - stamp->Ta;
 
 		output->best_Tf = stamp->Tf;
 
@@ -2019,10 +2258,8 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
 	 * =============================================================================
 	 */
 
-	/* Current RTT - universal!
-	 * Avoids zero or negative values in case of corrupted stamps
-	 */
-	RTT = MAX(1,stamp->Tf - stamp->Ta);
+	/* Current RTT - universal! */
+	RTT = stamp->Tf - stamp->Ta;
 
 	/* Store history of basics
 	 * [use circular buffer   a%b  performs  a - (a/b)*b ,  a,b integer]
@@ -2045,15 +2282,13 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
 
 	/* Initialize:  middle of very first window */
 	if ( state->stamp_i == state->top_win/2 ) {
-		/* reset half window estimate - previously  RTThat=next_RTThat */
 
-		/* Make sure RTT is non zero in case we have corrupted stamps */
-		// TODO: this should not happen since stamps would not be passed to the
-		// algo ... remove the MAX operation
-		state->next_RTThat = MAX(1, state->stamp.Tf - state->stamp.Ta);
+		/* Reset half window estimate (up until now RTThat=next_RTThat)
+		 * TODO: reassess why use the last stamp instead of RTT from this one
+		 */
+		state->next_RTThat = state->stamp.Tf - state->stamp.Ta;
 
-		/*
-		 * Initiate on-line algo for new pstamp_i calculation [needs to be in
+		/* Initiate on-line algo for new pstamp_i calculation [needs to be in
 		 * surviving half of window!] record next_pstamp_i (index), RTT, RTThat,
 		 * point error and stamp
 		 * TODO: jsearch_win should be chosen < ??
@@ -2067,27 +2302,34 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
 		/* Now DelTb >= top_win/2,  become fussier */
 		state->Ep_qual /= 10;
 
-		/* Background error bounds reinitialisation */
+		/* Successor error bounds reinitialisation */
 		PEER_ERROR(state)->cumsum_hwin = 0;
 		PEER_ERROR(state)->sq_cumsum_hwin = 0;
 		PEER_ERROR(state)->nerror_hwin = 0;
 
 		verbose(VERB_CONTROL, "Adjusting history window before normal "
-				"processing of stamp %lu. FIRST 1/2 window reached",
-				state->stamp_i);
+				"processing of stamp %lu. FIRST 1/2 window reached", state->stamp_i);
 	}
 
 	/* At end of history/top window */
 	if ( state->stamp_i == state->top_win_half ) {
-		/* move window ahead by top_win/2 so i is the first stamp in the 2nd half */
+
+		/* Advance window by top_win/2 so i is the first stamp in the new 2nd half */
 		state->top_win_half += state->top_win/2;
-		/* reset RTT estimate - next_RTThat must have been reset at prior upward * shifts */
+
+		/* Replace online estimates with their successors (Upshifts must be built in) */
+		state->Dfhat = state->next_Dfhat;
+		state->Dbhat = state->next_Dbhat;
 		state->RTThat = state->next_RTThat;
-		/* reset half window estimate - prior shifts irrelevant */
-		/* Make sure RTT is non zero in case we have corrupted stamps */
-		// TODO: this should not happen since stamps would not be passed to the
-		// algo ... remove the MAX operation
-		state->next_RTThat = MAX(1, state->stamp.Tf - state->stamp.Ta);
+
+		/* Reset successor estimates (prior shifts irrelevant) using last raw values */
+		double *D_ptr;
+		D_ptr = history_find(&state->Df_hist, state->stamp_i - 1);
+		state->next_Dfhat = *D_ptr;
+		D_ptr = history_find(&state->Db_hist, state->stamp_i - 1);
+		state->next_Dbhat = *D_ptr;
+		state->next_RTThat = state->stamp.Tf - state->stamp.Ta;
+
 		/* Take care of effects on phat algo
 		* - begin using next_pstamp_i that has been precalculated in previous top_win/2
 		* - reinitialise on-line algo for new next_pstamp_i calculation
@@ -2103,10 +2345,10 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
 		state->next_pstamp_perr		= state->phat*((double)(RTT) - state->RTThat);
 		copystamp(stamp, &state->next_pstamp);
 
-		/* Background error bounds taking over and restart all over again */
-		PEER_ERROR(state)->cumsum 	= PEER_ERROR(state)->cumsum_hwin;
+		/* Successor error bounds being adopted, then reset. */
+		PEER_ERROR(state)->cumsum 		= PEER_ERROR(state)->cumsum_hwin;
 		PEER_ERROR(state)->sq_cumsum	= PEER_ERROR(state)->sq_cumsum_hwin;
-		PEER_ERROR(state)->nerror 	= PEER_ERROR(state)->nerror_hwin;
+		PEER_ERROR(state)->nerror 		= PEER_ERROR(state)->nerror_hwin;
 		PEER_ERROR(state)->cumsum_hwin 		= 0;
 		PEER_ERROR(state)->sq_cumsum_hwin	= 0;
 		PEER_ERROR(state)->nerror_hwin 		= 0;
@@ -2144,12 +2386,14 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
 
 	collect_stats_state(state, stamp);
 	if (state->stamp_i < state->warmup_win) {
+		process_OWDAsym_warmup(state, stamp);
 		process_RTT_warmup(state, RTT);
 		process_phat_warmup(state, RTT, warmup_winratio);
 		process_plocal_warmup(state);
 		process_thetahat_warmup(state, rad_data, phyparam, RTT, stamp, output);
 	}
 	else {
+		process_OWDAsym_full(state, stamp);
 		process_RTT_full(state, rad_data, RTT);
 		record_packet_j(state, RTT, stamp);
 		phat_sanity_raised = process_phat_full(state, rad_data, phyparam, RTT,
@@ -2173,7 +2417,7 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
  */
 
 	if (state->stamp_i == state->warmup_win - 1) {
-		end_warmup_RTT(state, stamp);
+		end_warmup_RTTOWDAsym(state, stamp);
 		end_warmup_phat(state, stamp);
 		end_warmup_plocal(state, stamp, plocal_winratio);
 		end_warmup_thetahat(state, stamp);

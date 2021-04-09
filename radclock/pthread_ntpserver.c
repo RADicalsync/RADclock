@@ -230,7 +230,6 @@ thread_ntp_server(void *c_handle)
 
 			if (key_id >= 0 && key_id < MAX_NTP_KEYS && key_data[key_id])
 			{
-
 				wc_InitSha(&sha);
 				wc_ShaUpdate(&sha, key_data[key_id], 20);
 				wc_ShaUpdate(&sha, pkt_in, 48);
@@ -240,15 +239,27 @@ thread_ntp_server(void *c_handle)
 				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0)
 				{
 					// verbose(LOG_WARNING, "NTP Server authentication SUCCESS");
-					if (IS_PRIVATE_KEY(key_id) && handle->conf->is_ocn) // If the key ID is a private NTP key, then this packet must have originated from the CN
+					/* If the key is private, then packet must be from the CN.
+					 * In that case deal with possible CN inband signaling.
+					 */
+					if (IS_PRIVATE_KEY(key_id) && handle->conf->is_ocn)
 					{
-						// Check for CN inband signaling
-						if (((struct ntp_pkt*)pkt_in)->refid)
-						{
-							int inband_signal = ntohl(((struct ntp_pkt*)pkt_in)->refid);
-							handle->inband_signal = inband_signal;
-							verbose(LOG_WARNING, "NTP Server received CN inband signal: %d", inband_signal);
+						uint64_t icn_status;
+						uint64_t inband_trust = 0;
+
+						icn_status = (uint64_t) ntohl(((struct ntp_pkt*)pkt_in)->refid);
+						/* Map icn_id-indexed inband status word to sID-indexed trustword
+						 * In each case, status of server i is recorded in the (i-1)th status bit
+						 */
+						for (int s=0; s < handle->nservers; s++) {
+							if ( handle->conf->time_server_icn_mapping[s] != -1 &&
+								  icn_status & (1ULL << (handle->conf->time_server_icn_mapping[s])-1) )
+								inband_trust |= (1ULL << s);
 						}
+						handle->servertrust = inband_trust;
+						verbose(LOG_WARNING, "NTP Server received inband ICN status: %0XllX, "
+													"mapped to server trust %0XllX", icn_status, inband_trust);
+
 						private_signed_ntp = 1;
 					}
 

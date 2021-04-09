@@ -577,9 +577,6 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->telemetry_data.prior_data = NULL;
 	handle->telemetry_data.prior_data_size = 0;
 
-	/* Set the inband signaling to initialise at 0 */
-	handle->inband_signal = 0;
-
 	// These values won't matter too much as the first push will set them
 	// handle->telemetry_data.prior_status = 0;
 	// handle->telemetry_data.prior_PICN = 0;
@@ -630,6 +627,9 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	peers = malloc(sizeof *peers);
 	handle->peers = (void*) peers;	// enduring copy of ptr to peers data
 	init_peer_stamp_queue(peers);
+
+	/* Initialize all servers to trusted. */
+	handle->servertrust = 0;
 
 	return (handle);
 }
