@@ -685,11 +685,12 @@ serverIPtoID(struct radclock_handle *handle, char *server_ipaddr)
 
 
 /* Returns the serverID (array index) of the radclock deemed to be of the
- * highest quality at this time (among clocks with at least one stamp)
- * Algorithm 1:  select clock with smallest minRTT, subject to quality
- * 	sanity check. If none pass check, select one with smallest minRTT.
- *		At start of warmup, all error_bounds = 0 so initial selection will
- *		follow minRTT order.
+ * highest quality at this time (among clocks with at least one stamp).
+ * Clocks that have been flagged in the servertrust status word are excluded.
+ * Algorithm 1:  select clock with smallest minRTT, subject to quality sanity
+ *    check, and trust check. If none pass checks, select one with smallest minRTT.
+ *		[ At start of warmup, all error_bounds = 0 so initial selection will
+ *		follow minRTT order ]
  */
 static int
 preferred_RADclock(struct radclock_handle *handle)
@@ -699,6 +700,7 @@ preferred_RADclock(struct radclock_handle *handle)
 	vcounter_t RTThat;		// minimum RTT among acceptable servers
 	int s_RTThat = -1;		// matching serverID
 	double error_thres = 10e-3;	// acceptable level of rAdclock error
+	int trusted;
 
 	int s;
 	struct bidir_algostate *state;
@@ -717,8 +719,15 @@ preferred_RADclock(struct radclock_handle *handle)
 				s_mRTThat = s;
 			}
 
-		/* Find minimum with acceptable error */
-		if ( state->peer_err.error_bound < error_thres )
+		/* Check if this server is to be trusted at the moment
+		 * TODO: if this is chronic, log file will fill fast... disable?
+		 */
+		trusted = ! (handle->servertrust & (1ULL << s));
+		if (!trusted)
+			verbose(LOG_WARNING, "server %d not trusted, excluded from preferred server selection", s);
+
+		/* Find minimum with acceptable error among trusted servers */
+		if ( state->peer_err.error_bound < error_thres && trusted )
 			if (s_RTThat<0) {	// initialize to this s
 				RTThat = state->RTThat;
 				s_RTThat = s;
@@ -729,16 +738,23 @@ preferred_RADclock(struct radclock_handle *handle)
 				}
 	}
 
+	/* Even if only 1 server, this diagnostic check will return useful information */
 	if (s_RTThat < 0) {
-		verbose(LOG_WARNING, "No server has acceptable error (< %3.1lf [ms]), preferred "
-			"server based on minimum RTT only", 1e3 * error_thres);
+		verbose(LOG_WARNING, "No server passed checks, preferred server based on minimum RTT only");
 		s_RTThat = s_mRTThat;
 	}
 
+	/* Verbosity if pref-server changed (if only one server, will never execute) */
 	if (s_RTThat != handle->pref_sID) {
 		state = &((struct bidir_peers *)handle->peers)->state[s_RTThat];
-		verbose(LOG_NOTICE, "New preferred clock %d has minRTT %3.1lf ms and error bound %3.1lf ms",
+		verbose(LOG_NOTICE, "New preferred clock %d has minRTT %3.1lf ms, error bound %3.1lf ms",
 			s_RTThat, 1000*RTThat*state->phat, 1000*state->peer_err.error_bound);
+
+		trusted = ! (handle->servertrust & (1ULL << s_RTThat));
+		if (trusted)
+			verbose(LOG_NOTICE, "New preferred clock is trusted");
+		else
+			verbose(LOG_NOTICE, "New preferred clock is not trusted");
 	}
 
 	return (s_RTThat);
@@ -976,6 +992,14 @@ process_stamp(struct radclock_handle *handle)
 	 * Reevaluate preferred RADclock
 	 * Preferred clock is updated if it has changed, or if this stamp is from it
 	 */
+	 // Testing
+//	if (state->stamp_i == 300 || state->stamp_i == 2000)
+//		handle->servertrust = 2;
+//	else
+//		handle->servertrust = 0;
+//
+//	if (state->stamp_i == 1998) handle->servertrust = 4;
+
 	pref_sID_new = preferred_RADclock(handle);
 	if (pref_sID_new != handle->pref_sID) {
 		pref_updated = 1;
