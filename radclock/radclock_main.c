@@ -634,6 +634,9 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->peers = (void*) peers;	// enduring copy of ptr to peers data
 	init_peer_stamp_queue(peers);
 
+	/* Initialize all servers to trusted. */
+	handle->servertrust = 0;
+
 	return (handle);
 }
 
