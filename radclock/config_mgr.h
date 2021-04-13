@@ -111,6 +111,9 @@
 #define DEFAULT_SHM_DAG_CLIENT  	"10.0.0.3"
 #define DEFAULT_VM_UDP_LIST			"vm_udp_list"
 #define DEFAULT_PUBLIC_NTP			BOOL_OFF
+#define DEFAULT_PUBLIC_NTP_LIMIT	50  // The public NTP serving limit responses within the DEFAULT_PUBLIC_NTP_PERIOD
+#define DEFAULT_PUBLIC_NTP_PERIOD	10  // The public NTP serving period measure for excessive traffic [sec]
+#define DEFAULT_PUBLIC_NTP_HASH_BUCKETS 	100 // The public NTP serving number of IP hash buckets. In the case of a single spam IP only 1/PUBLIC_NTP_HASH_BUCKETS of the IP range would be rejected
 
 /*
  *  Definition of keys for configuration file keywords

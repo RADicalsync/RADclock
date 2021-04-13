@@ -3,7 +3,7 @@
 
 #include "radclock_telemetry.h"
 
-Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, double asym, int ICN_Count, long double timestamp)
+Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, int ICN_Count, long double timestamp, int accepted_public_ntp, int rejected_public_ntp, int inband_signal)
 {
     // Make telemetry packet
     Radclock_Telemetry_Latest data;
@@ -19,9 +19,13 @@ Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, double a
 
     // OCN data 
     data.PICN = PICN;
-    data.asym = asym;
+    // data.asym = asym;
     data.ICN_Count = ICN_Count;
     data.timestamp = timestamp;
+
+    data.accepted_public_ntp = accepted_public_ntp;
+    data.rejected_public_ntp = rejected_public_ntp;
+    data.inband_signal = inband_signal;
 
     return data;
 }
@@ -99,6 +103,28 @@ void print_telegraf(char * filename, const char * log_dir, const char * processe
         printf(" %.0Lf\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp 
 
     }
+    else if (header.version == 2)
+    {
+        struct Radclock_Telemetry_v3 ocn_data;
+        // Offset by header bytes as they have already been read in
+        fread((void*)(&ocn_data)+sizeof(Radclock_Telemetry_Header), sizeof(ocn_data) - sizeof(Radclock_Telemetry_Header), 1, fp);
+        struct Radclock_Telemetry_ICN_v3 icn_data;
+
+        fread((void*)(&icn_data), sizeof(icn_data), 1, fp);
+
+        printf("clock_stats,ocn=%s ", hostname);
+
+        printf("picn=%d,",      ocn_data.PICN);
+        // printf("asym=%d,",      ocn_data.asym);
+        printf("icn_count=%d,", ocn_data.ICN_Count);
+        printf("ocn_clock_ts=%.09Lf,", ocn_data.timestamp); // Timestamp in seconds (cant pass in nanoseconds as far as I can tell)
+        printf("ocn_clock_ICN_1_uA=%.20f,", icn_data.uA); // uA
+        printf("ocn_clock_ICN_1_err_bound=%.20f", icn_data.err_bound); // err_bound
+        // todo fix so this isnt a decimal (seems some precision issues occur when doing the operation below)
+        printf(" %.0Lf\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp 
+
+    }
+
     else
 
     {

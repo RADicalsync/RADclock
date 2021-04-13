@@ -63,6 +63,39 @@
 #include "ntp_auth.h"
 
 
+int hash_ip(unsigned char * sin_addr)
+{
+	int hash = 59123;
+	for (int i =0; i < sizeof(struct  in_addr); i++)
+        hash = ((hash << 5) + hash) + (sin_addr[i]);
+	return hash;
+}
+
+int get_max_enabled_bucket(unsigned short * ip_hash_current, char *ip_hash_enabled, int bucket_count)
+{
+	int bucket_id = -1;
+	int max_count = -1;
+	for (int i =0; i < bucket_count; i++)
+		if (ip_hash_enabled[i] && ip_hash_current[i] > max_count)
+		{
+			max_count = ip_hash_current[i];
+			bucket_id = i;
+		}
+	return bucket_id;
+}
+
+int get_min_disabled_bucket(unsigned short * ip_hash_current, char *ip_hash_enabled, int bucket_count)
+{
+	int bucket_id = -1;
+	int min_count = -1;
+	for (int i =0; i < bucket_count; i++)
+		if (!ip_hash_enabled[i] && (ip_hash_current[i] < min_count || min_count == -1))
+		{
+			min_count = ip_hash_current[i];
+			bucket_id = i;
+		}
+	return bucket_id;
+}
 
 /*
  * Integrated thread and thread-work function for NTP_SERV
@@ -85,7 +118,13 @@ thread_ntp_server(void *c_handle)
 	int pkt_in_mode;
 	struct ntp_pkt *pkt_out;
 	int n, err;
+	int public_ntp_limit = DEFAULT_PUBLIC_NTP_LIMIT;
+	int public_ntp_period = DEFAULT_PUBLIC_NTP_PERIOD;
+	int public_ntp_current_period_responses = 0;
+	int public_ntp_reject_lvl = 0;
 
+	long double public_ntp_start_time = -1;
+	int PUBLIC_NTP_HASH_BUCKETS = DEFAULT_PUBLIC_NTP_HASH_BUCKETS;
 	/* NTP packet related */
 	double rootdelay;				// is uint32_t in ntp_pkt structure
 	double rootdispersion;		// is uint32_t in ntp_pkt structure
@@ -128,7 +167,13 @@ thread_ntp_server(void *c_handle)
 	Sha sha;	
 
 	char ** key_data = handle->ntp_keys;
+	long double time;
 	
+	unsigned short ip_hash_current[PUBLIC_NTP_HASH_BUCKETS];
+	char ip_hash_enabled[PUBLIC_NTP_HASH_BUCKETS];
+	
+	memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
+	memset(ip_hash_enabled, 1, sizeof(char) * PUBLIC_NTP_HASH_BUCKETS);
 
 	/* Bind socket */
 	err = bind(s_server, (struct sockaddr *)&sin_server, sizeof(struct sockaddr_in));
@@ -163,6 +208,36 @@ thread_ntp_server(void *c_handle)
 		n = recvfrom(s_server, (void*) pkt_in, NTP_PKT_MAX_LEN, 0,
 				(struct sockaddr*)&sin_client, &len);
 		if (n < 0) {	// no bytes read after timeout
+
+			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
+			UTCld_to_NTPtime(&time, &reftime);
+			// Check if we can loosen rejection policy
+			if (public_ntp_start_time + public_ntp_period < time)
+			{
+				// Potientially we can try to loosen policy if we are significantly under message count
+				// We can see how many requests we would have gotten in the last period if we had loosed the rejection policy
+				// If it looked like we could have safely loosened then do it
+
+				if (public_ntp_current_period_responses < public_ntp_limit && public_ntp_reject_lvl > 0)
+				{
+					int bucket_id = get_min_disabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
+					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS)
+					{
+						public_ntp_reject_lvl -= 1;
+						ip_hash_enabled[bucket_id] = 1;
+						verbose(LOG_WARNING, "NTPserver: Idle - Loosening rejection policy to level %d/%d. Enabling bucket %d. Received lower %d requests in last window", (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id, (int)public_ntp_current_period_responses);
+					}else
+					{
+						verbose(LOG_ERR, "NTPserver: Idle - Loosening rejection error bucket_id %d not in range 0-%d", bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
+					}
+				}
+
+				// Reset NTP message counter
+				public_ntp_current_period_responses = 0;
+				public_ntp_start_time = time;
+				memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
+			}
+
 			continue;	// enable check if thread should STOP
 		}
 
@@ -224,7 +299,7 @@ thread_ntp_server(void *c_handle)
 		int private_signed_ntp = 0;
 
 		// If the client has requested authentication and we have some key data
-		if (n > 48 && key_data)
+		if (n > LEN_PKT_NOMAC && key_data)
 		{
 			key_id = ntohl( ((struct ntp_pkt*)pkt_in)->exten[0] );
 
@@ -233,7 +308,7 @@ thread_ntp_server(void *c_handle)
 
 				wc_InitSha(&sha);
 				wc_ShaUpdate(&sha, key_data[key_id], 20);
-				wc_ShaUpdate(&sha, pkt_in, 48);
+				wc_ShaUpdate(&sha, pkt_in, LEN_PKT_NOMAC);
 				wc_ShaFinal(&sha, pck_dgst);
 				// printf("size:%d %s %d key\n", n, key_data[key_id], key_id);
 
@@ -243,12 +318,12 @@ thread_ntp_server(void *c_handle)
 					if (IS_PRIVATE_KEY(key_id) && handle->conf->is_ocn) // If the key ID is a private NTP key, then this packet must have originated from the CN
 					{
 						// Check for CN inband signaling
-						if (((struct ntp_pkt*)pkt_in)->refid)
-						{
-							int inband_signal = ntohl(((struct ntp_pkt*)pkt_in)->refid);
-							handle->inband_signal = inband_signal;
+						int inband_signal = ntohl(((struct ntp_pkt*)pkt_in)->refid);
+						if (handle->inband_signal != inband_signal || inband_signal == 0)
 							verbose(LOG_WARNING, "NTP Server received CN inband signal: %d", inband_signal);
-						}
+
+						handle->inband_signal = inband_signal;
+
 						private_signed_ntp = 1;
 					}
 
@@ -276,7 +351,83 @@ thread_ntp_server(void *c_handle)
 			// Unless the request was from the CN (Control Node) which used the private CN-OCN key
 			continue;
 		}
-		
+
+		// Once the public_ntp_limit is hit. Stop responding to NTP requests until the window has expired
+		// Tighten hash filter
+		// Allow CN messages to always get a reply - possible exploit on replay attacks from the CN which won't get filtered
+		if ( !private_signed_ntp && public_ntp_current_period_responses > public_ntp_limit )
+		{
+			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
+			UTCld_to_NTPtime(&time, &reftime);
+
+			if (public_ntp_start_time + public_ntp_period > time)
+			{
+				// Tighten hash filter
+				// We received too many messages within the window so tighten the policy
+				if (public_ntp_reject_lvl < PUBLIC_NTP_HASH_BUCKETS)
+				{
+					int bucket_id = get_max_enabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
+					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS)
+					{
+						public_ntp_reject_lvl += 1;
+						ip_hash_enabled[bucket_id] = 0;
+						verbose(LOG_WARNING, "NTPserver: Tightening rejection policy to level %d/%d. Disable bucket %d. Received %d requests in %d < %d", (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id, (int)public_ntp_current_period_responses, (int)(time - public_ntp_start_time), (int)public_ntp_period);
+					} else
+					{
+						verbose(LOG_ERR, "NTPserver: Tightening rejection error bucket_id %d not in range 0-%d", bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
+					}					
+				}
+			} else
+			{
+				if (public_ntp_reject_lvl > 0)
+				{
+					// Potientially we can try to loosen policy if we are significantly under message count
+					// We can see how many requests we would have gotten in the last period if we had loosed the rejection policy
+					// If it looked like we could have safely loosened then do it
+					int bucket_id = get_min_disabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
+					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS)
+					{
+						public_ntp_reject_lvl -= 1;
+						ip_hash_enabled[bucket_id] = 1;
+						verbose(LOG_WARNING, "NTPserver: Loosening rejection policy to level %d/%d. Enabling bucket %d. Received lower %d requests in last window", (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id, (int)public_ntp_current_period_responses);
+					} else
+					{
+						verbose(LOG_ERR, "NTPserver: Loosening rejection error bucket_id %d not in range 0-%d", bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
+					}
+				}
+			}
+			
+			// Reset NTP message counter
+			public_ntp_current_period_responses = 0;
+			memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
+			public_ntp_start_time = time;
+		}
+
+		// Map IPS into the range of 0 - PUBLIC_NTP_HASH_BUCKETS inclusive
+		int ip_hash = hash_ip(&sin_client.sin_addr) % PUBLIC_NTP_HASH_BUCKETS ; 
+
+		// Check if we reject public NTP request based on public_ntp_reject_lvl
+		if (!private_signed_ntp && public_ntp_reject_lvl > 0)
+		{
+			if (! ip_hash_enabled[ip_hash])
+			{
+				ip_hash_current[ip_hash] += 1;
+				handle->rejected_public_ntp +=1;
+				// printf("Rejected packet %d %d\n", ip_hash, public_ntp_current_period_responses);
+
+				// Reject NTP request due to excessive demand
+				continue;
+			}
+		} 
+		// printf("Accepted packet %d - %d\n", ip_hash, public_ntp_current_period_responses);
+		ip_hash_current[ip_hash] += 1;
+		if (!private_signed_ntp)
+		{
+			public_ntp_current_period_responses += 1;
+			handle->accepted_public_ntp +=1;
+
+		}
+	
 
 
 		/* Fill the outgoing packet
@@ -328,7 +479,7 @@ thread_ntp_server(void *c_handle)
 		 * org:           copied over from the xmt field of incoming request pkt
 		 * xmt:           use raDclock (more robust, accurate, faster)
 		 */
-		long double time;
+		// long double time;
 		//memset((char *) &reftime, 0, sizeof(l_fp));
 		//memset((char *) &org, 0, sizeof(l_fp));
 		//memset((char *) &rec, 0, sizeof(l_fp));

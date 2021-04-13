@@ -83,14 +83,14 @@ find_matching_shm_packets(struct dag_cap dag_msg, struct radclock_shm_ts * SHM_s
         if (SHM_stamps[i].id == id && strcmp(server_ipaddr, SHM_stamps[i].server_ipaddr) == 0)
         {
             // Make temp copy of variable incase it gets overriden while reading
-            struct radclock_shm_ts radclock_shm_ts_cpy = SHM_stamps[i];
+            struct radclock_shm_ts cpy = SHM_stamps[i];
 
             // Double check that the data didn't change while making temp copy
-            if (radclock_shm_ts_cpy.id == id && strcmp(server_ipaddr, radclock_shm_ts_cpy.server_ipaddr) == 0)
+            if (cpy.id == id && strcmp(server_ipaddr, cpy.server_ipaddr) == 0)
             {
                 // We are now working on data in local function scope so we don't need to worry about thread race conditions
 
-                verbose(LOG_INFO, "Found matching SHM packet from DAG capture %lu ICN:%d %s", radclock_shm_ts_cpy.id, radclock_shm_ts_cpy.icn_id, server_ipaddr);
+                verbose(LOG_INFO, "Found matching SHM packet from DAG capture %lu ICN:%d %s", cpy.id, cpy.icn_id, server_ipaddr);
                 return;
             }
         }

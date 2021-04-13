@@ -53,11 +53,11 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
             return 1;
         }
 
-        // If clock underlying asymmetry has changed - currently doesn't exist
-        // if (handle->telemetry_data.prior_uA != handle->rad_data[sID].uA)
-            // return true;
+        // If clock underlying asymmetry has changed 
+        if (handle->telemetry_data.prior_uA != handle->rad_data[sID].uA)
+            return true;
 
-        // If clock underlying asymmetry has changed - currently doesn't exist
+        // If clock underlying asymmetry has changed
         if (handle->rad_data[sID].ca_err > TRIGGER_CA_ERR_THRESHOLD)
         {
             verbose(LOG_NOTICE, "Telemetry Producer - Error bound exceeded");
@@ -119,8 +119,11 @@ push_telemetry(struct radclock_handle *handle, int sID)
         
         if (is_sID_ICN)
         {
+            struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];
+            double uA = state->Asymhat; 
+
             handle->telemetry_data.prior_data[sID].prior_status = handle->rad_data[sID].status;
-            handle->telemetry_data.prior_data[sID].prior_uA = 0; // doesn't exist yet
+            handle->telemetry_data.prior_data[sID].prior_uA = uA;
             handle->telemetry_data.prior_data[sID].prior_leapsec_total = handle->rad_data[sID].leapsec_total;
         }
 
@@ -133,11 +136,6 @@ int
 push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_handle, int *holding_buffer_size, void* holding_buffer, struct radclock_handle *handle, long double timestamp, int keep_alive_trigger,  int PICN, int ICN_Count)
 {
     int bytes_written = 0;
-
-    // Setup dummy clock stats
-    double asym = 234;
-    // int ICN_Count = 30;
-    // int PICN = psID;
 
     // If the packet is larger than the holding buffer then make a new larger holding buffer
     int packet_size = sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_ICN_Latest) * ICN_Count  + sizeof(Radclock_Telemetry_Footer);
@@ -162,7 +160,7 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
  //   }
 //    else
     {
-        *header_data = make_telemetry_packet(packetId, PICN, asym, ICN_Count, timestamp);
+        *header_data = make_telemetry_packet(packetId, PICN, ICN_Count, timestamp, handle->accepted_public_ntp, handle->rejected_public_ntp, handle->inband_signal);
 
         // Write OCN specific telemetry packet to shared memory
         // bytes_written += ring_buffer_write(&header_data, sizeof(Radclock_Telemetry_Latest), shared_memory_handle, ring_write_pos);
@@ -170,8 +168,9 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
         {
             int time_server_id = handle->conf->time_server_icn_indexes[i];
             unsigned int status_word = handle->rad_data[time_server_id].status;
-            int ICN_id = handle->conf->time_server_icn_mapping[time_server_id]; ;
-            double uA = (float)(rand()%1000) * 0.001; 
+            int ICN_id = handle->conf->time_server_icn_mapping[time_server_id];
+            struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[time_server_id];
+            double uA = state->Asymhat; // (float)(rand()%1000) * 0.001; 
             double err_bound = handle->rad_data[time_server_id].ca_err;
 
             // Create a telemetry ICN specific packet

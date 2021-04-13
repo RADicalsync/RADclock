@@ -1740,6 +1740,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 		conf->time_server_ocn_mapping[time_server_id] = -1; // Set mapping initially to -1
 		char *this_s = conf->time_server + time_server_id * MAXLINE;
 		for (int ICN_id = 0; ICN_id < MAX_ICNS; ICN_id ++)
+		{
 			if (strcmp(conf->icn[ICN_id].domain, this_s) == 0) // If match is found set the ICN id
 			{
 				conf->time_server_icn_mapping[time_server_id] = conf->icn[ICN_id].id;
@@ -1747,14 +1748,13 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 				conf->time_server_icn_indexes = realloc(conf->time_server_icn_indexes, sizeof(int)*conf->time_server_icn_count);
 				conf->time_server_icn_indexes[conf->time_server_icn_count -1] = time_server_id;
 				verbose(LOG_INFO, "Configuration matched time_server:%s mapping for ICN:%d", this_s, conf->icn[ICN_id].id);
-				break;
-			} else if (strcmp(conf->ocn[ICN_id].domain, this_s) == 0) // If match is found set the OCN id
+			} 
+			if (strcmp(conf->ocn[ICN_id].domain, this_s) == 0) // If match is found set the OCN id
 			{
 				conf->time_server_ocn_mapping[time_server_id] = conf->ocn[ICN_id].id;
 				verbose(LOG_INFO, "Configuration matched time_server:%s mapping for OCN:%d", this_s, conf->ocn[ICN_id].id);
-				break;
 			}
-
+		}
 	}
 
 

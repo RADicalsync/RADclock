@@ -807,10 +807,7 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Signal big error */
 	if (err == -1)
-	{
-		push_telemetry(handle, -1); // Check if telemetry message needs to be sent
 		return (-1);
-	}
 
 	/* Starvation test: have valid stamps stopped arriving to the algo?
 	 * Test is applied to all clocks, even that of the current stamp (if any).
@@ -823,11 +820,6 @@ process_stamp(struct radclock_handle *handle)
 	peers = (struct bidir_peers*)handle->peers;
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
 		err_read = radclock_get_vcounter(handle->clock, &now);
-		// if (err_read < 0)
-		// {
-		// 	push_telemetry(handle, -1); // Check if telemetry message needs to be sent
-
-		// 	return (-1);
 	
 		for (s=0; s < handle->nservers; s++) {
 			rad_data = &handle->rad_data[s];
@@ -1031,8 +1023,6 @@ process_stamp(struct radclock_handle *handle)
 						&size_ctl, NULL, 0);
 				if (err == -1) {
 					verbose(LOG_ERR, "Can''t find kern.timecounter.hardware in sysctl");
-					push_telemetry(handle, sID); // Check if telemetry message needs to be sent
-
 					return (-1);
 				}
 				
@@ -1049,8 +1039,6 @@ process_stamp(struct radclock_handle *handle)
 
 					NTP_SERVER(handle)->burst = NTP_BURST;
 					strcpy(handle->clock->hw_counter, hw_counter);
-
-					push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 
 				// TODO: algo needs to reset:  many things not done here, need big look
 					return (0);
@@ -1107,32 +1095,36 @@ process_stamp(struct radclock_handle *handle)
 		if (VM_MASTER(handle)) {
 			err = push_data_vm(handle);
 			if (err < 0) {
-				push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 				verbose(LOG_WARNING, "Error attempting to push VM data");
 				return (1);
 			}
 		}
 
+
    }  // RADCLOCK_SYNC_LIVE actions
 
 
-	/* Push NTP stamp to SHM */
-	struct radclock_shm_ts SHM_stamp;
-	SHM_stamp.Ta = stamp.st.bstamp.Ta;
-	SHM_stamp.Tb = stamp.st.bstamp.Tb;
-	SHM_stamp.Te = stamp.st.bstamp.Te;
-	SHM_stamp.Tf = stamp.st.bstamp.Tf;
-	SHM_stamp.id = stamp.id;
-	SHM_stamp.icn_id = handle->conf->time_server_icn_mapping[sID];
-	strcpy(SHM_stamp.server_ipaddr, stamp.server_ipaddr);
-	// verbose(LOG_INFO, "Pushing shm packet ip %s", SHM_stamp.server_ipaddr);
+	if (handle->run_mode == RADCLOCK_SYNC_LIVE) 
+	{
+		/* Send telemetry data through ring buffer and eventually to NTC_CN */
+		push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 
-	handle->SHM_stamps[handle->SHM_stamp_write_id] = SHM_stamp;
-	// Increment the write position of the queue. Wrap to start in case of full queue
-	handle->SHM_stamp_write_id = (handle->SHM_stamp_write_id + 1) % handle->SHM_stamps_queue_size;
+		/* Push NTP stamp to SHM */
+		struct radclock_shm_ts SHM_stamp;
+		SHM_stamp.Ta = stamp.st.bstamp.Ta;
+		SHM_stamp.Tb = stamp.st.bstamp.Tb;
+		SHM_stamp.Te = stamp.st.bstamp.Te;
+		SHM_stamp.Tf = stamp.st.bstamp.Tf;
+		SHM_stamp.id = stamp.id;
+		SHM_stamp.icn_id = handle->conf->time_server_icn_mapping[sID];
+		strcpy(SHM_stamp.server_ipaddr, stamp.server_ipaddr);
+		// verbose(LOG_INFO, "Pushing shm packet ip %s", SHM_stamp.server_ipaddr);
 
-	/* Send telemetry data through ring buffer and eventually to NTC_CN */
-	push_telemetry(handle, sID); // Check if telemetry message needs to be sent
+		handle->SHM_stamps[handle->SHM_stamp_write_id] = SHM_stamp;
+		// Increment the write position of the queue. Wrap to start in case of full queue
+		handle->SHM_stamp_write_id = (handle->SHM_stamp_write_id + 1) % handle->SHM_stamps_queue_size;
+	}
+
 
 	/* Write ascii output files if open, much less urgent than previous tasks */
 	print_out_files(handle, &stamp, output, sID);

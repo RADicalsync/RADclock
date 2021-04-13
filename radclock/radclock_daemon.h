@@ -55,6 +55,8 @@ typedef enum {
 
 struct radclock_handle;
 
+// This structure is required from the already matched RADclock stamp tuples
+// It is parsed through to SHM flows to match with DAG data to get a 6 tuple
 struct radclock_shm_ts {
 	vcounter_t	Ta;		// vcount timestamp [counter value] of pkt leaving client
 	long double	Tb;		// timestamp [sec] of arrival at server
@@ -207,6 +209,10 @@ struct radclock_handle {
 
 	/* Inband signaling data. Set by CN received by OCNs */
 	int inband_signal;
+
+	/* Public ntp serving stats. Reported through telemetry */
+	int accepted_public_ntp;
+	int rejected_public_ntp;
 
 };
 

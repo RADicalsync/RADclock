@@ -143,14 +143,14 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     w = mp_encode_uint(w, ocn_data->header.version);    
 
     w = mp_encode_str(w, "ocn_clock", strlen("ocn_clock"));
-    w = mp_encode_map(w, 6);
-    // A map of 5 elements
+    w = mp_encode_map(w, 8);
+    // A map of 8 elements
 
     w = mp_encode_str(w, "picn", 4);
     w = mp_encode_uint(w, ocn_data->PICN);
 
-    w = mp_encode_str(w, "asym", 4);
-    w = mp_encode_uint(w, ocn_data->asym);
+    // w = mp_encode_str(w, "asym", 4);
+    // w = mp_encode_uint(w, ocn_data->asym);
 
     w = mp_encode_str(w, "icn_count", strlen("icn_count"));
     w = mp_encode_uint(w, ocn_data->ICN_Count);
@@ -160,6 +160,15 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
 
     w = mp_encode_str(w, "ts_nsec", strlen("ts_nsec"));
     w = mp_encode_uint(w, ts_nsec);
+
+    w = mp_encode_str(w, "ntp_acc", strlen("ntp_acc"));
+    w = mp_encode_uint(w, ocn_data->accepted_public_ntp);
+
+    w = mp_encode_str(w, "ntp_rej", strlen("ntp_rej"));
+    w = mp_encode_uint(w, ocn_data->rejected_public_ntp);
+
+    w = mp_encode_str(w, "inband", strlen("inband"));
+    w = mp_encode_uint(w, ocn_data->inband_signal);
 
     // A map of ICN elements
     w = mp_encode_str(w, "ICN", 3);
