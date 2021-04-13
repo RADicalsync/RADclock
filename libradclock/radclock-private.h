@@ -79,7 +79,7 @@ struct radclock_error
  * Structure representing radclock data and exposed to system processes via IPC
  * shared memory.
  */
-struct radclock_shm {
+struct radclock_sms {
 	int version;
 	int status;
 	int clockid;
@@ -92,9 +92,9 @@ struct radclock_shm {
 	struct radclock_error buferr[2];
 };
 
-#define SHM_DATA(x)		((struct radclock_data *)((void *)x + x->data_off))
-#define SHM_DATAold(x)		((struct radclock_data *)((void *)x + x->data_off_old))
-#define SHM_ERROR(x)		((struct radclock_error *)((void *)x + x->error_off))
+#define SMS_DATA(x)		((struct radclock_data *)((void *)x + x->data_off))
+#define SMS_DATAold(x)		((struct radclock_data *)((void *)x + x->data_off_old))
+#define SMS_ERROR(x)		((struct radclock_error *)((void *)x + x->error_off))
 
 
 struct radclock {
@@ -106,8 +106,8 @@ struct radclock {
 	};
 
 	/* IPC shared memory */
-	int ipc_shm_id;
-	void *ipc_shm;
+	int ipc_sms_id;
+	void *ipc_sms;
 
 	/* Description of current counter */
 	char hw_counter[32];
@@ -139,7 +139,7 @@ struct radclock {
  * IPC using shared memory 
  */
 #define RADCLOCK_RUN_DIRECTORY		"/var/run/radclock"
-#define IPC_SHARED_MEMORY			( RADCLOCK_RUN_DIRECTORY "/radclock.shm" )
+#define IPC_SHARED_MEMORY			( RADCLOCK_RUN_DIRECTORY "/radclock.sms" )
 
 
 /**
@@ -180,8 +180,8 @@ int radclock_get_vcounter_rdtsc(struct radclock *clock, vcounter_t *vcount);
 int has_vm_vcounter(struct radclock *clock);
 int init_kernel_clock(struct radclock *clock_handle);
 
-int shm_init_writer(struct radclock *clock);
-int shm_detach(struct radclock *clock);
+int sms_init_writer(struct radclock *clock);
+int sms_detach(struct radclock *clock);
 
 
 

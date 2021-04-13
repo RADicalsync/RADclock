@@ -411,30 +411,30 @@ get_vcount(radpcap_packet_t *packet, vcounter_t *vcount) {
  * queue can be allocated and freed here.
  */
 void
-init_peer_stamp_queue(struct bidir_peers *peers)
+init_stamp_queue(struct bidir_algodata *algodata)
 {
-	peers->q = calloc(1, sizeof(struct stamp_queue));
-	peers->q->start = NULL;
-	peers->q->end = NULL;
-	peers->q->size = 0;
+	algodata->q = calloc(1, sizeof(struct stamp_queue));
+	algodata->q->start = NULL;
+	algodata->q->end = NULL;
+	algodata->q->size = 0;
 }
 
 void
-destroy_peer_stamp_queue(struct bidir_peers *peers)
+destroy_stamp_queue(struct bidir_algodata *algodata)
 {
 	struct stq_elt *elt;
 
-	elt = peers->q->end;
-	while (peers->q->size) {
+	elt = algodata->q->end;
+	while (algodata->q->size) {
 		if (elt->prev == NULL)
 			break;
 		elt = elt->prev;
 		free(elt);
-		peers->q->size--;
+		algodata->q->size--;
 	}
-	free(peers->q->end);
-	free(peers->q);
-	peers->q = NULL;
+	free(algodata->q->end);
+	free(algodata->q);
+	algodata->q = NULL;
 }
 
 
@@ -471,7 +471,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	int foundhalfstamptofill;
 
 	if ((mode != MODE_CLIENT) && (mode != MODE_SERVER)) {
-		verbose(LOG_ERR, "Unsupported NTP packet mode: %d", mode);
+		verbose(LOG_ERR, "Unsupported stamp matching mode: %d", mode);
 		return (-1);
 	}
 
@@ -481,16 +481,19 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	while (qel != NULL) {
 		stamp = &qel->stamp;
 		if (stamp->id == new->id) {
-			if (mode == MODE_CLIENT) {
-				if (BST(stamp)->Ta != 0) {
-					verbose(LOG_WARNING, "Found duplicate NTP client request.");
-					return (1);
-				}
-			} else {
-				if (BST(stamp)->Tf != 0) {
-					verbose(LOG_WARNING, "Found duplicate NTP server request.");
-					return (1);
-				}
+			switch (mode) {
+				case MODE_CLIENT:
+					if (BST(stamp)->Ta != 0) {
+						verbose(LOG_WARNING, "Found duplicate NTP client request.");
+						return (1);
+					}
+					break;
+
+				case MODE_SERVER:
+					if (BST(stamp)->Tf != 0) {
+						verbose(LOG_WARNING, "Found duplicate NTP server request.");
+						return (1);
+					}
 			}
 			foundhalfstamptofill = 1;		// qel will point to stamp to fill
 			break;
@@ -499,10 +502,11 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	}
 
 	/* If this id is new, then create and insert blank queue element. */
-	if (!foundhalfstamptofill) {
+	if (!foundhalfstamptofill)
+	{
 		/* If queue too long, trim off last element */
 		if (q->size == MAX_STQ_SIZE) {
-			verbose(LOG_WARNING, "Peer stamp queue has hit max size. Check the server?");
+			verbose(LOG_WARNING, "Stamp matching queue has hit max size.");
 			q->end = q->end->prev;
 			free(q->end->next);
 			q->end->next = NULL;
@@ -519,26 +523,32 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			q->start->prev = qel;
 		q->start = qel;
 		q->size++;
+		switch (mode) {
+			case MODE_CLIENT:
+			case MODE_SERVER:
+			qel->stamp.type = STAMP_NTP;
+		}
 	}
 
 	/* Selectively copy content of new halfstamp into stamp to fill (*qel). */
 	stamp = &qel->stamp;
-	stamp->type = STAMP_NTP;
-	if (mode == MODE_CLIENT) {
-		stamp->id = new->id;
-		BST(stamp)->Ta = BST(new)->Ta;
-		strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
-	} else {
-		stamp->id = new->id;
-		stamp->ttl = new->ttl;
-		stamp->refid = new->refid;
-		stamp->stratum = new->stratum;
-		stamp->LI = new->LI;
-		stamp->rootdelay = new->rootdelay;
-		stamp->rootdispersion = new->rootdispersion;
-		BST(stamp)->Tb = BST(new)->Tb;
-		BST(stamp)->Te = BST(new)->Te;
-		BST(stamp)->Tf = BST(new)->Tf;
+	switch (mode) {
+		case MODE_CLIENT:
+			stamp->id = new->id;
+			BST(stamp)->Ta = BST(new)->Ta;
+			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
+			break;
+		case MODE_SERVER:
+			stamp->id = new->id;
+			stamp->ttl = new->ttl;
+			stamp->refid = new->refid;
+			stamp->stratum = new->stratum;
+			stamp->LI = new->LI;
+			stamp->rootdelay = new->rootdelay;
+			stamp->rootdispersion = new->rootdispersion;
+			BST(stamp)->Tb = BST(new)->Tb;
+			BST(stamp)->Te = BST(new)->Te;
+			BST(stamp)->Tf = BST(new)->Tf;
 	}
 
 	/* Print out queue from head to tail (oldest in queue at top of printout). */
@@ -850,13 +860,15 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	struct stq_elt *qel, *qelcopy;
 	struct stamp_t *st, *full_st;
 	vcounter_t	full_time=0;			// used to record stamp order
+	vcounter_t	Tc;
 	int startsize;
-	int c_halfstamp, s_halfstamp;
+	int c_halfstamp, s_halfstamp, fullstamp;
+	int c_older, s_older;				// records if halfstamps older than full one
 
 	JDEBUG
 
 	if (q->size == 0) {
-		verbose (LOG_WARNING, "Stamp queue empty, no stamp returned");
+		verbose(LOG_WARNING, "Stamp matching queue empty, no stamp returned");
 		return (1);
 	} else
 	  	startsize = q->size;
@@ -869,10 +881,12 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	qel = q->end;
 	while (qel != NULL) {
 		st = &qel->stamp;
-		if ((BST(st)->Ta != 0) && (BST(st)->Tf != 0)) {		// if fullstamp
-			if (full_time == 0 || BST(st)->Ta < full_time) {		// oldest so far
+		Tc = BST(st)->Ta;			// client side timestamp
+		fullstamp = (Tc != 0) && (BST(st)->Tf != 0);
+		if (fullstamp) {
+			if (full_time == 0 || Tc < full_time) {		// oldest so far
 				full_st = st;
-				full_time = BST(st)->Ta;
+				full_time = Tc;
 		   }
 		}
 		qel = qel->prev;
@@ -894,10 +908,11 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 		s_halfstamp = (BST(st)->Ta == 0) && (BST(st)->Tf != 0);
 		if (s_halfstamp)
 			verbose(LOG_WARNING, "Found server halfstamp in stamp queue");
-		
-		if (st == full_st || (s_halfstamp && BST(st)->Tf < BST(full_st)->Tf)
-			|| (c_halfstamp && BST(st)->Ta < full_time &&
-				 strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) )
+		c_older = c_halfstamp && BST(st)->Ta < full_time;
+		s_older = s_halfstamp && BST(st)->Tf < BST(full_st)->Tf;
+
+		if (st == full_st || s_older ||
+			 (c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) )
 	   {	/* Remove *qel from queue, reset qel to continue loop */
 			if (qel==q->end) {
 				if (qel==q->start) {			// only 1 stamp in queue
@@ -965,7 +980,7 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	err = 0;
 	attempt_wait = 1000;					/* [mus]  500 suitable for LAN RTT */
 	maxattempts = 20;						// should be even,  VM needs 20
-	q = ((struct bidir_peers*)handle->peers)->q;
+	q = ((struct bidir_algodata*)handle->algodata)->q;
 	packet = create_radpcap_packet();
 
 	/*

@@ -211,11 +211,11 @@ struct radclock_handle {
 	/* Algo output */
 	radclock_syncalgo_mode_t syncalgo_mode;
 	void *algo_output; 	/* Defined as void* since not part of the library */
-								// sync_algo.h:bidir_output  structure
+								// sync_algo.h:bidir_algooutput  structure
 	/* Stamp source */
 	void *stamp_source;  /* Defined as void* since not part of the library */
-	/* Synchronisation peers. Peers are of different nature (bidir, unidir) will cast */
-	void *active_peer;   /* Internal algo variables */
+	/* Synchronisation algodata. algodata are of different nature (bidir, unidir) will cast */
+	void *algodata;   /* Internal algo variables */
 	
 };
 
@@ -265,10 +265,10 @@ To begin a description of the flow of execution, consider this summary of main.
 		handle->run_mode = RADCLOCK_SYNC_LIVE;
 		clock_init_live(clock)				// find KV, initialize kernel related clock members
 
-	init_handle(handle);						// creates data source, and SHM, fully initialize verbosity
+	init_handle(handle);						// creates data source, and SMS, fully initialize verbosity
 
 	if RADCLOCK_SYNC_DEAD
-		init_peer_stamp_queue(&peer);		// init radclock algo data
+		init_stamp_queue(&peer);		// init radclock algo data
 	   while (1)
 			err = process_stamp				// consume data until no more
 	   }
@@ -699,7 +699,7 @@ uint32_t.  The minRTT member maps to the algo''s minRTT estimate.
 The idea is that this variable is the place to go to find out basic information
 characterizing the TYPical behaviour of the server. However its utility is
 low currently as most of the data it carries corresponds to the last stamp_t
-from the server in almost all cases, already recorded under handle->peers->laststamp.
+from the server in almost all cases, already recorded under handle->algodata->laststamp.
 
 struct radclock_ntp_server {
 	int burst;

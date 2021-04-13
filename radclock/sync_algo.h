@@ -146,7 +146,7 @@ struct stamp_t {
 	Alternative:  eg for leap stuff, could have as statics within process_stamp,
 	these would be the reference variables to be transferred into rad_data when ready.
  */
-struct bidir_output {
+struct bidir_algooutput {
 
 	/** Clock variables outside algo **/
 	long int n_stamps;
@@ -181,9 +181,8 @@ struct bidir_output {
 
 /* TODO this may not be too generic, but need it for cleanliness before
  * reworking the bidir_algostate structure
- * TODO: needs a name change, leave until error reporting re-thought out
  */
-struct peer_error {
+struct algo_error {
 	double Ebound_min_last;		// value at last true update
 	double error_bound;			// value for last stamp
 	long nerror;
@@ -303,7 +302,7 @@ struct bidir_algostate {
 	int offset_sanity_count;		// Offset sanity events counter
 
 	/* Statistics to track error in the Absolute clock */
-	struct peer_error peer_err;
+	struct algo_error algo_err;
 
 	/* Statistics */
 	int stats_sd[3];			// Stats on server delay (good, avg, bad)
@@ -312,39 +311,39 @@ struct bidir_algostate {
 
 };
 
-#define	PEER_ERROR(x)	(&(x->peer_err))
+#define	ALGO_ERROR(x)	(&(x->algo_err))
 
 
 
-/* The structure contains the information that must be kept per-server
- * for the mRADclock. The queue is common to stamps from all servers.
- * The other pointers point to dynamically allocated `arrays` indexed into
- * by serverID: 0, 1,.. nservers-1
+/* Structure containing RADclock algo input, state and output.
+ * Per-server data is kept, the pointers point to dynamically allocated `arrays`
+ * indexed by serverID: 0, 1,.. nservers-1
+ * The matching queue holds stamps from all servers together.
  */
-struct bidir_peers {	
+struct bidir_algodata {	
 	struct stamp_t *laststamp;
-	struct bidir_output *output;
 	struct bidir_algostate *state;
-	
-	/* Queue of stamps to be processed, all peers combined */
+	struct bidir_algooutput *output;
+
+	/* Queue of RADstamps to be matched and processed, all servers combined */
 	struct stamp_queue *q;
 };
 
 
-//#define OUTPUT(handle, x) ((struct bidir_output*)handle->algo_output)->x
-#define SOUTPUT(h,sID,x) ((struct bidir_peers*)h->peers)->output[sID].x
+//#define OUTPUT(handle, x) ((struct bidir_algooutput*)handle->algo_output)->x
+#define SOUTPUT(h,sID,x) ((struct bidir_algodata*)h->algodata)->output[sID].x
 #define OUTPUT(h,x) (SOUTPUT(h,h->pref_sID,x))
 
 
 /*
  * Functions declarations
  */
-int process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *state,
+int RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 		struct bidir_stamp *input_stamp, int qual_warning,
 		struct radclock_data *rad_data, struct radclock_error *rad_error,
-		struct bidir_output *output);
+		struct bidir_algooutput *output);
 
-void init_peer_stamp_queue(struct bidir_peers *peers);
-void destroy_peer_stamp_queue(struct bidir_peers *peers);
+void init_stamp_queue(struct bidir_algodata *algodata);
+void destroy_stamp_queue(struct bidir_algodata *algodata);
 
 #endif

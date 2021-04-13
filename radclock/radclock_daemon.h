@@ -116,7 +116,7 @@ struct vm_reply {
 
 struct radclock_handle {
 
-	/* Number of different servers/peers */
+	/* Number of different servers */
 	int nservers;
 
 	/* Library radclock structure */
@@ -174,12 +174,8 @@ struct radclock_handle {
 	/* Stamp source */
 	void *stamp_source; /* Defined as void* since not part of the library */
 
-	/* Points to an array of Synchronisation Peers (servers)
-	 * Contains information on the latest data from peers, and state information
-	 * for the corresponding RADclocks using them as reference sources, and sets
-	 * of parameters for output.
-	 */
-	void *peers;
+	/* Points to an array of Synchronisation algodata, one per server */
+	void *algodata;
 
 	/* ID (array index) of preferred RADclock */  // perhaps call sI = server Index
 	int pref_sID;

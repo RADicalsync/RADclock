@@ -183,8 +183,8 @@ main (int argc, char *argv[])
 	FILE * output_fd = NULL;
 	char * filtstr = NULL;
 
-	/* SHM */
-	struct radclock_shm *shm;
+	/* SMS */
+	struct radclock_sms *sms;
 	unsigned int gen = 0;
 	
 	/* Packet timestamp capture mode. Defaults are specified here, each can be
@@ -247,7 +247,7 @@ main (int argc, char *argv[])
 		return -1;
 	}
 	printf("------------------- Initializing your radclock  ----------------\n");
-	radclock_init(clock);   // sets clock->ipc_shm  here
+	radclock_init(clock);   // sets clock->ipc_sms  here
 	radclock_set_local_period_mode(clock, &lpm);
 	printf("----------------------------------------------------------------\n");
 
@@ -293,7 +293,7 @@ main (int argc, char *argv[])
 		fprintf(output_fd, "%% column 3: Time - RADclock Absolute clock at that raw timestamp\n");
 		fprintf(output_fd, "%% column 4: diff:  kernel - radclock [s] \n");
 		fprintf(output_fd, "%% column 5: Fractional part of diff expressed in mus\n");
-		fprintf(output_fd, "%% column 6: Generation number of shm used\n");
+		fprintf(output_fd, "%% column 6: Generation number of sms used\n");
 		fflush(output_fd);
 	}
 
@@ -318,12 +318,12 @@ main (int argc, char *argv[])
 			return 0;
 		}
 
-		/* Quickly check the current RADdata generation within the SHM */
-		shm = (struct radclock_shm *)clock->ipc_shm;
-		if (shm)
-			gen = shm->gen;
+		/* Quickly check the current RADdata generation within the SMS */
+		sms = (struct radclock_sms *)clock->ipc_sms;
+		if (sms)
+			gen = sms->gen;
 		else
-			fprintf(stderr," Warning, SHM is down.\n");
+			fprintf(stderr," Warning, SMS is down.\n");
 			
 			
 		/* Read the corresponding UTC time (with maximum resolution as a long
@@ -338,7 +338,7 @@ main (int argc, char *argv[])
 		frac = cdiff - (int) cdiff;
 		
 		/* Output the kernel's absolute timestamp, the raw, radclocks's abs time */
-		fprintf(output_fd, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (shmgen: %u) \n",
+		fprintf(output_fd, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
 							(long long unsigned) vcount,
 							tv.tv_sec, (long long unsigned)tv.tv_usec,
 							currtime,
@@ -349,7 +349,7 @@ main (int argc, char *argv[])
 		
 		
 		if (verbose_flag) {
-			fprintf(stdout, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (shmgen: %u) \n",
+			fprintf(stdout, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
 							(long long unsigned) vcount,
 							tv.tv_sec, (long long unsigned)tv.tv_usec,
 							currtime,

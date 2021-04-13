@@ -483,7 +483,7 @@ receive_loop_vm(struct radclock_handle *handle)
 						" Reinitialising radclock.", handle->clock->hw_counter,
 						hw_counter);
 					OUTPUT(handle, n_stamps) = 0;
-					((struct bidir_peers*)handle->peers)->state[handle->pref_sID].stamp_i = 0;
+					((struct bidir_algodata*)handle->algodata)->state[handle->pref_sID].stamp_i = 0;
 
 					//handle->server_data->burst = NTP_BURST;
 					NTP_SERVER(handle)->burst = 8;

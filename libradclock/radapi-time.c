@@ -112,34 +112,34 @@ raddata_quality(vcounter_t now, vcounter_t last, vcounter_t valid, double phat)
  * correction.
  */
 static inline int
-ffcounter_to_abstime_shm(struct radclock *clock, vcounter_t vcount,
+ffcounter_to_abstime_sms(struct radclock *clock, vcounter_t vcount,
 		long double *time)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	vcounter_t valid, last;
 	double phat;
 	int generation;
 
-	shm = (struct radclock_shm *) clock->ipc_shm;
+	sms = (struct radclock_sms *) clock->ipc_sms;
 	do {
 		/* Quality ingredients */
-		generation = shm->gen;
-		valid = SHM_DATA(shm)->next_expected;
-		last  = SHM_DATA(shm)->last_changed;
-		phat  = SHM_DATA(shm)->phat;
+		generation = sms->gen;
+		valid = SMS_DATA(sms)->next_expected;
+		last  = SMS_DATA(sms)->last_changed;
+		phat  = SMS_DATA(sms)->phat;
 
 		if ( clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON )
-			read_RADabs_UTC(SHM_DATA(shm), &vcount, time, 1);
+			read_RADabs_UTC(SMS_DATA(sms), &vcount, time, 1);
 		else
-			read_RADabs_UTC(SHM_DATA(shm), &vcount, time, 0);
+			read_RADabs_UTC(SMS_DATA(sms), &vcount, time, 0);
 
 //		if ((clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON)
-//			&& ((SHM_DATA(shm)->status & STARAD_WARMUP) != STARAD_WARMUP))
+//			&& ((SMS_DATA(sms)->status & STARAD_WARMUP) != STARAD_WARMUP))
 //		{
 //			*time += (vcount - last) *
-//				(long double)(SHM_DATA(shm)->phat_local - phat);
+//				(long double)(SMS_DATA(sms)->phat_local - phat);
 //		}
-	} while (generation != shm->gen || !shm->gen);
+	} while (generation != sms->gen || !sms->gen);
 
 	return raddata_quality(vcount, last, valid, phat);
 }
@@ -168,10 +168,10 @@ ffcounter_to_abstime_kernel(struct radclock *clock, vcounter_t vcount,
  * This function does not fail, SKM model should be checked before call
  */
 static inline int
-ffcounter_to_difftime_shm(struct radclock *clock, vcounter_t from_vcount,
+ffcounter_to_difftime_sms(struct radclock *clock, vcounter_t from_vcount,
 		vcounter_t till_vcount, long double *time)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	vcounter_t now, valid, last;
 	double phat;
 	int generation;
@@ -180,17 +180,17 @@ ffcounter_to_difftime_shm(struct radclock *clock, vcounter_t from_vcount,
 	if (radclock_get_vcounter(clock, &now))
 		return (1);
 
-	shm = (struct radclock_shm *) clock->ipc_shm;
+	sms = (struct radclock_sms *) clock->ipc_sms;
 	do {
-		generation = shm->gen;
-		valid = SHM_DATA(shm)->next_expected;
-		last  = SHM_DATA(shm)->last_changed;
-		phat  = SHM_DATA(shm)->phat;
+		generation = sms->gen;
+		valid = SMS_DATA(sms)->next_expected;
+		last  = SMS_DATA(sms)->last_changed;
+		phat  = SMS_DATA(sms)->phat;
 		if ( clock->local_period_mode == RADCLOCK_LOCAL_PERIOD_ON )
-			*time = (till_vcount - from_vcount) * (long double)SHM_DATA(shm)->phat_local;
+			*time = (till_vcount - from_vcount) * (long double)SMS_DATA(sms)->phat_local;
 		else
-			*time = (till_vcount - from_vcount) * (long double)SHM_DATA(shm)->phat;
-	} while (generation != shm->gen || !shm->gen);
+			*time = (till_vcount - from_vcount) * (long double)SMS_DATA(sms)->phat;
+	} while (generation != sms->gen || !sms->gen);
 
 	return raddata_quality(now, last, valid, phat);
 }
@@ -231,7 +231,7 @@ ffcounter_to_difftime_kernel(struct radclock *clock, vcounter_t from_vcount,
 static inline int
 in_SKMwin(struct radclock *clock, const vcounter_t *past_count, const vcounter_t *vc)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	vcounter_t now;
 
 	if (!vc)		// if counter not passed, read it here
@@ -239,8 +239,8 @@ in_SKMwin(struct radclock *clock, const vcounter_t *past_count, const vcounter_t
 	else
 		now = *vc;
 
-	shm = (struct radclock_shm *) clock->ipc_shm;
-	if ((now - *past_count) * SHM_DATA(shm)->phat < 1024)
+	sms = (struct radclock_sms *) clock->ipc_sms;
+	if ((now - *past_count) * SMS_DATA(sms)->phat < 1024)
 		return (1);	// is within SKMwin
 	else
 		return (0);
@@ -262,8 +262,8 @@ radclock_gettime(struct radclock *clock, long double *abstime)
 		return (1);
 	
 	/* Retrieve clock data */
-	if (clock->ipc_shm)
-		quality = ffcounter_to_abstime_shm(clock, vcount, abstime);
+	if (clock->ipc_sms)
+		quality = ffcounter_to_abstime_sms(clock, vcount, abstime);
 	else
 		quality = ffcounter_to_abstime_kernel(clock, vcount, abstime);
 	return (quality);
@@ -280,10 +280,10 @@ radclock_vcount_to_abstime(struct radclock *clock, const vcounter_t *vcount,
 	if (!clock || !vcount || !abstime)
 		return (1);
 
-	if (clock->ipc_shm)
-		quality = ffcounter_to_abstime_shm(clock, *vcount, abstime);
+	if (clock->ipc_sms)
+		quality = ffcounter_to_abstime_sms(clock, *vcount, abstime);
 	else {
-		logger(RADLOG_WARNING, "Using kernel data instead of shm, expected?");
+		logger(RADLOG_WARNING, "Using kernel data instead of sms, expected?");
 		quality = ffcounter_to_abstime_kernel(clock, *vcount, abstime);
 	}
 		
@@ -307,8 +307,8 @@ radclock_elapsed(struct radclock *clock, const vcounter_t *from_vcount,
 		return (1);
 	
 	/* Retrieve clock data */
-	if (clock->ipc_shm) {
-		quality = ffcounter_to_difftime_shm(clock, *from_vcount, vcount, duration);
+	if (clock->ipc_sms) {
+		quality = ffcounter_to_difftime_sms(clock, *from_vcount, vcount, duration);
 		if (!in_SKMwin(clock, from_vcount, &vcount))
 			return (1);
 	} else
@@ -339,8 +339,8 @@ radclock_duration(struct radclock *clock, const vcounter_t *from_vcount,
 		return (1);
 	
 	/* Retrieve clock data */
-	if (clock->ipc_shm) {
-		quality = ffcounter_to_difftime_shm(clock, *from_vcount, *till_vcount, duration);
+	if (clock->ipc_sms) {
+		quality = ffcounter_to_difftime_sms(clock, *from_vcount, *till_vcount, duration);
 		if (!in_SKMwin(clock, from_vcount, &vcount)) {
 			fprintf(stdout, "radclock_duration: inside \n");
 			return (1);

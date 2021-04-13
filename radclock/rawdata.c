@@ -66,8 +66,11 @@ timer_t spy_timerid;
 /*
  * Insert a newly created raw_data_bundle structure (packet or PPS signal...)
  * into the clock_handle raw data linked list.
- * We always insert at the HEAD. Beware, this is made lock free, we rely on the
- * buffer consumer not to do stupid stuff !!
+ * We always insert at the HEAD.
+ * Original intent was to make this lock-free, but currently not.
+ * Original comment: lock needed since seems that free_and_cherry_pick is
+ *     actually messing with this new rdb if hammering with NTP control packets
+ * TODO: add argument to allow optional use of locks depending on use case.
  * IMPORTANT: we do assume libpcap gives us packets in chronological order
  */
 inline void
@@ -75,9 +78,6 @@ insert_rdb_in_list(struct raw_data_queue *rq, struct raw_data_bundle *rdb)
 {
 	JDEBUG
 
-	// XXX Should get rid of the lock, the chain list is supposed to be lock
-	// free ... well, theoretically. It seems that free_and_cherry_pick is
-	// actuall messing with this new rdb if hammering with NTP control packets
 	pthread_mutex_lock(&rq->rdb_mutex);
 
 	JDEBUG_STR("INSERT: rdb at %p, ->next at %p, end at %p, start at %p",
@@ -324,9 +324,11 @@ free_and_cherrypick(struct raw_data_queue *rq)
 	if (rdb == NULL)
 		return (rdb);
 
-	/*
-	 * Free data that has been read previously. We make sure we never remove the
-	 * first element of the list. So that pcap_loop() does not get confused
+	/* Scan from the end toward the head, removing items already read,
+	 * exiting and returning on the first non-read item found.
+	 * As a special case, if there is only one in the queue and it has already
+	 * been read, leave it there and return NULL, as if it weren't there.
+	 * This is so that pcap_loop() does not get confused.
 	 */
 	while (rdb != rq->rdb_start) {
 		if (rdb->read == 0)
@@ -356,6 +358,7 @@ free_and_cherrypick(struct raw_data_queue *rq)
 			pthread_mutex_unlock(&rq->rdb_mutex);
 		}
 	}
+
 	/* Remember we never delete the first element of the raw data buffer. So we
 	 * can have a lock free add at the HEAD of the list. However, we may have
 	 * read the first element, so we don't want get_bidir_stamp() to spin like

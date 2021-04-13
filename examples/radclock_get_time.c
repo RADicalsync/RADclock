@@ -42,7 +42,7 @@
 
 /* Needed for accessing the RADclock API */
 #include <radclock.h>
-/* needed to access types for printout_{rad,FF}data, shm internals */
+/* needed to access types for printout_{rad,FF}data, sms internals */
 #include "radclock-private.h"		// needed for struct radclock_data, clock defn defn
 #include "kclock.h"              // struct ffclock_estimate, get_kernel_ffclock
 
@@ -85,7 +85,7 @@ main (int argc, char *argv[])
 	/* This function checks on the counter selected
 	 * by the kernel, and determines how it will be accessed,
 	 * gives some details of current FFclock settings.
-	 * It then initializes the shm.
+	 * It then initializes the sms.
 	 */
 	printf("------------------- Initializing your radclock  ----------------\n");
 	radclock_init(clock);
@@ -123,14 +123,14 @@ main (int argc, char *argv[])
 
 //	struct radclock_data rad_data;
 	struct ffclock_estimate cest;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
-		printf("Got RADdata from the SHM  (gen = %u).\n", shm->gen);
-		printout_raddata(SHM_DATA(shm));
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
+		printf("Got RADdata from the SMS  (gen = %u).\n", sms->gen);
+		printout_raddata(SMS_DATA(sms));
 	} else
-		printf("SHM is down, can''t print daemon''s raddata\n\n");
+		printf("SMS is down, can''t print daemon''s raddata\n\n");
 	
 	if (get_kernel_ffclock(clock, &cest))
 		printf("kernel FFdata unreachable, can''t print it\n\n");
@@ -141,17 +141,17 @@ main (int argc, char *argv[])
 		printf("\n");
 	}
 	
-	if ( SHM_DATA(shm)->last_changed < cest.update_ffcount ) {
-		printf("SHM data seems older than kernel data by %5.3lf [s], IPC server running? \n\n",
-		(cest.update_ffcount - SHM_DATA(shm)->last_changed)*SHM_DATA(shm)->phat );
+	if ( SMS_DATA(sms)->last_changed < cest.update_ffcount ) {
+		printf("SMS data seems older than kernel data by %5.3lf [s], IPC server running? \n\n",
+		(cest.update_ffcount - SMS_DATA(sms)->last_changed)*SMS_DATA(sms)->phat );
 	}
-	if ( SHM_DATA(shm)->last_changed > cest.update_ffcount ) {
-		printf("SHM data seems fresher than kernel data by %5.3lf [s], is the "
+	if ( SMS_DATA(sms)->last_changed > cest.update_ffcount ) {
+		printf("SMS data seems fresher than kernel data by %5.3lf [s], is the "
 				 "kernel refusing updates? daemon or FFclock have unsyn'd status?\n\n",
-		-(cest.update_ffcount - SHM_DATA(shm)->last_changed)*SHM_DATA(shm)->phat );
+		-(cest.update_ffcount - SMS_DATA(sms)->last_changed)*SMS_DATA(sms)->phat );
 	}
-	if ( SHM_DATA(shm)->last_changed == cest.update_ffcount )
-		printf("SHM data seems to match the kernel data, as it should. \n\n");
+	if ( SMS_DATA(sms)->last_changed == cest.update_ffcount )
+		printf("SMS data seems to match the kernel data, as it should. \n\n");
 	
 	
 	

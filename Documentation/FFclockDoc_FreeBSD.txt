@@ -15,7 +15,7 @@ Glossary:
  KV = Kernel Version  ( of the RADclock/FFclock modified kernel )
  IPC = Inter-Process Communication
  OS = Operating System
- SHM = SHared Memory
+ SMS = SHared Memory
  FF = FeedForward
  FB = FeedBack
  FFcounter = a FF compatible counter
@@ -506,7 +506,7 @@ The translation is non-trivial, because
    is leapsec oblivious, this is handled in main, and is a work in progress.
 
 On the daemon side, see RADclockDoc_algo_bidir for more details on Ca, and the defn
-of bidir_peer in sync_algo.h for more parameter insights.
+of bidir_algodata in sync_algo.h for more parameter insights.
 
 
 The defining RADclock data structure  radclock_data  is defined in radclock-private.h.

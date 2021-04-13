@@ -311,7 +311,7 @@ viewed with
 	radclock -h
 	
 RADclock allows many of its subsystems to be switched on or off  [default is shown]:
-	ipc_server = on			//	write to the SHM to support user radclocks
+	ipc_server = on			//	write to the SMS to support user radclocks
 	adjust_FFclock = on		// let the daemon discipline the system FFclock
 	adjust_FBclock = off		// let the daemon discipline the system FBclock
 	ntp_server = off  		// allow the RADserver to serve clients
@@ -471,7 +471,7 @@ Using the RADclock API
 
 The API allows programs to define `user radclocks`, enabling radclock reading
 functionality based on direct access to the RADclock parameters maintained by
-the daemon, via a Shared Memory Segment (SHM) written to securely by the daemon.
+the daemon, via a Shared Memory Segment (SMS) written to securely by the daemon.
 
 The library includes a suite of functions to enable both the Absolute and
 Difference forms of the R-A-D-clock to be exploited.  The suite is described in
@@ -480,11 +480,11 @@ Using the API gives the widest possible set of options to exploit RADclock
 capabilities.
 
 If the daemon has died, the radclock library functions will continue to obtain
-radclock parameters from the SHM, however they will fall increasingly out of date.
+radclock parameters from the SMS, however they will fall increasingly out of date.
 If the daemon is restarted, these will be refreshed seemlessly, there is
 nothing to re-initialize on the user radclock side.
 
-If the SHM itself has died for some reason (unlikely), the function will switch
+If the SMS itself has died for some reason (unlikely), the function will switch
 to the FF parameters held in the kernel, again transparently to the user.
 Without a working daemon however, such parameters will become stale over time.
 The library functions incorporate error bound estimates on absolute

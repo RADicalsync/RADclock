@@ -81,8 +81,8 @@ struct rd_pcap_pkt {
  * and light locking
  */
 struct raw_data_bundle {
-	struct raw_data_bundle *next;	/* Next buddy */
-	int read;						/* Have I been read? i.e. ready to be freed? */
+	struct raw_data_bundle *next;	// next points toward the Head
+	int read;							// Have I been read? i.e. ready to be freed?
 	rawdata_type_t type;			/* If we know the type, let's put it there */
 	union rd_t {
 		struct rd_pcap_pkt rd_pkt;

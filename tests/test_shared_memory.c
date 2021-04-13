@@ -61,30 +61,30 @@ read_raddata(struct radclock_data *data)
 
 /* Returns 1 on success */
 int 
-read_shm(struct radclock *clock)
+read_sms(struct radclock *clock)
 {
 	struct radclock_data *data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 
-	shm = (struct radclock_shm *)clock->ipc_shm;
+	sms = (struct radclock_sms *)clock->ipc_sms;
 
-	if (shm) {
-		fprintf(stdout, "Reading SHM:\n");
-		fprintf(stdout, " version: %d\n", shm->version);
-		fprintf(stdout, " status: %d\n", shm->status);
-		fprintf(stdout, " clockid: %d\n", shm->clockid);
-		fprintf(stdout, " gen: %u\n", shm->gen);
+	if (sms) {
+		fprintf(stdout, "Reading SMS:\n");
+		fprintf(stdout, " version: %d\n", sms->version);
+		fprintf(stdout, " status: %d\n", sms->status);
+		fprintf(stdout, " clockid: %d\n", sms->clockid);
+		fprintf(stdout, " gen: %u\n", sms->gen);
 
 		fprintf(stdout, "Current data:\n");
-		data = clock->ipc_shm + shm->data_off;
+		data = clock->ipc_sms + sms->data_off;
 		read_raddata(data);
 
 		fprintf(stdout, "Old data:\n");
-		data = clock->ipc_shm + shm->data_off_old;
+		data = clock->ipc_sms + sms->data_off_old;
 		read_raddata(data);
 		return (1);
 	} else
-		fprintf(stdout, "SHM is down.\n");
+		fprintf(stdout, "SMS is down.\n");
 
 	return 0;
 }
@@ -96,14 +96,14 @@ main(int argc, char *argv[])
 	struct radclock *clock;
 	//struct timeval tv;
 	long double currtime;
-	int shmok, err;
+	int smsok, err;
 
 	clock = radclock_create();
 	radclock_init(clock);
 
-	shmok = read_shm(clock);
+	smsok = read_sms(clock);
 
-	if (shmok) {
+	if (smsok) {
 		err = radclock_gettime(clock, &currtime);
 		//fprintf(stdout, "UNIX time: %lld.%ld with error code: %d\n",tv.tv_sec, tv.tv_usec, err);
 		fprintf(stdout, "UNIX time: %Lf with error code: %d\n", currtime, err);
