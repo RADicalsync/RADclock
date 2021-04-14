@@ -98,34 +98,34 @@ int update_ipc_shared_memory(struct radclock_handle *handle) { return (0); };
 int
 update_ipc_shared_memory(struct radclock_handle *handle)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	size_t offset_tmp;
 	unsigned int generation;
 
 	JDEBUG
 
-	shm = (struct radclock_shm *) handle->clock->ipc_shm;
+	sms = (struct radclock_sms *) handle->clock->ipc_sms;
 
-	memcpy((void *)shm + shm->data_off_old, RAD_DATA(handle),
+	memcpy((void *)sms + sms->data_off_old, RAD_DATA(handle),
 			sizeof(struct radclock_data));
-	memcpy((void *)shm + shm->error_off_old, RAD_ERROR(handle),
+	memcpy((void *)sms + sms->error_off_old, RAD_ERROR(handle),
 			sizeof(struct radclock_error));
-	generation = shm->gen;
+	generation = sms->gen;
 
-	shm->gen = 0;
+	sms->gen = 0;
 
-	/* Swap current and old buffer offsets in the mapped SHM */
-	offset_tmp = shm->data_off;
-	shm->data_off = shm->data_off_old;
-	shm->data_off_old = offset_tmp;
+	/* Swap current and old buffer offsets in the mapped SMS */
+	offset_tmp = sms->data_off;
+	sms->data_off = sms->data_off_old;
+	sms->data_off_old = offset_tmp;
 
-	offset_tmp = shm->error_off;
-	shm->error_off = shm->error_off_old;
-	shm->error_off_old = offset_tmp;
+	offset_tmp = sms->error_off;
+	sms->error_off = sms->error_off_old;
+	sms->error_off_old = offset_tmp;
 
 	if (generation++ == 0)
 		generation = 1;
-	shm->gen = generation;
+	sms->gen = generation;
 
 	if ( VERB_LEVEL>2 ) verbose(LOG_NOTICE, "Updated IPC Shared memory");
 	return (0);
@@ -370,7 +370,7 @@ update_FBclock(struct radclock_handle *handle)
 		(double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
 		tx.status, (double)tx.maxerror/1e6, (double)tx.esterror/1e6 );
 
-	poll_period = ((struct bidir_peers*)handle->peers)->state[handle->pref_sID].poll_period;
+	poll_period = ((struct bidir_algodata*)handle->algodata)->state[handle->pref_sID].poll_period;
 
 	if (VERB_LEVEL && !(OUTPUT(handle, n_stamps) % (int)(3600*6/poll_period))) {
 		verbose(VERB_CONTROL, "System clock PLL adjusted (offset freq status "
@@ -397,7 +397,7 @@ update_FBclock(struct radclock_handle *handle)
  */
 static void
 manage_leapseconds(struct radclock_handle *handle, struct stamp_t *stamp,
-	struct radclock_data *rad_data, struct bidir_output *output, int sID)
+	struct radclock_data *rad_data, struct bidir_algooutput *output, int sID)
 {
 	/* Leap second management */
 	static int postleap_freeze = 0;		// inhibit leap actions after a leap
@@ -708,7 +708,7 @@ preferred_RADclock(struct radclock_handle *handle)
 	struct bidir_algostate *state;
 
 	for (s=0; s < handle->nservers; s++) {
-		state = &((struct bidir_peers *)handle->peers)->state[s];
+		state = &((struct bidir_algodata *)handle->algodata)->state[s];
 		if (state->stamp_i == 0) continue;		// no stamp for this server yet
 
 		/* Find minimum RTT */
@@ -729,7 +729,7 @@ preferred_RADclock(struct radclock_handle *handle)
 			verbose(LOG_WARNING, "server %d not trusted, excluded from preferred server selection", s);
 
 		/* Find minimum with acceptable error among trusted servers */
-		if ( state->peer_err.error_bound < error_thres && trusted )
+		if ( state->algo_err.error_bound < error_thres && trusted )
 			if (s_RTThat<0) {	// initialize to this s
 				RTThat = state->RTThat;
 				s_RTThat = s;
@@ -748,9 +748,9 @@ preferred_RADclock(struct radclock_handle *handle)
 
 	/* Verbosity if pref-server changed (if only one server, will never execute) */
 	if (s_RTThat != handle->pref_sID) {
-		state = &((struct bidir_peers *)handle->peers)->state[s_RTThat];
+		state = &((struct bidir_algodata *)handle->algodata)->state[s_RTThat];
 		verbose(LOG_NOTICE, "New preferred clock %d has minRTT %3.1lf ms, error bound %3.1lf ms",
-			s_RTThat, 1000*RTThat*state->phat, 1000*state->peer_err.error_bound);
+			s_RTThat, 1000*RTThat*state->phat, 1000*state->algo_err.error_bound);
 
 		trusted = ! (handle->servertrust & (1ULL << s_RTThat));
 		if (trusted)
@@ -776,7 +776,7 @@ preferred_RADclock(struct radclock_handle *handle)
  *		Once the new stamp is processed, the preferred clock decision is updated
  *		If running live:
  *			- the parameters of the preferred clock are sent to the relevant
- *			  IPC consumers (FF and/or FB kernel clocks, SHM)
+ *			  IPC consumers (FF and/or FB kernel clocks, SMS)
  *			- keeps summaries of the new stamp and server state
  *			- if the daemon is an NTC OCN node, outputs a critical summary into a telemetry feed
  */
@@ -796,9 +796,9 @@ process_stamp(struct radclock_handle *handle)
 	int s;
 	struct radclock_data *rad_data;
 	struct radclock_error *rad_error;
-	struct bidir_peers *peers;
+	struct bidir_algodata *algodata;
 	struct stamp_t *laststamp;		// access last stamp (with original Te,Tf)
-	struct bidir_output *output;
+	struct bidir_algooutput *output;
 	struct bidir_algostate *state;
 	int pref_updated = 0;
 	int pref_sID_new;
@@ -836,7 +836,7 @@ process_stamp(struct radclock_handle *handle)
 	 * Test should run once per trigger-grid point. Due to structure of TRIGGER--
 	 * PROC interactions, process_stamp runs each time, so this is true.
 	 */
-	peers = (struct bidir_peers*)handle->peers;
+	algodata = (struct bidir_algodata*)handle->algodata;
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
 		err_read = radclock_get_vcounter(handle->clock, &now);
 		// if (err_read < 0)
@@ -847,7 +847,7 @@ process_stamp(struct radclock_handle *handle)
 	
 		for (s=0; s < handle->nservers; s++) {
 			rad_data = &handle->rad_data[s];
-			state = &peers->state[s];
+			state = &algodata->state[s];
 			if ((now - rad_data->last_changed) * rad_data->phat > 10*state->poll_period) {
 				if (!HAS_STATUS(rad_data, STARAD_STARVING)) {
 					verbose(LOG_WARNING, "Clock %d is starving. Gap has exceeded 10 stamps", s);
@@ -862,7 +862,7 @@ process_stamp(struct radclock_handle *handle)
 		 */
 		get_kernel_ffclock(handle->clock, &cest);
 		if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
-			state = &peers->state[handle->pref_sID];
+			state = &algodata->state[handle->pref_sID];
 			verbose(LOG_WARNING, "RADclock noticed a kernel RTC reset after stamp %d, "
 										"will require a restart I'm afraid", state->stamp_i);
 			return -1;
@@ -898,9 +898,9 @@ process_stamp(struct radclock_handle *handle)
 	/* Set pointers to data for this server */
 	rad_data  = &handle->rad_data[sID];		// = SRAD_DATA(handle,sID);
 	rad_error = &handle->rad_error[sID];
-	laststamp = &peers->laststamp[sID];
-	output = &peers->output[sID];
-	state = &peers->state[sID];
+	laststamp = &algodata->laststamp[sID];
+	output = &algodata->output[sID];
+	state = &algodata->state[sID];
 
 	/* If the stamp fails basic tests we won't endanger the algo with it, just exit
 	 * If there is something potentially dangerous but not fatal, flag it.
@@ -946,7 +946,7 @@ process_stamp(struct radclock_handle *handle)
 	//get_kernel_ffclock(handle->clock, &cest);				// check for RTC reset
 	// TODO: need to make  RTCreset = secs_to_nextupdate==0 && not yet pushed to kernel
 	//  easy and definitive way to to record a stamp_firstpush = stamp_i  in peer
-	process_bidir_stamp(handle, state, &bdstamp_noleap, qual_warning, rad_data, rad_error, output);
+	RADalgo_bidir(handle, state, &bdstamp_noleap, qual_warning, rad_data, rad_error, output);
 //						cest.secs_to_nextupdate == 0 && stamp_i > stamp_firstpush);
 
 	/* Update RADclock data with new algo outputs, and leap second update
@@ -959,7 +959,7 @@ process_stamp(struct radclock_handle *handle)
 	rad_data->phat_local			= state->plocal;
 	rad_data->phat_local_err	= state->plocalerr;
 	rad_data->ca					= state->K - (long double)state->thetahat;
-	rad_data->ca_err				= state->peer_err.error_bound;
+	rad_data->ca_err				= state->algo_err.error_bound;
 	rad_data->last_changed		= stamp.st.bstamp.Tf;
 	rad_data->next_expected		= stamp.st.bstamp.Tf +
 								(vcounter_t) ((double)state->poll_period / state->phat);
@@ -968,12 +968,12 @@ process_stamp(struct radclock_handle *handle)
 	rad_data->leapsec_expected = output->leapsec_expected;
 	/* Update all members of rad_error */
 	rad_error->error_bound 		= rad_data->ca_err;	// same by definition
-	if (state->peer_err.nerror > 0) {
-		rad_error->error_bound_avg = state->peer_err.cumsum / state->peer_err.nerror;
-		if (state->peer_err.nerror > 1) {
-			rad_error->error_bound_std = sqrt((state->peer_err.sq_cumsum -
-			(state->peer_err.cumsum * state->peer_err.cumsum / state->peer_err.nerror))
-				 / (state->peer_err.nerror - 1) );
+	if (state->algo_err.nerror > 0) {
+		rad_error->error_bound_avg = state->algo_err.cumsum / state->algo_err.nerror;
+		if (state->algo_err.nerror > 1) {
+			rad_error->error_bound_std = sqrt((state->algo_err.sq_cumsum -
+			(state->algo_err.cumsum * state->algo_err.cumsum / state->algo_err.nerror))
+				 / (state->algo_err.nerror - 1) );
 		}
 	}
 	rad_error->min_RTT = state->RTThat * state->phat;
@@ -1069,7 +1069,7 @@ process_stamp(struct radclock_handle *handle)
 						hw_counter);
 					OUTPUT(handle, n_stamps) = 0;
 					//state->stamp_i = 0;
-					((struct bidir_peers *)handle->peers)->state[handle->pref_sID].stamp_i = 0;
+					((struct bidir_algodata *)handle->algodata)->state[handle->pref_sID].stamp_i = 0;
 
 					NTP_SERVER(handle)->burst = NTP_BURST;
 					strcpy(handle->clock->hw_counter, hw_counter);

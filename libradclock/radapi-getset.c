@@ -83,18 +83,18 @@ radclock_get_last_changed(struct radclock *clock, vcounter_t *last_vcount)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !last_vcount)
 		return (1);
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
 		do {
-			generation = shm->gen;
-			*last_vcount = SHM_DATA(shm)->last_changed;
-		} while (generation != shm->gen || !shm->gen);
+			generation = sms->gen;
+			*last_vcount = SMS_DATA(sms)->last_changed;
+		} while (generation != sms->gen || !sms->gen);
 	} else {
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
@@ -111,18 +111,18 @@ radclock_get_next_expected(struct radclock *clock, vcounter_t *till_vcount)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !till_vcount)
 		return (1);
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
 		do {
-			generation = shm->gen;
-			*till_vcount = SHM_DATA(shm)->next_expected;
-		} while (generation != shm->gen || !shm->gen);
+			generation = sms->gen;
+			*till_vcount = SMS_DATA(sms)->next_expected;
+		} while (generation != sms->gen || !sms->gen);
 	} else {
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
@@ -139,20 +139,20 @@ radclock_get_period(struct radclock *clock, double *period)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !period)
 		return (1);
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
 		do {
-			generation = shm->gen;
-			*period = SHM_DATA(shm)->phat;
-		} while (generation != shm->gen || !shm->gen);
+			generation = sms->gen;
+			*period = SMS_DATA(sms)->phat;
+		} while (generation != sms->gen || !sms->gen);
 	} else {
-		logger(RADLOG_NOTICE, "radclock_get_period: shm down, using kernel copy");
+		logger(RADLOG_NOTICE, "radclock_get_period: sms down, using kernel copy");
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
 		fill_radclock_data(&cest, &rad_data);
@@ -168,18 +168,18 @@ radclock_get_bootoffset(struct radclock *clock, long double *offset)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !offset)
 		return (1);
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
 		do {
-			generation = shm->gen;
-			*offset = SHM_DATA(shm)->ca;
-		} while (generation != shm->gen || !shm->gen);
+			generation = sms->gen;
+			*offset = SMS_DATA(sms)->ca;
+		} while (generation != sms->gen || !sms->gen);
 	} else {
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
@@ -196,18 +196,18 @@ radclock_get_period_error(struct radclock *clock, double *err_period)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !err_period)
 		return (1);
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
 		do {
-			generation = shm->gen;
-			*err_period = SHM_DATA(shm)->phat_err;
-		} while (generation != shm->gen || !shm->gen);
+			generation = sms->gen;
+			*err_period = SMS_DATA(sms)->phat_err;
+		} while (generation != sms->gen || !sms->gen);
 	} else {
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
@@ -224,18 +224,18 @@ radclock_get_bootoffset_error(struct radclock *clock, double *err_offset)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !err_offset)
 		return (1);
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
 		do {
-			generation = shm->gen;
-			*err_offset = SHM_DATA(shm)->ca_err;
-		} while (generation != shm->gen || !shm->gen);
+			generation = sms->gen;
+			*err_offset = SMS_DATA(sms)->ca_err;
+		} while (generation != sms->gen || !sms->gen);
 	} else {
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
@@ -252,18 +252,18 @@ radclock_get_status(struct radclock *clock, unsigned int *status)
 {
 	struct ffclock_estimate cest; 
 	struct radclock_data rad_data;
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !status)
 		return (1);
 
-	if (clock->ipc_shm) {
-		shm = (struct radclock_shm *) clock->ipc_shm;
+	if (clock->ipc_sms) {
+		sms = (struct radclock_sms *) clock->ipc_sms;
 		do {
-			generation = shm->gen;
-			*status = SHM_DATA(shm)->status;
-		} while (generation != shm->gen || !shm->gen);
+			generation = sms->gen;
+			*status = SMS_DATA(sms)->status;
+		} while (generation != sms->gen || !sms->gen);
 	} else {
 		if (get_kernel_ffclock(clock, &cest))
 			return (1);
@@ -275,25 +275,25 @@ radclock_get_status(struct radclock *clock, unsigned int *status)
 }
 
 
-// TODO: for all 3 functions, implement kernel based fall back case if ipc_shm is NULL
+// TODO: for all 3 functions, implement kernel based fall back case if ipc_sms is NULL
 // this may imply adapting get_kernel_ffclock to include return of error metrics
 int
 radclock_get_clockerror_bound(struct radclock *clock, double *error_bound)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !error_bound)
 		return (1);
 
-	if (!clock->ipc_shm)
+	if (!clock->ipc_sms)
 		return (1);
 
-	shm = (struct radclock_shm *) clock->ipc_shm;
+	sms = (struct radclock_sms *) clock->ipc_sms;
 	do {
-		generation = shm->gen;
-		*error_bound = SHM_ERROR(shm)->error_bound;
-	} while (generation != shm->gen || !shm->gen);
+		generation = sms->gen;
+		*error_bound = SMS_ERROR(sms)->error_bound;
+	} while (generation != sms->gen || !sms->gen);
 
 	return (0);
 }
@@ -302,20 +302,20 @@ radclock_get_clockerror_bound(struct radclock *clock, double *error_bound)
 int
 radclock_get_clockerror_bound_avg(struct radclock *clock, double *error_bound_avg)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !error_bound_avg)
 		return (1);
 
-	if (!clock->ipc_shm)
+	if (!clock->ipc_sms)
 		return (1);
 
-	shm = (struct radclock_shm *) clock->ipc_shm;
+	sms = (struct radclock_sms *) clock->ipc_sms;
 	do {
-		generation = shm->gen;
-		*error_bound_avg = SHM_ERROR(shm)->error_bound_avg;
-	} while (generation != shm->gen || !shm->gen);
+		generation = sms->gen;
+		*error_bound_avg = SMS_ERROR(sms)->error_bound_avg;
+	} while (generation != sms->gen || !sms->gen);
 
 	return (0);
 }
@@ -324,20 +324,20 @@ radclock_get_clockerror_bound_avg(struct radclock *clock, double *error_bound_av
 int
 radclock_get_clockerror_bound_std(struct radclock *clock, double *error_bound_std)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !error_bound_std)
 		return (1);
 
-	if (!clock->ipc_shm)
+	if (!clock->ipc_sms)
 		return (1);
 
-	shm = (struct radclock_shm *) clock->ipc_shm;
+	sms = (struct radclock_sms *) clock->ipc_sms;
 	do {
-		generation = shm->gen;
-		*error_bound_std = SHM_ERROR(shm)->error_bound_std;
-	} while (generation != shm->gen || !shm->gen);
+		generation = sms->gen;
+		*error_bound_std = SMS_ERROR(sms)->error_bound_std;
+	} while (generation != sms->gen || !sms->gen);
 
 	return (0);
 }
@@ -345,20 +345,20 @@ radclock_get_clockerror_bound_std(struct radclock *clock, double *error_bound_st
 int
 radclock_get_min_RTT(struct radclock *clock, double *min_RTT)
 {
-	struct radclock_shm *shm;
+	struct radclock_sms *sms;
 	int generation;
 
 	if (!clock || !min_RTT)
 		return (1);
 
-	if (!clock->ipc_shm)
+	if (!clock->ipc_sms)
 		return (1);
 
-	shm = (struct radclock_shm *) clock->ipc_shm;
+	sms = (struct radclock_sms *) clock->ipc_sms;
 	do {
-		generation = shm->gen;
-		*min_RTT = SHM_ERROR(shm)->min_RTT;
-	} while (generation != shm->gen || !shm->gen);
+		generation = sms->gen;
+		*min_RTT = SMS_ERROR(sms)->min_RTT;
+	} while (generation != sms->gen || !sms->gen);
 
 	return (0);
 }

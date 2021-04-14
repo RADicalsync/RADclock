@@ -15,7 +15,7 @@ Glossary:
  KV = Kernel Version  ( of the RADclock/FFclock modified kernel )
  IPC = Inter-Process Communication
  OS = Operating System
- SHM = SHared Memory
+ SMS = SHared Memory
  FB = FeedBack
  FF = FeedForward
  FFcounter = a FF compatible counter
@@ -79,11 +79,11 @@ RADclock requires several kinds of IPC capabilities :
 		- daemon:			needed by TRIGGER, NTP_SERV, MAIN (spy timestamping), and verbose()
 		- libprocesses:   to timestamp arbitrary events
    Access to radclock parameters [owned by the daemon process]
-	   - libprocesses:   		via a SHM segment (written to by daemon, read by libprocess)
+	   - libprocesses:   		via a SMS segment (written to by daemon, read by libprocess)
 		- kernel FFclock data:	pushed to kernel by daemon if conf->adjust_FBclock is ON.
    Access to kernel FFclock data
 		- daemon:			pulled to initialize radclock parameters (clock_init_live, KV>1)
-	   - libprocesses:   to get radclock parameters when SHM segment not available
+	   - libprocesses:   to get radclock parameters when SMS segment not available
    Access to raw packet timestamps make in kernel, via RAD/FFclock modified bpf, accessed via libpcap
 		- daemon:			to get raw timestamps and pkt data of NTP pkts for stamp creation
 		- libprocesses:	to get raw timestamps and pkt data of monitored pkts
@@ -130,8 +130,8 @@ struct radclock {			// variables of this type called `clock`
 
 
 	/* IPC shared memory segment information for daemon<-->libprocess data sharing */
-	int ipc_shm_id;				// unique key for segment
-	void *ipc_shm;					// pointer to segment
+	int ipc_sms_id;				// unique key for segment
+	void *ipc_sms;					// pointer to segment
 
 	/* String identifying current hardware counter */
 	// Currently used in FBSD only, set in radclock_init_vcounter using sysctlbyname
@@ -144,7 +144,7 @@ struct radclock {			// variables of this type called `clock`
 	int kernel_version;			// records output of found_ffwd_kernel_version()
 
 	/* Controls if algo's local counter period used when COMPuting time */
-	// Used in in radapi-time.c: ffcounter_to_{abstime,difftime}_{shm,kernel} only.
+	// Used in in radapi-time.c: ffcounter_to_{abstime,difftime}_{sms,kernel} only.
 	// Expert feature: average user can ignore, will get default=ON set in radclock_create
 	// Can be altered using radapi-getset.c:radclock_{get,set}_local_period_mode
 	radclock_local_period_t	 local_period_mode;	// values are RADCLOCK_LOCAL_PERIOD_{ON,OFF}
@@ -611,7 +611,7 @@ willing to make the effort.
 IPC:	Access to radclock parameters:  Overview
 ======================================
 
-Each time the RADclock algo (process_bidir_stamp) processes a stamp, the radclock
+Each time the RADclock algo (RADalgo_bidir) processes a stamp, the radclock
 data and error structures held in  clock_handle->rad_{data,error},  with format :
 
 struct radclock_data {
@@ -642,7 +642,7 @@ are updated.
 The rad_data is essential to `tell time` using RADclock.  When running live, it
 is made available externally to RADclock in the following two ways :
 
-  1) API-access:  a copy is pushed to a shared memory segment (SHM), accessible by
+  1) API-access:  a copy is pushed to a shared memory segment (SMS), accessible by
 						any `libprocess` which has compiled-in the RADclock library.
 
 The library provides functions, declared in radclock.h and described below,
@@ -681,16 +681,16 @@ their update functions back-to-back within process_stamp :
  ----------------------------------
 	get_next_stamp(handle, stamp_source, &stamp);
 	  leap second processing
-	  process_bidir_stamp(handle, peer, &stamp_noleap, ..)); // update native RADclock
+	  RADalgo_bidir(handle, peer, &stamp_noleap, ..)); // update native RADclock
 	  update handle->rad_data                 // update UTC RADabsclock
-	update_ipc_shared_memory(handle)	    		// update SHM segment
+	update_ipc_shared_memory(handle)	    		// update SMS segment
 	fill_ffclock_estimate(rad_data, rad_error, &cest); // convert to kernel-format cest
 	set_kernel_ffclock(handle->clock, &cest); // update kernel FFclock data
 	push_data_vm(handle)								// update VM store
 	update_FBclock(handle);							// update kernel FBclock
 
-There is no great problem if, for example, the SHM copy is accessed just before
-process_bidir_stamp updates handle->rad_data, the error is not worse than an access
+There is no great problem if, for example, the SMS copy is accessed just before
+RADalgo_bidir updates handle->rad_data, the error is not worse than an access
 just before that stamp even arrived: in between stamps, rad_data does not update.
 
 
@@ -698,7 +698,7 @@ The form of the rad_data for these two different sharing purposes is different.
 For API access the shared memory contains a variable of the following type
 (radclock-private.h) :
 
-struct radclock_shm {
+struct radclock_sms {
 	int version;				// currently = 1, not tested for anywhere
 	int status;					// meant to be valid/invalid, currently 0 and unused
 	int clockid;				// currently 0 and unused
@@ -711,8 +711,8 @@ struct radclock_shm {
 	struct radclock_error buferr[2];	//		"					"						"
 };
 
-#define SHM_DATA(x)		((struct radclock_data *)((void *)x + x->data_off))
-#define SHM_ERROR(x)	  ((struct radclock_error *)((void *)x + x->error_off))
+#define SMS_DATA(x)		((struct radclock_data *)((void *)x + x->data_off))
+#define SMS_ERROR(x)	  ((struct radclock_error *)((void *)x + x->error_off))
 
 which is a perfect copy of the current rad_data and rad_error, plus a record of the
 previous values (accessible by pointer members), plus additional information.
@@ -781,55 +781,55 @@ In other cases it could be achieved by using the older interfaces if needed.
 
 
 ==============================================================
-IPC:	Access to radclock parameters:  SHM
+IPC:	Access to radclock parameters:  SMS
 ======================================
 Main files:		radapi-base.c
 
-The SHM code is simple in that it has no kernel interactions, and hence no OS,KV
+The SMS code is simple in that it has no kernel interactions, and hence no OS,KV
 dependencies.
 
-The SHM related members of clock are
-	int ipc_shm_id;	// initialized to 0		in radapi-base.c:radclock_create()
-	void *ipc_shm;		// initialized to NULL 	in radapi-base.c:radclock_create()
+The SMS related members of clock are
+	int ipc_sms_id;	// initialized to 0		in radapi-base.c:radclock_create()
+	void *ipc_sms;		// initialized to NULL 	in radapi-base.c:radclock_create()
 
-Also defined in  radclock_private.h  are the SHM relevant macros:
+Also defined in  radclock_private.h  are the SMS relevant macros:
 	#define RADCLOCK_RUN_DIRECTORY		"/var/run/radclock"
-	#define IPC_SHARED_MEMORY			( RADCLOCK_RUN_DIRECTORY "/radclock.shm" )
+	#define IPC_SHARED_MEMORY			( RADCLOCK_RUN_DIRECTORY "/radclock.sms" )
 
 The relevant configuration variable (config_mgr.c) is
 	clock_handle->conf->server_ipc		= DEFAULT_SERVER_IPC;
 and is one of the variables can be reset to on or off during reloads.
 This variable is a misnomer as there is no server (or thread, except MAIN) as
-such associated to the SHM underlying the IPC.
+such associated to the SMS underlying the IPC.
 
 Note that the command line option -x turns the ipc server off, but there is no
 command line option to turn it on. Thus for the IPC to work, it MUST be set on
 in the conf file!   An easy way to achieve this to use the run the script (in
 repo/tests/)
-	SHMset on
+	SMSset on
 
 
 
 -------------------------------------
-SHM: RADclock process side (internal)
+SMS: RADclock process side (internal)
 -------------------------------------
 
-The file radapi-base.c holds the core SHM create/initialize/destroy functions used
+The file radapi-base.c holds the core SMS create/initialize/destroy functions used
 on the daemon side:
 
 struct radclock * radclock_create(void)    // create clock, init to trivial values
-int shm_init_writer(struct radclock *clock)// create shm segment for read/write
-int shm_detach(struct radclock *clock)		 // detach segment from calling process
+int sms_init_writer(struct radclock *clock)// create sms segment for read/write
+int sms_detach(struct radclock *clock)		 // detach segment from calling process
 
-which make use of the following raw SHM functions included from <sys/shm.h> :
+which make use of the following raw SMS functions included from <sys/shm.h> :
 
             Called in
-  ftok:		shm_init_{reader,writer}   create unique key given filename and user key
-  shmget:   shm_init_{reader,writer}	returns shm id given key and access flags,
+  ftok:		sms_init_{reader,writer}   create unique key given filename and user key
+  shmget:   sms_init_{reader,writer}	returns sms id given key and access flags,
   													creates segment if doesnt already exist
-  shmat:		shm_init_{reader,writer}   attach shm segment to process address space
-  shmdt:		shm_detach						detach from process (just a wrapper for shmdt)
-  shmctl:	shm_init_writer				control shm properties..
+  shmat:		sms_init_{reader,writer}   attach sms segment to process address space
+  shmdt:		sms_detach						detach from process (just a wrapper for shmdt)
+  shmctl:	sms_init_writer				control sms properties..
 	 IPC_STAT:	fetch the properties shmid_ds data structure
 	 IPC_SET:	set uid and gui permissions to match those of perm_flags
 	 IPC_RMID:	remove segment (when all attached processes have exited) // Never used
@@ -842,35 +842,35 @@ able to locate and attach to the same segment.
  Simplified code in main running live:
  -------------------------------------
 	create_handle
-		radclock_create	// initializes clock.{ipc_shm,ipc_shm} to trivial values
+		radclock_create	// initializes clock.{ipc_sms,ipc_sms} to trivial values
    clock_init_live		// initialize kernel related clock members
 		radclock_init_vcounter_syscall(clock)
 		radclock_init_vcounter(clock)
 		init_kernel_clock(clock)
 	init_handle
-		shm_init_writer	// creates shm segment if needed, and set permissions etc
+		sms_init_writer	// creates sms segment if needed, and set permissions etc
    if restart
 		rehash_deamon
-				case conf->server_ipc = BOOL_ON  	shm_init_writer(clock)
-				case conf->server_ipc = BOOL_OFF  	shm_detach(clock)
-	shm_detach				// detach shm segment from RADclock
+				case conf->server_ipc = BOOL_ON  	sms_init_writer(clock)
+				case conf->server_ipc = BOOL_OFF  	sms_detach(clock)
+	sms_detach				// detach sms segment from RADclock
 
 
-Note that the SHM segment, once created, is NEVER deleted/removed, not just under
+Note that the SMS segment, once created, is NEVER deleted/removed, not just under
 restarts, but even when RADclock exits completely. This is because external
 processes may still be attached to it. By keeping it alive these processes
 can continue to function (using the kernel copy fallback as described below),
 and once a new deamon is finally launched, it will pick up the same segment,
 thereby establishing the IPC without any need for signaling or other checks.
-Libprocesses can always keep track of the freshness of the SHM data through
+Libprocesses can always keep track of the freshness of the SMS data through
 the last_changed field of radclock_data.
 
 Multiple independent and non-conflicting daemons are possible if distinguished by
-different RADCLOCK_RUN_DIRECTORY values, which will result in separate SHM segments.
+different RADCLOCK_RUN_DIRECTORY values, which will result in separate SMS segments.
 This however is not tested and is not recommended!
 Running multiple daemons (with or without terminal) with the same RADCLOCK_RUN_DIRECTORY
 may result in more than one radclock updating the same segment.
-Even if only one daemon is configured to update the SHM segment, each may still
+Even if only one daemon is configured to update the SMS segment, each may still
 update the FFdata in the kernel, which is a dangerous situation.
 
 // TODO: should there be a conf parameter to control if update FF or not??
@@ -881,7 +881,7 @@ update the FFdata in the kernel, which is a dangerous situation.
 
 
 --------------------------------
-SHM: libprocess side (external)
+SMS: libprocess side (external)
 --------------------------------
 
 For an external process `libprocess` to use RADclock it must include
@@ -896,12 +896,12 @@ It can create its private (rad)clock by calling:
 	radclock_init			// initializes clock
 		radclock_init_vcounter_syscall(clock)
 		radclock_init_vcounter(clock)
-		shm_init_reader	// create/attach shm segment (read only)
+		sms_init_reader	// create/attach sms segment (read only)
    ...
-	radclock_destroy		// destroy private clock, detach SHM
+	radclock_destroy		// destroy private clock, detach SMS
 
 These create/initialize/destroy functions are again defined in radapi-base.c .
-Note that shm_init_{reader,writer} behave symmetrically: each will create a
+Note that sms_init_{reader,writer} behave symmetrically: each will create a
 segment if it does not already exist, or otherwise use the existing one.
 As explained above, this allows both private radclocks and daemons to come and
 go without risk of losing an ability to reconnect, and without any signalling complexities.
@@ -952,7 +952,7 @@ which simply sets
 
 We now turn to those functions which are defined in radapi-getset.c .
 
-Out of the 9 fields stored in the current rad_data within clock-ipc_shm,
+Out of the 9 fields stored in the current rad_data within clock-ipc_sms,
 7 functions are devoted to simply extracting them individually:
 int radclock_get_last_changed		(clock, vcounter_t *last_vcount)	//			 = last_changed
 int radclock_get_next_expected	(clock, vcounter_t *till_vcount)	// 	 	 = next_expected
@@ -962,13 +962,13 @@ int radclock_get_period_error		(clock, double *err_period)		//			 = phat_err
 int radclock_get_bootoffset_error(clock, double *err_offset)		//			 = ca_err
 int radclock_get_status				(clock, unsigned int *status)		// status = status
 
-For each of these functions, if the SHM segment does not exist, the data is taken from
+For each of these functions, if the SMS segment does not exist, the data is taken from
 the kernel copy instead via:
 		 get_kernel_ffclock(clock, &cest))			// get kernel copy
 		 fill_radclock_data(&cest, &rad_data);		// extract rad_data from it
 		 *desiredparam = rad_data.relevantfield
 where cest is of type ffclock_estimate .
-If the daemon has died, the SHM segment will exist and be used, but,
+If the daemon has died, the SMS segment will exist and be used, but,
 like the kernel copy, will not be updated.
 
 The 2 missing fields are phat_local{,_err}, which are more for expert use, and
@@ -976,7 +976,7 @@ could not have been meaningfully filled from the kernel copy in any case.
 NOTE:  currently radclock_get_{period,offset}_error  are effectively placeholders,
 the value returned will not be correct.
 
-Similarly, for each of the 4 fields stored in the current rad_error within the SHM
+Similarly, for each of the 4 fields stored in the current rad_error within the SMS
 there is a dedicated extraction function:
 int radclock_get_clockerror_bound		(clock, double *error_bound)
 int radclock_get_clockerror_bound_avg	(clock, double *error_bound_avg)
@@ -1000,10 +1000,10 @@ actually reading the Robust Absolute and Difference Clock (RADclock).
 
 There are 4 library functions. Each of them are wrappers for underlying
 functions (in radapi-time.c) which do the real work, in two flavours, depending on
-whether the SHM segment exists, or if we need to fall back to the kernel copy.
+whether the SMS segment exists, or if we need to fall back to the kernel copy.
 
 The first set of two deal with the Absolute clock, and make use of
-ffcounter_to_abstime_{shm,kernel}(clock, vcount, abstime)  .
+ffcounter_to_abstime_{sms,kernel}(clock, vcount, abstime)  .
 
 int radclock_gettime(clock, long double *abstime)
 	- returns current time based on a counter value it reads itself
@@ -1011,7 +1011,7 @@ int radclock_vcount_to_abstime(clock, const vcounter_t *vcount, long double *abs
 	- returns time based on the counter value passed in
 
 The second set of two deal with the Difference Clock, and make use of
-ffcounter_to_difftime_{shm,kernel}(clock, vcount, vcount, duration)  .
+ffcounter_to_difftime_{sms,kernel}(clock, vcount, vcount, duration)  .
 
 int radclock_elapsed(clock, const vcounter_t *from_vcount,long double *duration)
 	- returns time elapsed (now - from) from the passed value to a value it reads itself
@@ -1029,7 +1029,7 @@ were up to date, somewhat out of date, or worse, with respect to the counter val
 defining the time interval being calculated.
 
 The quality assessment functions radapi-time.c:{raddata_quality,in_SKMwin} are not public,
-but are called by ffcounter_to_abstime_{shm,kernel} and radclock_{elapsed,duration}.
+but are called by ffcounter_to_abstime_{sms,kernel} and radclock_{elapsed,duration}.
 
 
 The library included the 2 counter read functions defined in radclock-read.c :
@@ -1046,7 +1046,7 @@ because, if such a TSC reading function is available it represents the best
 (fastest) way to access a high resolution counter, which importantly avoids
 system call overhead and works equally well from user or kernel space.
 Of course for this to be useful, the daemon must also be using the TSC so the
-rad_data shared via the SHM will be relevant to that choice of counter.
+rad_data shared via the SMS will be relevant to that choice of counter.
 See the documentation on bypass mode in RADclockDoc_algo.
 
 

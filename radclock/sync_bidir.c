@@ -402,14 +402,14 @@ void init_state( struct radclock_handle *handle, struct radclock_phyparam *phypa
 	history_add(&state->thnaive_hist, state->stamp_i, &th_naive);
 
 	/* Peer error metrics */
-	PEER_ERROR(state)->Ebound_min_last	= 0;
-	PEER_ERROR(state)->error_bound	= 0;
-	PEER_ERROR(state)->nerror 			= 0;
-	PEER_ERROR(state)->cumsum 			= 0;
-	PEER_ERROR(state)->sq_cumsum 		= 0;
-	PEER_ERROR(state)->nerror_hwin 		= 0;
-	PEER_ERROR(state)->cumsum_hwin 		= 0;
-	PEER_ERROR(state)->sq_cumsum_hwin 	= 0;
+	ALGO_ERROR(state)->Ebound_min_last	= 0;
+	ALGO_ERROR(state)->error_bound	= 0;
+	ALGO_ERROR(state)->nerror 			= 0;
+	ALGO_ERROR(state)->cumsum 			= 0;
+	ALGO_ERROR(state)->sq_cumsum 		= 0;
+	ALGO_ERROR(state)->nerror_hwin 		= 0;
+	ALGO_ERROR(state)->cumsum_hwin 		= 0;
+	ALGO_ERROR(state)->sq_cumsum_hwin 	= 0;
 
 	/* Peer statistics */
 	state->stats_sd[0] = 0;
@@ -1574,7 +1574,7 @@ process_plocal_full(struct bidir_algostate* state, struct radclock_data *rad_dat
 void
 process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad_data,
 		struct radclock_phyparam *phyparam, vcounter_t RTT,
-		struct bidir_stamp* stamp, struct bidir_output *output)
+		struct bidir_stamp* stamp, struct bidir_algooutput *output)
 {
 
 	double thetahat;	// double ok since this corrects clock which is already almost right
@@ -1738,7 +1738,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 //		DEL_STATUS(rad_data, STARAD_OFFSET_QUALITY);	// since accepted stamp, even though quality likely poor
 //		DEL_STATUS(rad_data, STARAD_OFFSET_SANITY);
 //
-//		PEER_ERROR(state)->Ebound_min_last = Ebound_min;
+//		ALGO_ERROR(state)->Ebound_min_last = Ebound_min;
 //		copystamp(stamp, &state->thetastamp);
 //	}
 //	else {
@@ -1761,7 +1761,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 			 * Also need to track last time we updated theta to do proper aging of
 			 * clock error bound in warmup
 			 */
-			PEER_ERROR(state)->Ebound_min_last = Ebound_min;	// if quality bad, old value naturally remains
+			ALGO_ERROR(state)->Ebound_min_last = Ebound_min;	// if quality bad, old value naturally remains
 			copystamp(stamp, &state->thetastamp);
 		}
 		
@@ -1834,7 +1834,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 
 void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *rad_data,
 		struct radclock_phyparam *phyparam, vcounter_t RTT,
-		struct bidir_stamp* stamp, int qual_warning,  struct bidir_output *output)
+		struct bidir_stamp* stamp, int qual_warning,  struct bidir_algooutput *output)
 {
 	double thetahat;	// double ok since this corrects clock which is almost right
 	double errTa = 0;	// calculate causality errors for correction of thetahat
@@ -2104,7 +2104,7 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 			copystamp(stamp, &state->thetastamp);
 			// BUG??  where is "lastthetahat = i;" ?  ahh, seems never to have been used..
 			/* Record last good estimate of error bound after sanity check */
-			PEER_ERROR(state)->Ebound_min_last = Ebound_min;
+			ALGO_ERROR(state)->Ebound_min_last = Ebound_min;
 		}
 		DEL_STATUS(rad_data, STARAD_OFFSET_SANITY);
 	}
@@ -2147,10 +2147,10 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
  * theta(t) = C(t) - t
  */
 int
-process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *state,
+RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 		struct bidir_stamp *input_stamp, int qual_warning,
 		struct radclock_data *rad_data, struct radclock_error *rad_error,
-		struct bidir_output *output)
+		struct bidir_algooutput *output)
 {
 	struct bidir_stamp *stamp;		// remember, here, stamp is not a stamp_t !
 	struct radclock_phyparam *phyparam;
@@ -2303,9 +2303,9 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
 		state->Ep_qual /= 10;
 
 		/* Successor error bounds reinitialisation */
-		PEER_ERROR(state)->cumsum_hwin = 0;
-		PEER_ERROR(state)->sq_cumsum_hwin = 0;
-		PEER_ERROR(state)->nerror_hwin = 0;
+		ALGO_ERROR(state)->cumsum_hwin = 0;
+		ALGO_ERROR(state)->sq_cumsum_hwin = 0;
+		ALGO_ERROR(state)->nerror_hwin = 0;
 
 		verbose(VERB_CONTROL, "Adjusting history window before normal "
 				"processing of stamp %lu. FIRST 1/2 window reached", state->stamp_i);
@@ -2346,12 +2346,12 @@ process_bidir_stamp(struct radclock_handle *handle, struct bidir_algostate *stat
 		copystamp(stamp, &state->next_pstamp);
 
 		/* Successor error bounds being adopted, then reset. */
-		PEER_ERROR(state)->cumsum 		= PEER_ERROR(state)->cumsum_hwin;
-		PEER_ERROR(state)->sq_cumsum	= PEER_ERROR(state)->sq_cumsum_hwin;
-		PEER_ERROR(state)->nerror 		= PEER_ERROR(state)->nerror_hwin;
-		PEER_ERROR(state)->cumsum_hwin 		= 0;
-		PEER_ERROR(state)->sq_cumsum_hwin	= 0;
-		PEER_ERROR(state)->nerror_hwin 		= 0;
+		ALGO_ERROR(state)->cumsum 		= ALGO_ERROR(state)->cumsum_hwin;
+		ALGO_ERROR(state)->sq_cumsum	= ALGO_ERROR(state)->sq_cumsum_hwin;
+		ALGO_ERROR(state)->nerror 		= ALGO_ERROR(state)->nerror_hwin;
+		ALGO_ERROR(state)->cumsum_hwin 		= 0;
+		ALGO_ERROR(state)->sq_cumsum_hwin	= 0;
+		ALGO_ERROR(state)->nerror_hwin 		= 0;
 
 		verbose(VERB_CONTROL, "Total number of sanity events:  phat: %u, plocal: %u, Offset: %u ",
 				state->phat_sanity_count, state->plocal_sanity_count, state->offset_sanity_count);
@@ -2491,19 +2491,19 @@ output_results:
 	 */
 	if (state->stamp_i > 1) {
 		//rad_data->ca_err			= state->minET;	// initialize to this stamp
-		error_bound = PEER_ERROR(state)->Ebound_min_last +
+		error_bound = ALGO_ERROR(state)->Ebound_min_last +
 			state->phat * (double)(stamp->Tf - state->thetastamp.Tf) * phyparam->RateErrBOUND;
 		
-		/* Update _hwin members of  state->peer_err  */
-		PEER_ERROR(state)->cumsum_hwin += error_bound;
-		PEER_ERROR(state)->sq_cumsum_hwin += error_bound * error_bound;
-		PEER_ERROR(state)->nerror_hwin += 1;
+		/* Update _hwin members of  state->algo_err  */
+		ALGO_ERROR(state)->cumsum_hwin += error_bound;
+		ALGO_ERROR(state)->sq_cumsum_hwin += error_bound * error_bound;
+		ALGO_ERROR(state)->nerror_hwin += 1;
 
-		/* Update remaining members of  state->peer_err  */
-		PEER_ERROR(state)->error_bound = error_bound;
-		PEER_ERROR(state)->cumsum += error_bound;
-		PEER_ERROR(state)->sq_cumsum += error_bound * error_bound;
-		PEER_ERROR(state)->nerror += 1;
+		/* Update remaining members of  state->algo_err  */
+		ALGO_ERROR(state)->error_bound = error_bound;
+		ALGO_ERROR(state)->cumsum += error_bound;
+		ALGO_ERROR(state)->sq_cumsum += error_bound * error_bound;
+		ALGO_ERROR(state)->nerror += 1;
 	}
 
 

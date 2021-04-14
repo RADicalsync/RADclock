@@ -190,8 +190,8 @@ main (int argc, char *argv[])
 	FILE * output_fd = NULL;
 	char * filtstr = NULL;
 
-	/* SHM */
-	//struct radclock_shm *shm;
+	/* SMS */
+	//struct radclock_sms *sms;
 
 	/* FFdata */
 	//struct ffclock_estimate cest;
