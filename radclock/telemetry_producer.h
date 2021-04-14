@@ -68,7 +68,9 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
         }
 
         // If clock underlying asymmetry has changed 
-        struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];
+        // struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];
+        struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
+
         double uA = state->Asymhat; 
         if (handle->telemetry_data.prior_data[sID].prior_uA != uA)
         {
@@ -125,7 +127,8 @@ push_telemetry(struct radclock_handle *handle, int sID)
         
         if (is_sID_ICN)
         {
-            struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];
+            struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
+            // struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];
             double uA = state->Asymhat; 
 
             handle->telemetry_data.prior_data[sID].prior_status = handle->rad_data[sID].status;
@@ -175,7 +178,9 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
             int time_server_id = handle->conf->time_server_icn_indexes[i];
             unsigned int status_word = handle->rad_data[time_server_id].status;
             int ICN_id = handle->conf->time_server_icn_mapping[time_server_id];
-            struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[time_server_id];
+            // struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[time_server_id];
+            struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[time_server_id];
+
             double uA = state->Asymhat; // (float)(rand()%1000) * 0.001; 
             double err_bound = handle->rad_data[time_server_id].ca_err;
 

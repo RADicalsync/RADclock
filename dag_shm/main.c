@@ -49,8 +49,8 @@ void verbose(int facility, const char* format, ...)
 }
 
 struct dag_cap {
-	long double cn_send_xmit_dag_ts;
-	long double cn_rcv_xmit_dag_ts;
+	long double Tout;
+	long double Tin;
 	l_fp server_reply_org;
 
 	// IP address of the NTP reply server
@@ -320,17 +320,17 @@ format_ntp (dag_record_t *header, void *payload, struct stats_t *stats, struct p
 		{
 			if (strcmp(src, cn_ip) == 0)
 			{
-				long double cn_send_xmit_dag_ts = ts.tv_sec + ts.tv_nsec*1e-9;
+				long double Tout = ts.tv_sec + ts.tv_nsec*1e-9;
 				cap_list->caps[cap_list->write_id].key_id = key_id;
 				cap_list->caps[cap_list->write_id].cap.server_reply_org = ntp->xmt;
-				cap_list->caps[cap_list->write_id].cap.cn_send_xmit_dag_ts = cn_send_xmit_dag_ts;
+				cap_list->caps[cap_list->write_id].cap.Tout = Tout;
 				cap_list->write_id = (cap_list->write_id + 1) % cap_list->size;
 			}
 			else
 			{
-				long double cn_rcv_xmit_dag_ts = 0;
-				cn_rcv_xmit_dag_ts += ((long double)ts.tv_nsec) * 1e-9;
-				cn_rcv_xmit_dag_ts += (long double)ts.tv_sec;
+				long double Tin = 0;
+				Tin += ((long double)ts.tv_nsec) * 1e-9;
+				Tin += (long double)ts.tv_sec;
 				int match_id = -1;
 				for (int i =0; i < cap_list->size && match_id == -1; i++)
 				{
@@ -340,7 +340,7 @@ format_ntp (dag_record_t *header, void *payload, struct stats_t *stats, struct p
 				}
 				if (match_id != -1)
 				{
-					cap_list->caps[match_id].cap.cn_rcv_xmit_dag_ts = cn_rcv_xmit_dag_ts;
+					cap_list->caps[match_id].cap.Tin = Tin;
 					cap_list->caps[match_id].cap.server_reply_org = ntp->org;
 					memcpy(&cap_list->caps[match_id].cap.ip, &hdr_ip->ip_src, sizeof(cap_list->caps[match_id].cap.ip));
 
@@ -352,12 +352,12 @@ format_ntp (dag_record_t *header, void *payload, struct stats_t *stats, struct p
 						(struct sockaddr *) &(s_to), sizeof(struct sockaddr_in));
 					}
 					
-					printf("%d: (%ld.%09ld %.09Lf) %d\n\n", match_id, ts.tv_sec, ts.tv_nsec, cn_rcv_xmit_dag_ts, ntohs(hdr_udp->uh_ulen));
+					printf("%d: (%ld.%09ld %.09Lf) %d\n\n", match_id, ts.tv_sec, ts.tv_nsec, Tin, ntohs(hdr_udp->uh_ulen));
 					
 					// long double org_ts = NTPtime_to_UTCld(ntp->org);
 					// long double xmt_ts = NTPtime_to_UTCld(ntp->xmt);
 					// long double rec_ts = NTPtime_to_UTCld(ntp->rec);
-					// printf("%d: (%ld.%09ld %.09Lf) %d %s %s %Lf %Lf %Lf %Lf\n\n", match_id, ts.tv_sec, ts.tv_nsec, cn_rcv_xmit_dag_ts, port, src, dst, org_ts, rec_ts, xmt_ts, reftime_ts );
+					// printf("%d: (%ld.%09ld %.09Lf) %d %s %s %Lf %Lf %Lf %Lf\n\n", match_id, ts.tv_sec, ts.tv_nsec, Tin, port, src, dst, org_ts, rec_ts, xmt_ts, reftime_ts );
 					memset(&cap_list->caps[match_id].cap.server_reply_org, 0 ,sizeof(ntp->org));
 				}
 				else
