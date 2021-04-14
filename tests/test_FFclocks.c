@@ -215,8 +215,8 @@ main (int argc, char *argv[])
 	FILE * output_fd = NULL;
 	char * filtstr = NULL;
 
-	/* SHM */
-	struct radclock_shm *shm;
+	/* SMS */
+	struct radclock_sms *sms;
 	vcounter_t RADgen = 0;
 	unsigned int gen = 0;
 
@@ -289,7 +289,7 @@ main (int argc, char *argv[])
 		return -1;
 	}
 	printf("------------------- Initializing your radclock  ----------------\n");
-	radclock_init(clock);   // sets clock->ipc_shm  here, but never again, if dies?  can refresh? test run PID ??
+	radclock_init(clock);   // sets clock->ipc_sms  here, but never again, if dies?  can refresh? test run PID ??
 	radclock_set_local_period_mode(clock, &lpm);
 	printf("----------------------------------------------------------------\n");
 
@@ -361,13 +361,13 @@ main (int argc, char *argv[])
 		get_kernel_ffclock(clock, &cest);
 		FFgen = cest.update_ffcount;
 		
-		/* Quickly check the current RADdata generation within the SHM */
-		shm = (struct radclock_shm *)clock->ipc_shm;
-		if (shm) {
-			RADgen = SHM_DATA(shm)->last_changed;
-			gen = shm->gen;
+		/* Quickly check the current RADdata generation within the SMS */
+		sms = (struct radclock_sms *)clock->ipc_sms;
+		if (sms) {
+			RADgen = SMS_DATA(sms)->last_changed;
+			gen = sms->gen;
 		} else
-			fprintf(stderr," Warning, SHM is down.\n");
+			fprintf(stderr," Warning, SMS is down.\n");
 			
 		
 		if (ret) {
@@ -397,9 +397,9 @@ main (int argc, char *argv[])
 		/* Generation checks and fix */
 		gen_diff   = (signed long)(FFgen - RADgen);	// check that the two versions of RADdata nominally used agree
 		update_gap = (signed long)(vcount - FFgen);	// gap between the vcount and the Current FFdata
-		update_gap_sec = update_gap * SHM_DATA(shm)->phat;		// value in [sec]
+		update_gap_sec = update_gap * SMS_DATA(sms)->phat;		// value in [sec]
 //		if (update_gap<0)	// FFdata has been updated since the version used to create tv and vcount
-//			read_RADabs_UTC(SHM_DATAold(shm), &vcount, &currtime, PLOCAL_ACTIVE);  // overwrite from old SHM to find a match
+//			read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);  // overwrite from old SMS to find a match
 				
 
 		/* Convert tv to double for comparison */
@@ -408,17 +408,17 @@ main (int argc, char *argv[])
 		frac = cdiff - (int) cdiff;
 		
 		/* Output the kernel's absolute timestamp, the raw, radclocks's abs time */
-		fprintf(output_fd, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) (shmgen: %u) \n",
+		fprintf(output_fd, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) (smsgen: %u) \n",
 							(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
 							tv.tv_sec, (long long unsigned)tv.tv_usec,
 							currtime, cdiff, 1e6*frac, 1e9*frac,
 							gen);
 //		fprintf(output_fd,  "%ld.%.6d %llu %.9Lf\n", tv.tv_sec, (int)tv.tv_usec,
 //				(long long unsigned)vcount, currtime);
-			/* Repeat with old SHM to see if get a match there if spot a problem */
+			/* Repeat with old SMS to see if get a match there if spot a problem */
 		if ( fabs(1e9*frac) > 1 ) {
 			count_err_ns++;
-			read_RADabs_UTC(SHM_DATAold(shm), &vcount, &currtime, PLOCAL_ACTIVE);
+			read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
 			cdiff = (currtime - tvdouble);
 			frac = cdiff - (int) cdiff;
 			fprintf(output_fd, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) OLDCHECK\n",
@@ -431,15 +431,15 @@ main (int argc, char *argv[])
 
 		
 		if (verbose_flag) {
-			fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) (shmgen: %u) \n",
+			fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) (smsgen: %u) \n",
 								(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
 								tv.tv_sec, (long long unsigned)tv.tv_usec,
 								currtime, cdiff, 1e6*frac, 1e9*frac,
 								gen);
-			/* Repeat with old SHM to see if get a match there if spot a problem */
+			/* Repeat with old SMS to see if get a match there if spot a problem */
 			if ( fabs(1e9*frac) > 1 ) {
 				count_err_ns++;
-				read_RADabs_UTC(SHM_DATAold(shm), &vcount, &currtime, PLOCAL_ACTIVE);
+				read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
 				cdiff = (currtime - tvdouble);
 				frac = cdiff - (int) cdiff;
 				fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) \n",

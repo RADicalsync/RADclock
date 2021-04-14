@@ -200,14 +200,14 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	if (HAS_UPDATE(param_mask, UPDMASK_SERVER_IPC)) {
 		switch (conf->server_ipc) {
 		case BOOL_ON:
-			err = shm_init_writer(handle->clock);
+			err = sms_init_writer(handle->clock);
 			if (err)
 				return (1);
 			verbose(LOG_NOTICE, " IPC Shared Memory ready and updating");
 			break;
 		case BOOL_OFF:
 			verbose(LOG_NOTICE, " IPC Shared Memory no longer updating");
-			shm_detach(handle->clock);		// detach segment, but do not destroy!
+			sms_detach(handle->clock);		// detach segment, but do not destroy!
 			break;
 		}
 	}
@@ -622,10 +622,10 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->ieee1588eq_queue->rdb_end = NULL;
 
 	/* Handle structure for per-server data, and generic stamp queue */
-	struct bidir_peers *peers;
-	peers = malloc(sizeof *peers);
-	handle->peers = (void*) peers;	// enduring copy of ptr to peers data
-	init_peer_stamp_queue(peers);
+	struct bidir_algodata *algodata;
+	algodata = malloc(sizeof *algodata);
+	handle->algodata = (void*) algodata;	// enduring copy of ptr to algodata data
+	init_stamp_queue(algodata);
 
 	/* Initialize all servers to trusted. */
 	handle->servertrust = 0;
@@ -639,7 +639,7 @@ static void
 init_mRADclocks(struct radclock_handle *handle, int ns)
 {
 	int s;
-	struct bidir_peers *peers;
+	struct bidir_algodata *algodata;
 
 	handle->nservers = ns;	// just in case, should already be true
 	
@@ -662,12 +662,12 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 		SNTP_SERVER(handle,s)->burst = NTP_BURST;	// burst at startup, like ntpd
 		SNTP_SERVER(handle,s)->stratum = STRATUM_UNSPEC;
 	}
-	
-	/* Initialize remaining members of peers */
-	peers = handle->peers;
-	peers->laststamp = calloc(ns,sizeof(struct stamp_t));
-	peers->output = calloc(ns,sizeof(struct bidir_output));
-	peers->state = calloc(ns,sizeof(struct bidir_algostate));
+
+	/* Initialize remaining members of algodata */
+	algodata = handle->algodata;
+	algodata->laststamp = calloc(ns,sizeof(struct stamp_t));
+	algodata->output = calloc(ns,sizeof(struct bidir_algooutput));
+	algodata->state = calloc(ns,sizeof(struct bidir_algostate));
 
 
 
@@ -863,7 +863,7 @@ init_handle(struct radclock_handle *handle)
 
 		/* Initialise IPC shared memory segment */
 		if (handle->conf->server_ipc == BOOL_ON) {
-			err = shm_init_writer(handle->clock);
+			err = sms_init_writer(handle->clock);
 			if (err)
 				return (1);
 			verbose(LOG_NOTICE, "IPC Shared Memory ready");
@@ -1436,7 +1436,7 @@ main(int argc, char *argv[])
 		}
 	}
 
-	/* Create and initialize the source, create SHM */
+	/* Create and initialize the source, create SMS */
 	err = init_handle(handle);
 	if (err) {
 		verbose(LOG_ERR, "Radclock process specific init failed.");
@@ -1514,7 +1514,7 @@ main(int argc, char *argv[])
 
 	/* Detach IPC shared memory if were running as IPC server. */
 	if (handle->conf->server_ipc == BOOL_ON)
-		shm_detach(handle->clock);
+		sms_detach(handle->clock);
 
 	/* Free the clock handle members and itself. */
 	free(handle->conf->time_server);
@@ -1536,10 +1536,10 @@ main(int argc, char *argv[])
 	pthread_mutex_destroy(&(handle->ieee1588eq_queue->rdb_mutex));
 	free(handle->pcap_queue);
 	free(handle->ieee1588eq_queue);
-	free(((struct bidir_peers*)handle->peers)->laststamp);
-	free(((struct bidir_peers*)handle->peers)->output);
-	free(((struct bidir_peers*)handle->peers)->state);
-	destroy_peer_stamp_queue((struct bidir_peers*)handle->peers);
+	free(((struct bidir_algodata*)handle->algodata)->laststamp);
+	free(((struct bidir_algodata*)handle->algodata)->output);
+	free(((struct bidir_algodata*)handle->algodata)->state);
+	destroy_stamp_queue((struct bidir_algodata*)handle->algodata);
 	free(handle);
 	handle = NULL;
 	clock_handle = NULL;

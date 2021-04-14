@@ -363,7 +363,7 @@ ntp_client(struct radclock_handle *handle)
 	struct radclock_ntp_client	*client;
 	struct radclock_ntp_server	*server;
 	timer_t *timerid;
-	struct bidir_peers *peers;
+	struct bidir_algodata *algodata;
 	struct bidir_algostate *state;
 	struct radclock_error *rad_error;
 	float poll_period;
@@ -386,7 +386,7 @@ ntp_client(struct radclock_handle *handle)
 
 	socklen = sizeof(struct sockaddr_in);
 	tvlen = (socklen_t) sizeof(struct timeval);
-	peers = handle->peers;
+	algodata = handle->algodata;
 
 	/* Sleep until alarm for next grid point goes off */
 	pthread_mutex_lock(&alarm_mutex);
@@ -419,7 +419,7 @@ ntp_client(struct radclock_handle *handle)
 	timerid = &ntpclient_timerid[sID];
 	timeout = ntpclient_timeout[sID];
 	rad_error = &handle->rad_error[sID];
-	state = &peers->state[sID];
+	state = &algodata->state[sID];
 	poll_period = (float) handle->conf->poll_period;	// upgrade after
 	
 	/* Update adjusted_period [ the actual period used by timers ]
@@ -561,7 +561,7 @@ ntp_client(struct radclock_handle *handle)
 	 * the grid points are distant from each other and interference is not an
 	 * issue.
 	 */
-	if (peers && state->stamp_i>0) {
+	if (algodata && state->stamp_i>0) {
 		newtimeout = MIN(1, 2*rad_error->min_RTT);
 		if (newtimeout * 1e6 < NTP_MIN_SO_TIMEOUT)
 			newtimeout = NTP_MIN_SO_TIMEOUT * 1e-6;

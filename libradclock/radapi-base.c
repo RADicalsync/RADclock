@@ -62,9 +62,9 @@ radclock_create(void)
 	clock->local_period_mode = RADCLOCK_LOCAL_PERIOD_ON;
 	clock->kernel_version = -1;
 
-	/* SHM stuff */
-	clock->ipc_shm_id = 0;
-	clock->ipc_shm = NULL;
+	/* SMS stuff */
+	clock->ipc_sms_id = 0;
+	clock->ipc_sms = NULL;
 
 // TODO present 3 function pointers instead?
 	/* Feed-forward clock kernel interface */
@@ -85,28 +85,28 @@ radclock_create(void)
  * estimates.
  */
 int
-shm_init_reader(struct radclock *clock)
+sms_init_reader(struct radclock *clock)
 {
-	key_t shm_key;
+	key_t sms_key;
 
-	logger(RADLOG_ERR, "Enter init_shm_reader");
+	logger(RADLOG_ERR, "Enter init_sms_reader");
 
-	shm_key = ftok(IPC_SHARED_MEMORY, 'a');
-	if (shm_key == -1) {
+	sms_key = ftok(IPC_SHARED_MEMORY, 'a');
+	if (sms_key == -1) {
 		logger(RADLOG_ERR, "ftok: %s", strerror(errno));
 		return (1);
 	}
 
-	clock->ipc_shm_id = shmget(shm_key, sizeof(struct radclock_shm), 0);
-	if (clock->ipc_shm_id < 0) {
+	clock->ipc_sms_id = shmget(sms_key, sizeof(struct radclock_sms), 0);
+	if (clock->ipc_sms_id < 0) {
 		logger(RADLOG_ERR, "shmget: %s", strerror(errno));
 		return (1);
 	}
 
-	clock->ipc_shm = shmat(clock->ipc_shm_id, NULL, SHM_RDONLY);
-	if (clock->ipc_shm == (void *) -1) {
+	clock->ipc_sms = shmat(clock->ipc_sms_id, NULL, SHM_RDONLY);
+	if (clock->ipc_sms == (void *) -1) {
 		logger(RADLOG_ERR, "shmat: %s", strerror(errno));
-		clock->ipc_shm = NULL;
+		clock->ipc_sms = NULL;
 		return (1);
 	}
 
@@ -119,14 +119,14 @@ shm_init_reader(struct radclock *clock)
  * processes.
  */
 int
-shm_init_writer(struct radclock *clock)
+sms_init_writer(struct radclock *clock)
 {
-	struct shmid_ds shm_ctl;
-	struct radclock_shm *shm;
+	struct shmid_ds sms_ctl;
+	struct radclock_sms *sms;
 	struct stat sb;
-	key_t shm_key;
+	key_t sms_key;
 	unsigned int perm_flags;
-	int shm_fd, is_new_shm;
+	int sms_fd, is_new_sms;
 
 	if (stat(RADCLOCK_RUN_DIRECTORY, &sb) < 0) {
 		if (mkdir(RADCLOCK_RUN_DIRECTORY, 0755) < 0) {
@@ -136,13 +136,13 @@ shm_init_writer(struct radclock *clock)
 	}
 
 	/*
-	 * Create shm key (file created if it does not already exist)
+	 * Create sms key (file created if it does not already exist)
 	 */
-	shm_fd = open(IPC_SHARED_MEMORY, O_RDWR|O_CREAT, 0644);
-	close(shm_fd);
+	sms_fd = open(IPC_SHARED_MEMORY, O_RDWR|O_CREAT, 0644);
+	close(sms_fd);
 
-	shm_key = ftok(IPC_SHARED_MEMORY, 'a');
-	if (shm_key == -1) {
+	sms_key = ftok(IPC_SHARED_MEMORY, 'a');
+	if (sms_key == -1) {
 		logger(RADLOG_ERR, "ftok: %s", strerror(errno));
 		return (1);
 	}
@@ -155,19 +155,19 @@ shm_init_writer(struct radclock *clock)
 	 * updated it, and if that guy is still alive. Hard to do here, use pid
 	 * lockfile instead.
 	 */
-	is_new_shm = 0;
+	is_new_sms = 0;
 	perm_flags = SHM_R | SHM_W | (SHM_R>>3) | (SHM_R>>6);
-	clock->ipc_shm_id = shmget(shm_key, sizeof(struct radclock_shm),
+	clock->ipc_sms_id = shmget(sms_key, sizeof(struct radclock_sms),
 			IPC_CREAT | IPC_EXCL | perm_flags);
-	if (clock->ipc_shm_id < 0) {
+	if (clock->ipc_sms_id < 0) {
 		switch(errno) {
 		case (EEXIST):
-			clock->ipc_shm_id = shmget(shm_key, sizeof(struct radclock_shm), 0);
-			shmctl(clock->ipc_shm_id, IPC_STAT, &shm_ctl);
-			shm_ctl.shm_perm.mode |= perm_flags;
-			shmctl(clock->ipc_shm_id, IPC_SET, &shm_ctl);
+			clock->ipc_sms_id = shmget(sms_key, sizeof(struct radclock_sms), 0);
+			shmctl(clock->ipc_sms_id, IPC_STAT, &sms_ctl);
+			sms_ctl.shm_perm.mode |= perm_flags;
+			shmctl(clock->ipc_sms_id, IPC_SET, &sms_ctl);
 			logger(RADLOG_NOTICE, "IPC Shared Memory exists with %u processes "
-					"attached", shm_ctl.shm_nattch);
+					"attached", sms_ctl.shm_nattch);
 			break;
 
 		default:
@@ -176,30 +176,30 @@ shm_init_writer(struct radclock *clock)
 		}
 	}
 	else
-		is_new_shm = 1;
+		is_new_sms = 1;
 
 	/*
 	 * Attach the process to the memory segment. Round it to kernel page size.
 	 */
-	clock->ipc_shm = shmat(clock->ipc_shm_id, (void *)0, 0);
-	if (clock->ipc_shm == (char *) -1) {
+	clock->ipc_sms = shmat(clock->ipc_sms_id, (void *)0, 0);
+	if (clock->ipc_sms == (char *) -1) {
 		logger(RADLOG_ERR, "shmat failed: %s\n", strerror(errno));
 		return (1);
 	}
-	shm = (struct radclock_shm *) clock->ipc_shm;
+	sms = (struct radclock_sms *) clock->ipc_sms;
 
 	/* Zero the segment and init the buffer pointers if new. */
-	if (is_new_shm) {
-		memset(shm, 0, sizeof(struct radclock_shm));
-		shm->data_off = offsetof(struct radclock_shm, bufdata);
-		shm->data_off_old = shm->data_off + sizeof(struct radclock_data);
-		shm->error_off = offsetof(struct radclock_shm, buferr);
-		shm->error_off_old = shm->error_off + sizeof(struct radclock_error);
-		shm->gen = 1;
+	if (is_new_sms) {
+		memset(sms, 0, sizeof(struct radclock_sms));
+		sms->data_off = offsetof(struct radclock_sms, bufdata);
+		sms->data_off_old = sms->data_off + sizeof(struct radclock_data);
+		sms->error_off = offsetof(struct radclock_sms, buferr);
+		sms->error_off_old = sms->error_off + sizeof(struct radclock_error);
+		sms->gen = 1;
 	}
 
 	// TODO: need to init version number, clockid, valid / invalid status.
-	shm->version = 1;
+	sms->version = 1;
 
 	return (0);
 }
@@ -213,14 +213,14 @@ shm_init_writer(struct radclock *clock)
  * Best is to have the shared memory created once, reused and never deleted.
  */
 int
-shm_detach(struct radclock *clock)
+sms_detach(struct radclock *clock)
 {
 	int err;
 
 /* TODO: cut back verbosity and convert to logger after testing */
-	fprintf(stdout, "Trying to detach SHM ...");
-	if (clock->ipc_shm != NULL) {
-		err = shmdt(clock->ipc_shm);
+	fprintf(stdout, "Trying to detach SMS ...");
+	if (clock->ipc_sms != NULL) {
+		err = shmdt(clock->ipc_sms);
 		if ( err == -1 ) {
 			logger(RADLOG_ERR, "shmdt failed: %s\n", strerror(errno));
 			return (1);
@@ -229,7 +229,7 @@ shm_detach(struct radclock *clock)
 	} else
 			fprintf(stdout, " nothing there to detach.\n");
 	
-	/* shmctl(handle->ipc_shm_id, IPC_RMID, NULL); */
+	/* shmctl(handle->ipc_sms_id, IPC_RMID, NULL); */
 	return (0);
 }
 
@@ -257,8 +257,8 @@ radclock_init(struct radclock *clock)
 	if (err < 0)
 		return (-1);
 
-	/* SHM on library side */
-	err = shm_init_reader(clock);
+	/* SMS on library side */
+	err = sms_init_reader(clock);
 	if (err)
 		return (-1);
 
@@ -270,7 +270,7 @@ void
 radclock_destroy(struct radclock *clock)
 {
 	/* Detach IPC shared memory */
-	shm_detach(clock);
+	sms_detach(clock);
 
 	/* Free the clock and set to NULL, useful for partner software */
 	free(clock);

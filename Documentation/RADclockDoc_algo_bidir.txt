@@ -15,7 +15,7 @@ Glossary:
  KV = Kernel Version  ( of the RADclock/FFclock modified kernel )
  IPC = Inter-Process Communication
  OS = Operating System
- SHM = SHared Memory
+ SMS = SHared Memory
  FF = FeedForward
  FFcounter = a FF compatible counter
  algo = algorithm, the RADclock clock synchronization algorithm
@@ -107,9 +107,9 @@ distinction clear.
 process_stamp(handle, peer)
 	get_next_stamp(handle, stamp_source, &stamp);
 	leap second processing
-	process_bidir_stamp(handle, peer, &stamp_noleap, ..)); // update native RADclock
+	RADalgo_bidir(handle, peer, &stamp_noleap, ..)); // update native RADclock
 	update handle->rad_data                 					// update UTC RADabsclock
-	push updates as needed (kernel, SHM..)
+	push updates as needed (kernel, SMS..)
 		  
 There are several issues involved in managing leap seconds, which is a vexed issue
 prone to errors, many servers running FB system clocks fail to get this right.
@@ -225,7 +225,7 @@ KV>2 FreeBSD only:
 radclock-private.h:  clock.hw_counter    member  // used in pthread_dataproc.c only
 
 pthread_raw.c:process_stamp
-  - is after process_bidir_stamp  which is unfortunate
+  - is after RADalgo_bidir  which is unfortunate
         (though insane_bidir_stamp will probably catch it )
 	   - should be the first thing to do, wont be able to trust stamp, and need
 		  to clear stamp queue of data that may never match.
@@ -716,7 +716,7 @@ thetahat:
 -----------------------------------------------------------------------------------------------------------------
 Algo descriptions:
 
-struct TSCclockdata process_bidir_stamp(struct bidir_ts_tuple *stamp, int poll_period, FILE *matout_fd, int sync_saved, int sig_plocal) 
+struct TSCclockdata RADalgo_bidir(struct bidir_ts_tuple *stamp, int poll_period, FILE *matout_fd, int sync_saved, int sig_plocal) 
 
 JOB: - processes a single stamp at a time
      - calculate new phat, C, thetahat candidates

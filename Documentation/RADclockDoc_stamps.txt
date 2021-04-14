@@ -463,8 +463,8 @@ struct stamp_queue {      // the queue itself, access to it and its size
 };
 #define MAX_STQ_SIZE	20
 
-The queue is created by init_peer_stamp_queue(&peer) and then passed to the handle
-handle->active_peer = (void*) &peer; .  Here peer is a (struct bidir_peer *)
+The queue is created by init_stamp_queue(&peer) and then passed to the handle
+handle->algodata = (void*) &peer; .  Here peer is a (struct bidir_algodata *)
 (defined in sync_algo.h) whose last member peer->q is a pointer to the queue.
 In the case of dead pcap input this occurs in main, and for live pcap
 in pthread_mgr.c:thread_data_processing(void *c_handle).

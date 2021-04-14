@@ -2,7 +2,7 @@
 
 # Enable easy adjustment of the ipc_server parameter within radclock.conf
 # It looks for the conf file in the currect dir and prompts otherwise
-#  SHMset on 		# set to on  (if it isn't already
-#  SHMset off 		# set to off (if it isn't already
-#  SHMset 		# toggle existing value 
+#  SMSset on 		# set to on  (if it isn't already
+#  SMSset off 		# set to off (if it isn't already
+#  SMSset 			# toggle existing value 
 confset_binary ipc_server $1

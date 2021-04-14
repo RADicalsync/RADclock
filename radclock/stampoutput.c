@@ -145,7 +145,7 @@ open_output_matlab(struct radclock_handle *handle)
 
 
 	/* Open output file to store synchronisation algorithm output (for Matlab,
-	 * written in process_bidir_stamp).
+	 * written in RADalgo_bidir).
 	 */
 	handle->matout_fd = fopen(handle->conf->clock_out_ascii,"w");
 	if (handle->matout_fd == NULL) {
@@ -195,7 +195,7 @@ close_output_matlab(struct radclock_handle *handle)
  */
 void
 print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
-	struct bidir_output *output, int sID)
+	struct bidir_algooutput *output, int sID)
 {
 	int err;
 	// XXX What is the reason for me to do it that way? Cannot remember.
