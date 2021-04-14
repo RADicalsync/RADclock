@@ -66,44 +66,7 @@ void print_telegraf(char * filename, const char * log_dir, const char * processe
 
     fread(&header, sizeof(header), 1, fp);
 
-    if (header.version == 1)
-    {
-        struct Radclock_Telemetry_v1 ocn_data;
-        // Offset by header bytes as they have already been read in
-        fread((void*)(&ocn_data)+sizeof(Radclock_Telemetry_Header), sizeof(ocn_data) - sizeof(Radclock_Telemetry_Header), 1, fp);
-
-        printf("clock_stats,ocn=%s ", hostname);
-
-        printf("picn=%d,",      ocn_data.PICN);
-        printf("asym=%d,",      ocn_data.asym);
-        printf("icn_count=%d,", ocn_data.ICN_Count);
-        printf("timestamp=%f",ocn_data.timestamp); // Timestamp in ms (cant pass in nanoseconds as far as I can tell)
-        printf(" %.0f\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp
-
-        // struct Radclock_Telemetry_ICN_v1 icn_data;
-    }
-    else if (header.version == 2)
-    {
-        struct Radclock_Telemetry_v2 ocn_data;
-        // Offset by header bytes as they have already been read in
-        fread((void*)(&ocn_data)+sizeof(Radclock_Telemetry_Header), sizeof(ocn_data) - sizeof(Radclock_Telemetry_Header), 1, fp);
-        struct Radclock_Telemetry_ICN_v2 icn_data;
-
-        fread((void*)(&icn_data), sizeof(icn_data), 1, fp);
-
-        printf("clock_stats,ocn=%s ", hostname);
-
-        printf("picn=%d,",      ocn_data.PICN);
-        printf("asym=%d,",      ocn_data.asym);
-        printf("icn_count=%d,", ocn_data.ICN_Count);
-        printf("ocn_clock_ts=%.09Lf,", ocn_data.timestamp); // Timestamp in seconds (cant pass in nanoseconds as far as I can tell)
-        printf("ocn_clock_ICN_1_uA=%.20f,", icn_data.uA); // uA
-        printf("ocn_clock_ICN_1_err_bound=%.20f", icn_data.err_bound); // err_bound
-        // todo fix so this isnt a decimal (seems some precision issues occur when doing the operation below)
-        printf(" %.0Lf\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp 
-
-    }
-    else if (header.version == 2)
+    if (header.version == 3)
     {
         struct Radclock_Telemetry_v3 ocn_data;
         // Offset by header bytes as they have already been read in
@@ -124,7 +87,27 @@ void print_telegraf(char * filename, const char * log_dir, const char * processe
         printf(" %.0Lf\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp 
 
     }
+    else if (header.version == 4)
+    {
+        struct Radclock_Telemetry_v4 ocn_data;
+        // Offset by header bytes as they have already been read in
+        fread((void*)(&ocn_data)+sizeof(Radclock_Telemetry_Header), sizeof(ocn_data) - sizeof(Radclock_Telemetry_Header), 1, fp);
+        struct Radclock_Telemetry_ICN_v4 icn_data;
 
+        fread((void*)(&icn_data), sizeof(icn_data), 1, fp);
+
+        printf("clock_stats,ocn=%s ", hostname);
+
+        printf("picn=%d,",      ocn_data.PICN);
+        // printf("asym=%d,",      ocn_data.asym);
+        printf("icn_count=%d,", ocn_data.ICN_Count);
+        printf("ocn_clock_ts=%.09Lf,", ocn_data.timestamp); // Timestamp in seconds (cant pass in nanoseconds as far as I can tell)
+        printf("ocn_clock_ICN_1_uA=%.20f,", icn_data.uA); // uA
+        printf("ocn_clock_ICN_1_err_bound=%.20f", icn_data.err_bound); // err_bound
+        // todo fix so this isnt a decimal (seems some precision issues occur when doing the operation below)
+        printf(" %.0Lf\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp 
+
+    }
     else
 
     {

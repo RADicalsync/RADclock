@@ -61,7 +61,6 @@
 #include "config_mgr.h"
 
 struct dag_cap {
-	long double cn_send_xmit_ts;
 	long double cn_send_xmit_dag_ts;
 	long double cn_rcv_xmit_dag_ts;
     l_fp server_reply_org;

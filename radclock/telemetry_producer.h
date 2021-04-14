@@ -53,10 +53,6 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
             return 1;
         }
 
-        // If clock underlying asymmetry has changed 
-        if (handle->telemetry_data.prior_uA != handle->rad_data[sID].uA)
-            return true;
-
         // If clock underlying asymmetry has changed
         if (handle->rad_data[sID].ca_err > TRIGGER_CA_ERR_THRESHOLD)
         {
@@ -70,6 +66,16 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
             verbose(LOG_NOTICE, "Telemetry Producer - Change in leap seconds %d");
             return 1;
         }
+
+        // If clock underlying asymmetry has changed 
+        struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];
+        double uA = state->Asymhat; 
+        if (handle->telemetry_data.prior_data[sID].prior_uA != uA)
+        {
+            verbose(LOG_NOTICE, "Telemetry Producer - Assymetry has changed");
+            return 1;
+        }
+
     }
 
     vcounter_t vcount;
@@ -160,7 +166,7 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
  //   }
 //    else
     {
-        *header_data = make_telemetry_packet(packetId, PICN, ICN_Count, timestamp, handle->accepted_public_ntp, handle->rejected_public_ntp, handle->inband_signal);
+        *header_data = make_telemetry_packet(packetId, PICN, ICN_Count, timestamp, handle->accepted_public_ntp, handle->rejected_public_ntp, handle->servertrust);
 
         // Write OCN specific telemetry packet to shared memory
         // bytes_written += ring_buffer_write(&header_data, sizeof(Radclock_Telemetry_Latest), shared_memory_handle, ring_write_pos);

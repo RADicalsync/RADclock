@@ -38,6 +38,7 @@
 #include <stdio.h>
 
 #include "verbose.h"
+
 #include "ntp_auth.h"
 
 /*

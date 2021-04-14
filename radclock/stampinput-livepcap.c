@@ -697,6 +697,7 @@ livepcapstamp_init(struct radclock_handle *handle, struct stampsource *source)
 	 * The requested mode can potentially be overridden by pktcap_get_tsmode .
 	 * TODO:  set pktcap_tsmode up as conf param, if need to change ever arises.
 	 */
+
 	err = pktcap_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
 			PKTCAP_TSMODE_FFNATIVECLOCK, 0);
 	if (err) {

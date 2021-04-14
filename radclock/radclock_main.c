@@ -577,17 +577,10 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->telemetry_data.prior_data = NULL;
 	handle->telemetry_data.prior_data_size = 0;
 
-	/* Set the inband signaling to initialise at 0 */
-	handle->inband_signal = 0;
-
 	handle->accepted_public_ntp = 0;
 	handle->rejected_public_ntp = 0;
 
 	// These values won't matter too much as the first push will set them
-	// handle->telemetry_data.prior_status = 0;
-	// handle->telemetry_data.prior_PICN = 0;
-	// handle->telemetry_data.prior_uA = 0;
-	// handle->telemetry_data.prior_leapsec_total = 0;
 	gettimeofday(&handle->telemetry_data.last_msg_time,NULL);
 
 	// Set id to 0 to flag initial blank stamp
