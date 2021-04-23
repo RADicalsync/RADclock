@@ -411,9 +411,11 @@ get_vcount(radpcap_packet_t *packet, vcounter_t *vcount) {
 }
 
 
-/* Routines to create and destroy a stamp queue. The queue is anchored
- * to a pointer within the passed argument, so storage for the
- * queue can be allocated and freed here.
+/* Routines to create and destroy a stamp matching queue.
+ * The queue is anchored to a pointer within the passed argument, so storage
+ * can be allocated and freed here.
+ * Hacknote: the same routines can be used for each of bidir_{algo,perf}data, as
+ * the queue member q is the first in each structure (same offset).
  */
 void
 init_stamp_queue(struct bidir_algodata *algodata)
@@ -454,6 +456,7 @@ destroy_stamp_queue(struct bidir_algodata *algodata)
  * If a matching halfstamp is found in the queue then the existing queue entry
  * will be completed in situ, else a new halfstamp will be inserted at head.
  * Duplicate halfstamps are not a problem, they are simply dropped with warning.
+ * The same is true of authenticated packets with unmatched keys.
  *
  * The stamp->id field as an (assumed) unique key. Since this is in fact a 
  * timestamp field, inserted c-halfstamps will very likely be in id-order as 
@@ -463,6 +466,14 @@ destroy_stamp_queue(struct bidir_algodata *algodata)
  * (most stale), this will not create any problems beyond the loss of a stamp.
  * Other kinds of halfstamp cleaning (based on temporal ordering, not id) are
  * dealt with in get_fullstamp_from_queue_andclean.
+ *
+ * Stamps from different servers are treated in the same way.
+ *
+ * The code handled two kinds of stamp matching:
+ *  RAD stamps:   with the client and server halfstamps as above
+ *  RADperf stamps: with a full RADstamp being the `client' halfstamp, matched
+ *                  to a DAG `server' halfstamp
+ * Slightly different rules on halfstamp testing apply.
  *
  * The prev direction is toward the queue head/start.
  * Return codes: err = 0 : halfstamp insertion resulted in fullstamp
@@ -475,7 +486,8 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	struct stamp_t *stamp;
 	int foundhalfstamptofill;
 
-	if ((mode != MODE_CLIENT) && (mode != MODE_SERVER)) {
+	if ((mode != MODE_CLIENT) && (mode != MODE_SERVER)
+	    && (mode != MODE_RAD) && (mode != MODE_DAG)) {
 		verbose(LOG_ERR, "Unsupported stamp matching mode: %d", mode);
 		return (-1);
 	}
@@ -485,24 +497,58 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	qel = q->start;
 	while (qel != NULL) {
 		stamp = &qel->stamp;
-		if (stamp->id == new->id) {
+		if (stamp->id == new->id) {		// this id in the queue already
+
+			verbose(VERB_DEBUG, "Found a matching id in the queue with mode = %d.", mode);
 			switch (mode) {
 				case MODE_CLIENT:
 					if (BST(stamp)->Ta != 0) {
-						verbose(LOG_WARNING, "Found duplicate NTP client request.");
+						verbose(LOG_WARNING, "Dropping duplicate NTP client request.");
+						return (1);
+					}
+					if (stamp->auth_key_id != new->auth_key_id) {
+						verbose(LOG_WARNING, "Dropping NTP request with mismatched auth keys %d - %d.",
+									stamp->auth_key_id, new->auth_key_id);
 						return (1);
 					}
 					break;
 
 				case MODE_SERVER:
 					if (BST(stamp)->Tf != 0) {
-						verbose(LOG_WARNING, "Found duplicate NTP server request.");
+						verbose(LOG_WARNING, "Dropping duplicate NTP server request.");
 						return (1);
 					}
-			}
-			if (stamp->auth_key_id != new->auth_key_id) {
-				verbose(LOG_WARNING, "Found NTP request with non matching auth keys %d - %d.", stamp->auth_key_id, new->auth_key_id);
-				return (1);
+					if (stamp->auth_key_id != new->auth_key_id) {
+						verbose(LOG_WARNING, "Dropping NTP response with mismatched auth keys %d - %d.",
+									stamp->auth_key_id, new->auth_key_id);
+						return (1);
+					}
+					break;
+
+				case MODE_RAD:
+					if (PST(stamp)->Ta != 0) {
+						verbose(LOG_WARNING, "Dropping duplicate RAD stamp.");
+						return (1);
+					}
+					if (strcmp(stamp->server_ipaddr, new->server_ipaddr) != 0) {
+						verbose(LOG_WARNING, "Dropping RAD msg with mismatched server IP %s - %s.",
+									stamp->server_ipaddr, new->server_ipaddr);
+						return (1);
+					}
+					break;
+
+				case MODE_DAG:
+					if (stamp->st.bstamp_p.Tout != 0) {
+						verbose(LOG_WARNING, "Dropping duplicate DAG stamp.");
+						return (1);
+					}
+					if (strcmp(stamp->server_ipaddr, new->server_ipaddr) != 0) {
+						verbose(LOG_WARNING, "Dropping DAG msg with mismatched server IP %s - %s.",
+									stamp->server_ipaddr, new->server_ipaddr);
+						return (1);
+					}
+					break;
+
 			}
 
 			foundhalfstamptofill = 1;		// qel will point to stamp to fill
@@ -534,23 +580,30 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			q->start->prev = qel;
 		q->start = qel;
 		q->size++;
+
+		/* Fill fields common to both halfstamps */
 		switch (mode) {
 			case MODE_CLIENT:
 			case MODE_SERVER:
-			qel->stamp.type = STAMP_NTP;
+				qel->stamp.type = STAMP_NTP;
+				break;
+			case MODE_RAD:
+			case MODE_DAG:
+				qel->stamp.type = STAMP_NTP_PERF;
+				break;
 		}
+		qel->stamp.id = new->id;
 	}
 
 	/* Selectively copy content of new halfstamp into stamp to fill (*qel). */
 	stamp = &qel->stamp;
 	switch (mode) {
 		case MODE_CLIENT:
-			stamp->id = new->id;
-			BST(stamp)->Ta = BST(new)->Ta;
 			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
+			stamp->auth_key_id = new->auth_key_id;
+			BST(stamp)->Ta = BST(new)->Ta;
 			break;
 		case MODE_SERVER:
-			stamp->id = new->id;
 			stamp->ttl = new->ttl;
 			stamp->refid = new->refid;
 			stamp->stratum = new->stratum;
@@ -560,6 +613,23 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			BST(stamp)->Tb = BST(new)->Tb;
 			BST(stamp)->Te = BST(new)->Te;
 			BST(stamp)->Tf = BST(new)->Tf;
+			break;
+		case MODE_RAD:	// the `client' side of a perf stamp match
+			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
+			stamp->auth_key_id = new->auth_key_id;
+			stamp->ttl = new->ttl;
+			stamp->refid = new->refid;
+			stamp->stratum = new->stratum;
+			stamp->LI = new->LI;
+			stamp->rootdelay = new->rootdelay;
+			stamp->rootdispersion = new->rootdispersion;
+			stamp->st.bstamp_p.bstamp = new->st.bstamp_p.bstamp;
+			break;
+		case MODE_DAG:	// the `server' side of a perf stamp match
+			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);// if orphaned, need IP to pass cleanout test
+			stamp->st.bstamp_p.Tout = new->st.bstamp_p.Tout;
+			stamp->st.bstamp_p.Tin  = new->st.bstamp_p.Tin;
+			break;
 	}
 
 	/* Print out queue from head to tail (oldest in queue at top of printout). */
@@ -568,10 +638,20 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 
 		while (qel != NULL) {
 			stamp = &qel->stamp;
-			verbose(VERB_DEBUG, "  stamp queue dump: %llu %.6Lf %.6Lf %llu %llu %s",
-				(long long unsigned) BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-				(long long unsigned) BST(stamp)->Tf, (long long unsigned) stamp->id,
+			if (stamp->type == STAMP_NTP) {
+				verbose(VERB_DEBUG, "  stamp queue dump: [%llu]   %llu %llu %.6Lf %.6Lf %s",
+				(long long unsigned) stamp->id,
+				(long long unsigned) BST(stamp)->Ta, (long long unsigned) BST(stamp)->Tf,
+				BST(stamp)->Tb, BST(stamp)->Te,
 				stamp->server_ipaddr);
+			} else	// STAMP_NTP_PERF
+				verbose(VERB_DEBUG, "  perf stamp queue dump: [%llu]   %llu %llu %.6Lf %.6Lf %.6Lf %.6Lf %s",
+				(long long unsigned) stamp->id,
+				(long long unsigned) PST(stamp)->Ta, (long long unsigned) PST(stamp)->Tf,
+				PST(stamp)->Tb, PST(stamp)->Te,
+				stamp->st.bstamp_p.Tout, stamp->st.bstamp_p.Tin,
+				stamp->server_ipaddr);
+
 			qel = qel->next;
 		}
 	}
@@ -925,6 +1005,13 @@ update_stamp_queue(struct radclock_handle *handle, struct stamp_queue *q, radpca
  * cleanout is only performed when the serverID matches that of the full stamp.
  * This check is dropped for s-halfstamps, as they shouldn't be there anyway.
  *
+ * The above applies to the matching performed for RAD stamps.
+ * For RADperf stamps it is not an abberation that the DAG `server' halfstamp may
+ * arrive before the RAD 'client' halfstamp, so the server ID match for cleaning
+ * is also performed for DAG halfstamps. However such halfstamps are also
+ * dropped if they are simply very old, because of the (remote) possibility that
+ * the IP stored in the DAG message is wrong (and thus would never match).
+ *
  * The prev direction is toward the queue head/start.
  * Error codes:  err = 0 : success, fullstamp found and returned
  *               err = 1 : failure, couldn't find fullstamp, nothing returned
@@ -937,7 +1024,7 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	vcounter_t	full_time=0;			// used to record stamp order
 	vcounter_t	Tc;
 	int startsize;
-	int c_halfstamp, s_halfstamp, fullstamp;
+	int c_halfstamp, s_halfstamp, fullstamp, dangerous;
 	int c_older, s_older;				// records if halfstamps older than full one
 
 	JDEBUG
@@ -948,16 +1035,18 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	} else
 	  	startsize = q->size;
 
-// TODO:  add a fast path here for simple common case of startsize =1 ?
-//   quick check if full as expected, if not error, else copy out and
-//   free and reset queue, return(0)
-
    /* Scan queue from tail to head to find and pass back oldest full stamp */
 	qel = q->end;
 	while (qel != NULL) {
 		st = &qel->stamp;
-		Tc = BST(st)->Ta;			// client side timestamp
-		fullstamp = (Tc != 0) && (BST(st)->Tf != 0);
+		if (stamp->type == STAMP_NTP) {
+			Tc = BST(st)->Ta;			// client side timestamp
+			fullstamp = (Tc != 0) && (BST(st)->Tf != 0);
+		} else {  // STAMP_NTP_PERF
+			Tc = PST(st)->Ta;			// `client side'
+			fullstamp = (Tc != 0) && (st->st.bstamp_p.Tout != 0);
+		}
+
 		if (fullstamp) {
 			if (full_time == 0 || Tc < full_time) {		// oldest so far
 				full_st = st;
@@ -970,7 +1059,7 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	if (full_time > 0)
 		memcpy(stamp, full_st, sizeof(struct stamp_t));
 	else {
-		verbose(LOG_WARNING, "Did not find any full stamp in stamp queue");
+		//verbose(LOG_WARNING, "Did not find any full stamp in stamp queue");
 		return (1);
 	}
 
@@ -979,15 +1068,37 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	qel = q->end;
 	while (qel != NULL) {
 		st = &qel->stamp;
-		c_halfstamp = (BST(st)->Ta != 0) && (BST(st)->Tf == 0);
-		s_halfstamp = (BST(st)->Ta == 0) && (BST(st)->Tf != 0);
-		if (s_halfstamp)
-			verbose(LOG_WARNING, "Found server halfstamp in stamp queue");
-		c_older = c_halfstamp && BST(st)->Ta < full_time;
-		s_older = s_halfstamp && BST(st)->Tf < BST(full_st)->Tf;
 
-		if (st == full_st || s_older ||
-			 (c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) )
+		/* Determine the scenario posed by this stamp */
+		if (stamp->type == STAMP_NTP) {
+			c_halfstamp = (BST(st)->Ta != 0) && (BST(st)->Tf == 0);
+			s_halfstamp = (BST(st)->Ta == 0) && (BST(st)->Tf != 0);
+			if (s_halfstamp)
+				verbose(LOG_WARNING, "Found server halfstamp in stamp queue");	// shouldn't happen
+			c_older = c_halfstamp && BST(st)->Ta < full_time;
+			s_older = s_halfstamp && BST(st)->Tf < BST(full_st)->Tf;
+			dangerous = s_older ||
+							(c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0);
+			if (dangerous)
+				verbose(VERB_DEBUG, "Clearing out dangerous halfstamp");
+		} else {  // STAMP_NTP_PERF
+			c_halfstamp = (PST(st)->Ta != 0) && (st->st.bstamp_p.Tout == 0);
+			s_halfstamp = (PST(st)->Ta == 0) && (st->st.bstamp_p.Tout != 0);
+			if (s_halfstamp)
+				verbose(VERB_DEBUG, "Found DAG halfstamp in stamp queue");	// unusual but not a failure
+			if (c_halfstamp)
+				verbose(VERB_DEBUG, "Found RAD halfstamp in stamp queue");	// debug info only
+			c_older = c_halfstamp && PST(st)->Ta < full_time;
+			s_older = s_halfstamp && st->st.bstamp_p.Tout < full_st->st.bstamp_p.Tout;
+			dangerous = (s_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) ||
+							(c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) ||
+							(s_older && st->st.bstamp_p.Tout < full_st->st.bstamp_p.Tout - 3); // very old
+			if (dangerous)
+				verbose(VERB_DEBUG, "Clearing out dangerous halfstamp");
+
+		}
+
+		if (st == full_st || dangerous )
 	   {	/* Remove *qel from queue, reset qel to continue loop */
 			if (qel==q->end) {
 				if (qel==q->start) {			// only 1 stamp in queue

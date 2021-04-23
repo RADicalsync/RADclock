@@ -39,6 +39,7 @@
 
 #include "radclock_daemon.h"
 #include "sync_history.h"
+#include "proto_ntp.h"
 #include "sync_algo.h"
 #include "config_mgr.h"
 #include "verbose.h"

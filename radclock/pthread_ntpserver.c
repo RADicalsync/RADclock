@@ -54,9 +54,9 @@
 #include "radclock_daemon.h"
 #include "verbose.h"
 #include "sync_history.h"
+#include "proto_ntp.h"
 #include "sync_algo.h"
 #include "pthread_mgr.h"
-#include "proto_ntp.h"
 #include "misc.h"
 #include "jdebug.h"
 #include "config_mgr.h"
@@ -123,13 +123,6 @@ thread_ntp_server(void *c_handle)
 	setsockopt(s_server, SOL_SOCKET, SO_RCVTIMEO, (void*)(&so_timeout),
 			sizeof(struct timeval));
 
-	/* Authentication data structures*/
-	unsigned char pck_dgst[20];
-	Sha sha;	
-
-	char ** key_data = handle->ntp_keys;
-	
-
 	/* Bind socket */
 	err = bind(s_server, (struct sockaddr *)&sin_server, sizeof(struct sockaddr_in));
 	if (err == -1) {
@@ -137,6 +130,11 @@ thread_ntp_server(void *c_handle)
 				strerror(errno));
 		pthread_exit(NULL);
 	}
+
+	/* Authentication data structures */
+	unsigned char pck_dgst[20];
+	Sha sha;
+	char ** key_data = handle->ntp_keys;
 
 	/* Create incoming and outgoing NTP packet bodies
 	 * We don't know what we are receiving (backward compatibility with exotic

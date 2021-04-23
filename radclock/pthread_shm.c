@@ -53,51 +53,14 @@
 #include "radclock_daemon.h"
 #include "verbose.h"
 #include "sync_history.h"
+#include "proto_ntp.h"
 #include "sync_algo.h"
 #include "pthread_mgr.h"
-#include "proto_ntp.h"
 #include "misc.h"
 #include "jdebug.h"
 #include "config_mgr.h"
 
-struct dag_cap {
-	long double cn_send_xmit_ts;
-	long double cn_send_xmit_dag_ts;
-	long double cn_rcv_xmit_dag_ts;
-    l_fp server_reply_org;
-    struct in_addr ip;
-};
-
-void 
-find_matching_shm_packets(struct dag_cap dag_msg, struct radclock_shm_ts * SHM_stamps, int queue_size)
-{
-    uint64_t id = ((uint64_t) ntohl(dag_msg.server_reply_org.l_int)<<32) |((uint64_t) ntohl(dag_msg.server_reply_org.l_fra));
-    char server_ipaddr[INET6_ADDRSTRLEN];
-    strcpy( server_ipaddr, inet_ntoa(dag_msg.ip));
-    // verbose(LOG_INFO, "Attempting match on ip %s", server_ipaddr);
-    for (int i =0; i < queue_size; i++)
-    {
-        // if (SHM_stamps[i].id == id && strcmp(server_ipaddr, SHM_stamps[i].server_ipaddr) != 0)
-        //     verbose(LOG_INFO, "Mis match on ip %s %s ", server_ipaddr, SHM_stamps[i].server_ipaddr);
-
-        if (SHM_stamps[i].id == id && strcmp(server_ipaddr, SHM_stamps[i].server_ipaddr) == 0)
-        {
-            // Make temp copy of variable incase it gets overriden while reading
-            struct radclock_shm_ts radclock_shm_ts_cpy = SHM_stamps[i];
-
-            // Double check that the data didn't change while making temp copy
-            if (radclock_shm_ts_cpy.id == id && strcmp(server_ipaddr, radclock_shm_ts_cpy.server_ipaddr) == 0)
-            {
-                // We are now working on data in local function scope so we don't need to worry about thread race conditions
-
-                verbose(LOG_INFO, "Found matching SHM packet from DAG capture %lu ICN:%d %s", radclock_shm_ts_cpy.id, radclock_shm_ts_cpy.icn_id, server_ipaddr);
-                return;
-            }
-        }
-    }
-    verbose(LOG_INFO, "No match found matching SHM packet from DAG capture %lu (%d)", SHM_stamps[0].id, queue_size);
-
-}
+#define DAG_PORT 5671
 
 /*
  * Integrated thread and thread-work function for SHM module
@@ -105,74 +68,246 @@ find_matching_shm_packets(struct dag_cap dag_msg, struct radclock_shm_ts * SHM_s
 void 
 thread_shm(void *c_handle)
 {
+	struct radclock_handle *handle = c_handle;
 
-    int socket_desc, c, new_socket;
-    struct sockaddr_in server, client;
-    struct dag_cap dag_msg;
-    struct radclock_handle *handle = (struct radclock_handle *) c_handle;
-	unsigned int socklen = sizeof(struct sockaddr_in);
+	/* Multiple server management */
+	int sID; 							// server ID of new stamp popped here
+	struct radclock_data *rad_data;
+	struct bidir_perfdata *perfdata = handle->perfdata;
+	struct bidir_perfoutput *output;
+	struct bidir_perfstate *state;
 
-    if (!handle->conf->is_cn)
-    {
-		verbose(LOG_WARNING, "SHM: Disabled - This radclock must set is_cn to on");
-        return;
-    }
+	/* Perf stamp matching related */
+	const int N = perfdata->RADBUFF_SIZE;
+	index_t  next0, r;			// unique RADperf buffer indices that never wrap
+	struct stamp_t copy;			// local copy of stamp from buffer
+	struct stamp_t DAGstamp, RADperfstamp;
+	struct stamp_t *st_r;
+	struct dag_cap dag_msg;
+	int last_next0;				// record RADbuffer write posn at start of emptying
+	int got_dag_msg;
+	int fullerr;
 
-    socket_desc = socket(AF_INET , SOCK_DGRAM , 0);
-    if (socket_desc == -1)
-	{
+	/* UNIX socket related */
+	int socket_desc, c;
+	struct sockaddr_in server, client;
+	socklen_t socklen = sizeof(struct sockaddr_in);
+	int num_bytes;
+
+
+	/* Deal with UNIX signal catching */
+	init_thread_signal_mgt();
+
+	/* Create the server socket and initialize to listen to the DAG host client */
+	socket_desc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (socket_desc == -1) {
+		perror("socket");
 		verbose(LOG_ERR, "SHM: Could not create socket");
-        return ;
+		pthread_exit(NULL);
 	}
-
-	/* 
-	 * Eliminates "ERROR on binding: Address already in use" error. 
-	 */
-	int optval = 1;
-	setsockopt(socket_desc, SOL_SOCKET, SO_REUSEADDR,
-		   (const void *)&optval, sizeof(int));
-
-    // int flags = fcntl(socket_desc, F_GETFL, 0) | O_NONBLOCK;
-    // if (fcntl(socket_desc, F_SETFL, flags) == 1)
-    // {
-	// 	printf("SHM: Failed to set socket to non blocking");
-    // }
-
-    //Prepare the sockaddr_in structure
-    bzero((char *)&server, sizeof(server));
+	memset((char *) &server, 0, sizeof(struct sockaddr_in));
 	server.sin_family = AF_INET;
 	server.sin_addr.s_addr = htonl(INADDR_ANY);
-	server.sin_port = htons( 5671 );
-	
-	//Bind
-	if( bind(socket_desc,(struct sockaddr *)&server , sizeof(server)) < 0)
-	{
-		verbose(LOG_ERR, "SHM: bind socket failed");
-        return ;
-	}
-    
-    struct sockaddr_in client_add;
-    while (1)
-    {
-        // Connected to DAG system
-        int ret = recvfrom(socket_desc,
-        &dag_msg, sizeof(struct dag_cap), MSG_WAITALL,
-        &client_add, &socklen);
-        if (ret == sizeof(struct dag_cap) )
-        {
-            if (strcmp(handle->conf->shm_dag_client, inet_ntoa(client_add.sin_addr)) == 0)
-                find_matching_shm_packets(dag_msg, handle->SHM_stamps, handle->SHM_stamp_write_id);
-            else
-            {
-                verbose(LOG_WARNING, "SHM packet received from unknown IP - Potiential attacker (%s)\n", inet_ntoa(client_add.sin_addr));    
-            }                    
-        }
-    }
+	server.sin_port = htons(DAG_PORT);
 
-    if (new_socket>=0)
-        close(new_socket);
-    if (socket_desc>=0)
-        close(socket_desc);
+	/* Eliminates "ERROR on binding: Address already in use" error */
+	//	int optval = 1;
+	//	setsockopt(socket_desc, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval, sizeof(int));
+
+	// int flags = fcntl(socket_desc, F_GETFL, 0) | O_NONBLOCK;
+	// if (fcntl(socket_desc, F_SETFL, flags) == 1)
+	// 	printf("SHM: Failed to set socket to non blocking");
+
+	/* Set a receive timeout */
+	struct timeval so_timeout;
+	so_timeout.tv_sec 	= 0;
+	so_timeout.tv_usec 	= 1e6 * 0.2;
+	setsockopt(socket_desc, SOL_SOCKET, SO_RCVTIMEO, (void*)(&so_timeout), sizeof(struct timeval));
+
+	/* Bind socket */
+	if ( bind(socket_desc, (struct sockaddr *)&server, sizeof(server)) == -1 ) {
+		verbose(LOG_ERR, "SHM: Socket bind() error. Killing thread: %s",
+				strerror(errno));
+		pthread_exit(NULL);
+	}
+
+
+	verbose(LOG_NOTICE, "SHM: now listening for DAG messages on port %d", DAG_PORT);
+	last_next0 = 0;	// enable dag msg code to see if anything new in buffer since last attempt.
+
+	while ((handle->pthread_flag_stop & PTH_SHM_CON_STOP) != PTH_SHM_CON_STOP)
+	{
+
+		/* Empty RAD halfstamp buffer into the perf matching queue
+		 * Each halfstamp successfully read is marked as read by zeroing the id.
+		 * Reads proceed backward in time until no unread stamps are left, or until
+		 * the (potentially advancing) write head position is encountered.
+		 * Checks are made to ensure data consistency, possible due to the unique
+		 * uint_64 indices (which don't wrap) of the write and read positions.
+		 * The buffer and stamp matching queue accept stamps from any clock/server.
+		 */
+		next0 = perfdata->RADbuff_next;
+		r = next0 - 1;
+		while ( next0 > 0 && perfdata->RADbuff_next - r < N ) {
+			st_r = &perfdata->RADbuff[r % N];	// pointer to stamp r in buffer
+			if ( st_r->id > 0) { 	// data present
+				memcpy(&copy, st_r, sizeof(struct stamp_t));
+				verbose(VERB_DEBUG, " RAD halfstamp found in buffer with id %llu, %d back from head at %llu",
+								copy.id, next0-r, next0 );
+				/* Check if copy can be trusted */
+				if ( perfdata->RADbuff_next - r >= N )	// not safe, stop here
+					break;
+
+				/* Mark as read. If this corrupts a stamp write in progress (super
+				 * unlikely event!), effect will be to lose all halfstamps <=r, but
+				 * the copy of the old value at r%N is still good. */
+				st_r->id = 0;
+				if ( perfdata->RADbuff_next - r >= N ) {
+					verbose(LOG_ERR, "SHM: halfstamp corrupted during RADstamp buffer"
+					" emptying, up to %d perf stamps may have been lost", next0 - r + 1);
+					insertandmatch_halfstamp(perfdata->q, &copy, MODE_RAD);
+					break;
+				}
+
+				verbose(VERB_DEBUG, " .. passed corruption checks, trying to insert "
+										  " copyinto match queue (%d)", next0-r );
+				insertandmatch_halfstamp(perfdata->q, &copy, MODE_RAD);
+				r -= 1;
+			} else
+				break;		// end of unread data younger than next0: emptying done
+		}
+
+
+		/* Make an attempt to obtain the next authoritative halfstamp.
+		 * A timeout is used to reduce processing, allow the thread kill signal to
+		 * be checked for, and to give the OS an opportunity to suspend the thread
+		 */
+		num_bytes = recvfrom(socket_desc, &dag_msg, sizeof(struct dag_cap),
+		  				0, (struct sockaddr*)&client, &socklen);
+
+		if ( num_bytes == (sizeof(struct dag_cap)) ) {
+			got_dag_msg = 1;
+			verbose(VERB_DEBUG, "DAG msg received");
+		} else {
+			got_dag_msg = 0;
+			if (num_bytes == -1)
+				verbose(VERB_DEBUG, "No DAG message received");
+			else
+				verbose(VERB_DEBUG, "Incomplete DAG message received (%d bytes)", num_bytes);
+		}
+
+
+		/* Fake DAG stamp creation for testing
+		 * Only create if
+		 *  - true DAG msg fails.
+		 *  - nothing new in RADbuffer since last draining (works best with single time_server)
+		 * Other test variables to remove: matchqueue_mutex, last_sID
+		 */
+		struct radclock_error *rad_error;
+		struct stamp_t RADstamp;
+		char server_ipaddr[INET6_ADDRSTRLEN];
+
+		if ( got_dag_msg == 0 && next0 != last_next0 )
+		{
+			/* Obtain the last accepted RADstamp using the last_sID hack */
+			RADstamp = ((struct bidir_algodata*)handle->algodata)->laststamp[handle->last_sID];
+			rad_error = &handle->rad_error[handle->last_sID];
+
+			/* Construct fake DAG message to match RADstamp */
+			/* id field uint64_t --> l_fp conversion */
+			dag_msg.server_reply_org.l_int = htonl(RADstamp.id >> 32);
+			dag_msg.server_reply_org.l_fra = htonl((RADstamp.id << 32) >> 32);
+			inet_aton(RADstamp.server_ipaddr, &dag_msg.ip);
+			dag_msg.Tout = RADstamp.st.bstamp.Tb - rad_error->min_RTT/2 + 0.3e-3;
+			dag_msg.Tin  = RADstamp.st.bstamp.Te + rad_error->min_RTT/2 - 0.3e-3;
+
+			got_dag_msg = 1;
+		}
+
+
+		/* Map DAG message into a perf stamp and insert in matchqueue */
+		if ( got_dag_msg == 1 ) {
+			memset(&DAGstamp, 0, sizeof(struct stamp_t));
+			DAGstamp.type = STAMP_NTP_PERF;
+			/* id field l_fp --> uint64_t conversion */
+			DAGstamp.id = ((uint64_t) ntohl(dag_msg.server_reply_org.l_int)) << 32;
+			DAGstamp.id |= (uint64_t) ntohl(dag_msg.server_reply_org.l_fra);
+			strcpy(DAGstamp.server_ipaddr, inet_ntoa(dag_msg.ip));
+			DAGstamp.st.bstamp_p.Tout = dag_msg.Tout;
+			DAGstamp.st.bstamp_p.Tin  = dag_msg.Tin;
+
+			/* Corrupt DAG halfstamp inputs for testing */
+			//if (next0 % 3 == 0)	DAGstamp.id +=1;  					// corrupt some ids
+			//if (next0 % 2 == 0)	DAGstamp.server_ipaddr[0] = "9";	// corrupt some IPs
+
+			/* Insert DAG perf halfstamp into the perf stamp matching queue */
+			//verbose(LOG_DEBUG, " ||| trying to insert a DAG halfstamp");
+			insertandmatch_halfstamp(perfdata->q, &DAGstamp, MODE_DAG);
+		}
+
+
+		/* Check if a fullstamp is available
+		 * Don't bother if there has been no new input since last time.
+		 * TODO: modify return codes of matching queue calls to keep track of the
+		 *       number of full stamps, so this will not be called if not needed */
+		if (got_dag_msg || next0 != last_next0) {
+			verbose(VERB_DEBUG, "New halfstamps inserted: checking for full perf stamp");
+			fullerr = get_fullstamp_from_queue_andclean(perfdata->q, &RADperfstamp);
+		} else
+			fullerr = 1;
+
+		last_next0 = next0;
+
+		/* If no stamp available, nothing to process, just look again */
+		if (fullerr == 1)
+			continue;
+
+
+	/* TODO: code below here factor into a  process_RADperfstamp(handle, &RADperfstamp);  ?? */
+
+		/* If a recognized stamp is returned, record the server it came from */
+		sID = serverIPtoID(handle, RADperfstamp.server_ipaddr);
+		if (sID < 0) {
+			verbose(LOG_WARNING, "Unrecognized perf stamp popped, skipping it");
+			continue;
+		} else
+			verbose(VERB_DEBUG, "Popped a RADperf stamp from server %d: [%llu]  %llu %llu %.6Lf %.6Lf ",
+			sID, (long long unsigned) RADperfstamp.id,
+			(long long unsigned) PST(&RADperfstamp)->Ta, (long long unsigned) PST(&RADperfstamp)->Tf,
+			PST(&RADstamp)->Tb, PST(&RADperfstamp)->Te);
+
+		/* Set pointers to data for this server */
+		rad_data  = &handle->rad_data[sID];
+		output = &perfdata->output[sID];
+		state  = &perfdata->state[sID];
+
+		/* Output a measure of clock error for this stamp by comparing midpoints
+		 *  clockerr = ( ( rAd(Ta) + rAd(Tf) ) - ( Tout + Tin ) / 2  */
+		struct bidir_stamp_perf *ptuple;
+		long double time;
+		double clockerr;
+
+		ptuple = &RADperfstamp.st.bstamp_p;
+		read_RADabs_UTC(rad_data, &ptuple->bstamp.Ta, &time, 1);
+		clockerr = time;
+		read_RADabs_UTC(rad_data, &ptuple->bstamp.Tf, &time, 1);
+		clockerr += time;
+		clockerr = ( clockerr - (ptuple->Tout + ptuple->Tin) ) / 2;
+		//output->RADerror = clockerr;
+		verbose(VERB_QUALITY, "Error in this rAdclock on this stamp is %4.2lf [ms]", 1000*clockerr);
+
+		/* Sent output->RADerror as SHM telemetry for clock sID */
+
+
+	}	// thread_stop while loop
+
+
+	if (socket_desc >= 0)
+		close(socket_desc);
+
+	/* Thread exit */
+	verbose(LOG_NOTICE, "Thread shm is terminating.");
+	pthread_exit(NULL);
 
 }
 

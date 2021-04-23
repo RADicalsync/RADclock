@@ -99,6 +99,7 @@ typedef enum {
 	STAMP_UNKNOWN,
 	STAMP_SPY,
 	STAMP_NTP,		/* Handed by libpcap */
+	STAMP_NTP_PERF,		// bidir_stamp augmented with authoritative timestamps
 	STAMP_PPS,
 } stamp_type_t;
 
@@ -108,13 +109,29 @@ struct unidir_stamp {
 	/* Need some time information of some kind */
 };
 
-
 struct bidir_stamp {
 	vcounter_t	Ta;		// vcount timestamp [counter value] of pkt leaving client
 	long double	Tb;		// timestamp [sec] of arrival at server
 	long double	Te;		// timestamp [sec] of departure from server
 	vcounter_t	Tf;		// vcount timestamp [counter value] of pkt returning to client
 };
+
+/* This structure augments bidir_stamp with additional authoritative timestamps
+ * enabling independent validation, or SHM.  The traditional example is external
+ * timestamps taken by a DAG card tapping packets passing in or out of the host.
+ */
+struct bidir_stamp_perf
+{
+	struct bidir_stamp	bstamp;
+	/* Authoritative client-side timestamps */
+	long double	Tout;		// [sec] outgoing packet (corresponding to Ta)
+	long double	Tin;		// [sec] incoming packet (corresponding to Tf)
+};
+
+
+ /*  TODO: relocate stamp_t, bidir_perfdata, bidir_stamp_perf,...  to other files,
+  *    stamp_t to some general stamp level, where ?
+  */
 
 
 // TODO this is very NTP centric
@@ -128,16 +145,32 @@ struct stamp_t {
 	uint32_t refid;
 	double rootdelay;
 	double rootdispersion;
-	int auth_key_id; // -1 for non auth ntp, otherwise valid key id
+	int auth_key_id;		// -1 for non auth NTP, otherwise valid key id
 	union stamp_u {
 		struct unidir_stamp ustamp;
 		struct bidir_stamp  bstamp;
+		struct bidir_stamp_perf	bstamp_p;
 	} st;
 };
 
 /* Here x is a pointer to a stamp_t, returns a pointer to the tuple */
 #define UST(x) (&((x)->st.ustamp))
 #define BST(x) (&((x)->st.bstamp))
+#define PST(x) (&((x)->st.bstamp_p.bstamp))
+
+/* Matching modes for perf stamps used in matching queue based on stamp_t :
+ *  MODE_RAD : RAD stamps                [ `client' side in matching ]
+ *  MODE_DAG : authoritative timestamps  [ `server' side in matching ]
+ */
+#define	MODE_RAD	(MODE_PRIVATE+1)	// ensures is above standard NTP modes
+#define	MODE_DAG (MODE_PRIVATE+2)
+
+struct dag_cap {
+	long double Tout;
+	long double Tin;
+	l_fp server_reply_org;
+	struct in_addr ip;
+};
 
 
 /* Holds all RADclock clock variables needed to be visible outside the algo.
@@ -316,20 +349,78 @@ struct bidir_algostate {
 
 
 
+/* Holds all RADclock perf variables needed to be visible outside the SHM thread */
+struct bidir_perfoutput {
+
+	/* Per-stamp output */
+	double auRTT;		// RTT measured using authoritative timestamps
+	double RADerror;
+	int	SA;			// ServerAnomaly: flag {0,1} = {no,detected} SA
+
+};
+
+struct bidir_perfstate {
+
+	index_t stamp_i;
+
+	struct bidir_stamp_perf stamp;	// previous input bidir_perf stamp (hence leap-free)
+
+	/* Histories */
+	history stamp_hist;
+
+	/* OWD */
+	double Dfhat;					// Estimate of minimal Df
+	double Dfhat_shift;			// sliding window estimate for upward level shift detection
+	double Dfhat_shift_thres;	// threshold in [s] for triggering upward shift detection
+	double Dbhat;					// Estimate of minimal Db
+	double Dbhat_shift;			// sliding window estimate for upward level shift detection
+	double Dbhat_shift_thres;	// threshold in [s] for triggering upward shift detection
+
+	/* Path Asymmetry */
+	double Asymhat;				// Estimate of underlying asymmetry
+
+	/* Window sizes, measured in [pkt index] */
+	index_t warmup_win;			// warmup window, RTT estimation (indep of time and CPU, need samples)
+	index_t shift_win;			// shift detection window size
+	index_t shift_end;			// shift detection record of oldest pkt in shift window for RTT
+
+	/* rAdclock error estimation */
+	double RADerror;
+};
+
+
 /* Structure containing RADclock algo input, state and output.
  * Per-server data is kept, the pointers point to dynamically allocated `arrays`
  * indexed by serverID: 0, 1,.. nservers-1
  * The matching queue holds stamps from all servers together.
  */
-struct bidir_algodata {	
+struct bidir_algodata {
+	/* Queue of RADstamps to be matched and processed, all servers combined */
+	struct stamp_queue *q;
+
 	struct stamp_t *laststamp;
 	struct bidir_algostate *state;
 	struct bidir_algooutput *output;
-
-	/* Queue of RADstamps to be matched and processed, all servers combined */
-	struct stamp_queue *q;
 };
 
+/* RADclock perf data, holding 6-tuple input and processing enabling :
+ *  - analysis of RADclock performance [assuming a trusted server]
+ *  - SHM of RADclock's server [using the authoritative timestamps]
+ *  - needed queues to perform matching
+ */
+struct bidir_perfdata {
+	/* Queue of RADperf stamps to be processed. Must be first member.*/
+	struct stamp_queue *q;
+
+	/* Buffer for fast dumping of sane popped RADstamps within PROC */
+	int RADBUFF_SIZE;		// number of buffer elements
+	struct stamp_t *RADbuff;
+	index_t	RADbuff_next;			// buffer index for next write, won't wrap
+
+	struct stamp_t *laststamp;			// containing bidir_stamp_perf tuples
+	struct bidir_perfoutput *output;
+	struct bidir_perfstate *state;	// includes SHM state
+};
 
 //#define OUTPUT(handle, x) ((struct bidir_algooutput*)handle->algo_output)->x
 #define SOUTPUT(h,sID,x) ((struct bidir_algodata*)h->algodata)->output[sID].x

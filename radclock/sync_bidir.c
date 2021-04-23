@@ -46,12 +46,12 @@
 #include "radclock-private.h"
 #include "radclock_daemon.h"
 #include "sync_history.h"
+#include "proto_ntp.h"	// XXX ??
 #include "sync_algo.h"
 #include "create_stamp.h"
 #include "rawdata.h"
 #include "verbose.h"
 #include "config_mgr.h"
-#include "proto_ntp.h"	// XXX ??
 #include "misc.h"
 #include "jdebug.h"
 

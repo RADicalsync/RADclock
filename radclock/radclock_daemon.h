@@ -153,11 +153,6 @@ struct radclock_handle {
 	/* Raw data capture buffer for 1588 error queue */
 	struct raw_data_queue *ieee1588eq_queue;
 
-	/* Latest matched NTP stamp passed to SHM from dataproc */
-	struct radclock_shm_ts * SHM_stamps;
-	int SHM_stamp_write_id;
-	int SHM_stamps_queue_size;
-
 	/* Telemetry shared memory handle */
 	Ring_Buffer_Producer_Data telemetry_data;	
 
@@ -184,6 +179,7 @@ struct radclock_handle {
 	int wakeup_checkfordata;
 	pthread_mutex_t wakeup_mutex;
 	pthread_cond_t wakeup_cond;
+	// pthread_mutex_t matchqueue_mutex;	// to manage use by both PROC and SHM
 
 	/* Configuration */
 	struct radclock_config *conf;
@@ -198,8 +194,12 @@ struct radclock_handle {
 	/* Points to an array of Synchronisation algodata, one per server */
 	void *algodata;
 
+	/* Points to an array of Synchronisation perfdata, one per server */
+	void *perfdata;
+
 	/* ID (array index) of preferred RADclock */  // perhaps call sI = server Index
 	int pref_sID;
+	int last_sID;	// hack to give fake dag msg creation knowledge of last RADstamp popped: togo soon
 
 	/* Server trust status word: 1 bit per server, denoting
 	 *   0: server is trusted
@@ -240,6 +240,8 @@ struct radclock_handle {
 #define DEL_STATUS(r,y) ((r)->status = (r)->status & ~y )
 #define HAS_STATUS(r,y) (((r)->status & y) == y )
 
+/* Function to map from IP address to server index */
+int serverIPtoID(struct radclock_handle *handle, char *server_ipaddr);
 
 
 

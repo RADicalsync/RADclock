@@ -63,6 +63,7 @@
 #include "logger.h"
 #include "verbose.h"
 #include "sync_history.h"
+#include "proto_ntp.h"
 #include "sync_algo.h"
 #include "create_stamp.h"
 #include "config_mgr.h"
@@ -71,7 +72,6 @@
 #include "stampinput.h"
 #include "stampinput_int.h"
 #include "stampoutput.h"
-#include "proto_ntp.h"
 #include "jdebug.h"
 #include "ring_buffer.h"
 #include "ntp_auth.h"
@@ -584,14 +584,6 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	// handle->telemetry_data.prior_leapsec_total = 0;
 	gettimeofday(&handle->telemetry_data.last_msg_time,NULL);
 
-	// Set id to 0 to flag initial blank stamp
-	int SHM_QUEUE_SIZE = 1024;
-	handle->SHM_stamps = (struct radclock_shm_ts *) malloc(sizeof(struct radclock_shm_ts) * SHM_QUEUE_SIZE);
-	handle->SHM_stamp_write_id = 0;
-	handle->SHM_stamps_queue_size = SHM_QUEUE_SIZE;
-	// Set all data in shm stamp queue to 0 to flag no data
-	memset(handle->SHM_stamps, 0, sizeof(struct radclock_shm_ts) * SHM_QUEUE_SIZE);
-
 	handle->ntp_keys = read_keys();
 
 	/*
@@ -600,6 +592,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	 */
 	handle->pthread_flag_stop = 0;
 	handle->wakeup_checkfordata = 0;
+	//handle->matchqueue_mutex = 0;		// to manage use by both PROC and SHM
 	pthread_mutex_init(&(handle->globaldata_mutex), NULL);
 	pthread_mutex_init(&(handle->wakeup_mutex), NULL);
 	pthread_cond_init(&(handle->wakeup_cond), NULL);
@@ -622,11 +615,17 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->ieee1588eq_queue->rdb_start = NULL;
 	handle->ieee1588eq_queue->rdb_end = NULL;
 
-	/* Handle structure for per-server data, and generic stamp queue */
+	/* Handle structure for per-server data, and stamp matching queue */
 	struct bidir_algodata *algodata;
 	algodata = malloc(sizeof *algodata);
-	handle->algodata = (void*) algodata;	// enduring copy of ptr to algodata data
 	init_stamp_queue(algodata);
+	handle->algodata = (void*) algodata;	// enduring copy of ptr to algodata data
+
+	/* Handle structure for per-server perf data, stamp matching queue, and buffer */
+	struct bidir_perfdata *perfdata;
+	perfdata = malloc(sizeof *perfdata);
+	init_stamp_queue(perfdata);				// implicit cast works
+	handle->perfdata = (void*) perfdata;	// enduring copy of ptr to perfdata
 
 	/* Initialize all servers to trusted. */
 	handle->servertrust = 0;
@@ -641,6 +640,7 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 {
 	int s;
 	struct bidir_algodata *algodata;
+	struct bidir_perfdata *perfdata;
 
 	handle->nservers = ns;	// just in case, should already be true
 	
@@ -669,6 +669,15 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	algodata->laststamp = calloc(ns,sizeof(struct stamp_t));
 	algodata->output = calloc(ns,sizeof(struct bidir_algooutput));
 	algodata->state = calloc(ns,sizeof(struct bidir_algostate));
+
+	/* Initialize remaining members of perfdata */
+	perfdata = handle->perfdata;
+	perfdata->laststamp = calloc(ns,sizeof(struct stamp_t));
+	perfdata->output = calloc(ns,sizeof(struct bidir_perfoutput));
+	perfdata->state = calloc(ns,sizeof(struct bidir_perfstate));
+	perfdata->RADBUFF_SIZE = ns * 8;
+	perfdata->RADbuff = calloc(perfdata->RADBUFF_SIZE,sizeof(struct stamp_t));
+	perfdata->RADbuff_next = 0;
 
 	return;
 }
@@ -971,7 +980,7 @@ start_live(struct radclock_handle *handle)
 		break;
 	}
 
-	/* TELEMETRY_CONSUMER */
+	/* SHM */
 	switch (handle->conf->server_shm) {
 	case BOOL_ON:
 		err = start_thread_SHM(handle);
@@ -982,10 +991,6 @@ start_live(struct radclock_handle *handle)
 	default:
 		break;
 	}
-
-
-
-
 
 	/* NTP_SERV */
 	switch (handle->conf->server_ntp) {
@@ -1071,7 +1076,7 @@ start_live(struct radclock_handle *handle)
 
 	if (handle->conf->server_shm == BOOL_ON) {
 		pthread_join(handle->threads[PTH_SHM_CON], &thread_status);
-		verbose(LOG_NOTICE, "SHM module thread is dead.");
+		verbose(LOG_NOTICE, "SHM thread is dead.");
 	}
 
 	pthread_join(handle->threads[PTH_TRIGGER], &thread_status);
@@ -1400,7 +1405,35 @@ main(int argc, char *argv[])
 			handle->conf->adjust_FBclock = BOOL_OFF;
 		}
 	}
-	
+
+	/* Need to know if we are replaying data or not. If not, no need to create
+	 * shared global data on the system or open a BPF. This define input to the
+	 * init of the radclock handle
+	 * TODO:  add new mode:  RADCLOCK_SYNC_DEAD_WITHSHM to is_live_source checking for DAG file
+	 */
+	if (!is_live_source(handle))
+		handle->run_mode = RADCLOCK_SYNC_DEAD;
+	else
+		handle->run_mode = RADCLOCK_SYNC_LIVE;
+
+	/* Check compatibility for SHM
+	 * TODO: note a `server', better module_shm ?
+	 */
+	if (handle->conf->server_shm == BOOL_ON)
+	{
+		if (handle->run_mode == RADCLOCK_SYNC_LIVE && !handle->conf->is_cn) {
+			verbose(LOG_ERR, "Configuration error. Disabling server_shm "
+					"(incompatible with running live if not an NTC Control Node).");
+			handle->conf->server_shm = BOOL_OFF;
+		}
+
+		if (handle->run_mode != RADCLOCK_SYNC_DEAD &&	// must be 'RADCLOCK_SYNC_DEAD_WITHSHM'
+			 handle->run_mode != RADCLOCK_SYNC_LIVE) {		// hack: must be false currently
+			verbose(LOG_ERR, "Configuration error. Disabling server_shm "
+				"(incompatible with running dead if DAG input not available).");
+			handle->conf->server_shm = BOOL_OFF;
+		}
+	}
 
 
 	/* Confirmation output of the final configuration used */
@@ -1415,16 +1448,6 @@ main(int argc, char *argv[])
 	// function instead, would be clearer
 	// TODO the conf->network_device business is way too messy
 
-
-	/*
-	 * Need to know if we are replaying data or not. If not, no need to create
-	 * shared global data on the system or open a BPF. This define input to the
-	 * init of the radclock handle
-	 */
-	if (!is_live_source(handle))
-		handle->run_mode = RADCLOCK_SYNC_DEAD;
-	else
-		handle->run_mode = RADCLOCK_SYNC_LIVE;
 
 	/* Setup kernel interactions: init clock handle and private data */
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
@@ -1442,6 +1465,27 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
+	/* Start SHM thread (could be alive or dead)
+	 * From startlive:
+	 */
+//	switch (handle->conf->server_shm) {
+//	case BOOL_ON:
+//		err = start_thread_SHM(handle);
+//		if (err < 0)
+//			return (1);
+//		break;
+//	case BOOL_OFF:
+//	default:
+//		break;
+//	}
+
+//	if (handle->conf->server_shm == BOOL_ON) {
+//		pthread_join(handle->threads[PTH_SHM_CON], &thread_status);
+//		verbose(LOG_NOTICE, "SHM module thread is dead.");
+//	}
+
+
+
 	/*
 	 * Now 2 cases. Either we are running live or we are replaying some data.
 	 * If we run live, we will spawn some threads and do some smart things.  If
@@ -1456,7 +1500,7 @@ main(int argc, char *argv[])
 				break;
 		}
 	}
-	/*s
+	/*
 	 * We loop in here in case we are rehashed. Threads are (re-)created every
 	 * time we loop in
 	 */
@@ -1509,6 +1553,7 @@ main(int argc, char *argv[])
 	/* Clear thread stuff */
 	pthread_mutex_destroy(&(handle->globaldata_mutex));
 	pthread_mutex_destroy(&(handle->wakeup_mutex));
+	//pthread_mutex_destroy(&(handle->matchqueue_mutex));
 	pthread_cond_destroy(&(handle->wakeup_cond));
 
 	/* Detach IPC shared memory if were running as IPC server. */

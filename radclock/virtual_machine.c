@@ -54,10 +54,11 @@
 #include "fixedpoint.h"
 #include "verbose.h"
 #include "sync_history.h"
+#include "proto_ntp.h"
+#include "proto_ntp.h"
 #include "sync_algo.h"
 #include "pthread_mgr.h"
 #include "config_mgr.h"
-#include "proto_ntp.h"
 #include "misc.h"
 #include "jdebug.h"
 
