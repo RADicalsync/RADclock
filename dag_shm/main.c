@@ -59,6 +59,8 @@ struct dag_cap {
 
 struct dag_ntp_record {
 	int key_id; // The key that was used in the out going. The returning auth key has to be the same as the out going.
+	struct IPout ip; // The ip of the outgoing NTP packet. Used for filtering incoming NTP responses
+	
 	struct dag_cap cap;
 };
 
@@ -322,9 +324,16 @@ format_ntp (dag_record_t *header, void *payload, struct stats_t *stats, struct p
 			{
 				long double Tout = ts.tv_sec + ts.tv_nsec*1e-9;
 				cap_list->caps[cap_list->write_id].key_id = key_id;
+
+				memcpy(&cap_list->caps[cap_list->write_id].IPout, &hdr_ip->ip_src, sizeof(cap_list->caps[cap_list->write_id].ip));
+
+				cap_list->caps[cap_list->write_id].key_id = key_id;
 				cap_list->caps[cap_list->write_id].cap.server_reply_org = ntp->xmt;
 				cap_list->caps[cap_list->write_id].cap.Tout = Tout;
+
 				cap_list->write_id = (cap_list->write_id + 1) % cap_list->size;
+
+
 			}
 			else
 			{
@@ -336,7 +345,8 @@ format_ntp (dag_record_t *header, void *payload, struct stats_t *stats, struct p
 				{
 					if (memcmp(&ntp->org, &cap_list->caps[i].cap.server_reply_org, sizeof(ntp->org)) == 0)
 						if (key_id == cap_list->caps[i].key_id) // The same auth method must be present in the sent and rcv ntp packets
-							match_id = i;
+							if (memcmp(&hdr_ip->ip_src, &cap_list->caps[i].cap.ip, sizeof(hdr_ip->ip_src)) == 0) // Check that the outgoing and incoming IP's are the same
+								match_id = i;
 				}
 				if (match_id != -1)
 				{

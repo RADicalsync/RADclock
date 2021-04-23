@@ -323,12 +323,12 @@ thread_ntp_server(void *c_handle)
 						uint64_t inband_trust = 0;
 
 						icn_status = (uint64_t) ntohl(((struct ntp_pkt*)pkt_in)->refid);
-						/* Map icn_id-indexed inband status word to sID-indexed trustword
+						/* Map ntc_id-indexed inband status word to sID-indexed trustword
 						 * In each case, status of server i is recorded in the (i-1)th status bit
 						 */
 						for (int s=0; s < handle->nservers; s++) {
-							if ( handle->conf->time_server_icn_mapping[s] != -1 &&
-								  icn_status & (1ULL << (handle->conf->time_server_icn_mapping[s])-1) )
+							if ( handle->conf->time_server_ntc_mapping[s] != -1 &&
+								  icn_status & (1ULL << (handle->conf->time_server_ntc_mapping[s])-1) )
 								inband_trust |= (1ULL << s);
 						}
 						handle->servertrust = inband_trust;

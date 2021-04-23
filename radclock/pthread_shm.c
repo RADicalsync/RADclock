@@ -89,7 +89,7 @@ find_matching_shm_packets(struct dag_cap dag_msg, struct radclock_shm_ts * SHM_s
             {
                 // We are now working on data in local function scope so we don't need to worry about thread race conditions
 
-                verbose(LOG_INFO, "Found matching SHM packet from DAG capture %lu ICN:%d %s", cpy.id, cpy.icn_id, server_ipaddr);
+                verbose(LOG_INFO, "Found matching SHM packet from DAG capture %lu NTC server:%d %s", cpy.id, cpy.ntc_id, server_ipaddr);
                 return;
             }
         }

@@ -107,7 +107,6 @@
 #define DEFAULT_SYNC_OUT_PCAP		"/etc/sync_output.pcap"
 #define DEFAULT_SYNC_OUT_ASCII		"/etc/sync_output.ascii"
 #define DEFAULT_CLOCK_OUT_ASCII		"/etc/clock_output.ascii"
-#define DEFAULT_ICN_1				"ntp.waia.asn.au 1"
 #define DEFAULT_SHM_DAG_CLIENT  	"10.0.0.3"
 #define DEFAULT_VM_UDP_LIST			"vm_udp_list"
 #define DEFAULT_PUBLIC_NTP			BOOL_OFF
@@ -148,8 +147,7 @@
 /* Network Level */
 #define CONFIG_HOSTNAME			40
 #define CONFIG_TIME_SERVER		41
-#define CONFIG_ICN				42
-#define CONFIG_OCN				43
+#define CONFIG_NTC				42
 /* I/O defintions */
 #define CONFIG_NETWORKDEV		50
 #define CONFIG_SYNC_IN_PCAP	51
@@ -212,8 +210,7 @@
 #define UPD_NTP_UPSTREAM_PORT	0x1000000
 #define UPD_NTP_DOWNSTREAM_PORT	0x2000000
 #define UPDMASK_SERVER_TELEMETRY 0x4000000
-#define UPDMASK_ICN 0x8000000
-#define UPDMASK_OCN 0x10000000
+#define UPDMASK_NTC 0x8000000
 #define UPDMASK_SERVER_SHM 0x20000000
 #define UPDMASK_SHM_DAG_CLIENT 0x40000000
 #define UPDMASK_IS_OCN 0x80000000
@@ -225,9 +222,8 @@
 #define SET_UPDATE(val,mask)	(val |= mask) 
 #define CLEAR_UPDATE(val,mask)	(val &= ~mask)
 
-#define MAX_ICNS 32
-#define MAX_OCNS 32
-struct ICN_Config
+#define MAX_NTC 32
+struct NTC_Config
 {
 	int 	id;
 	char 	domain[MAXLINE];
@@ -265,10 +261,9 @@ struct radclock_config {
 	int     ntp_downstream_port;     /* NTP Downstream port */
 	char 	hostname[MAXLINE]; 			/* Client hostname */
 	char 	*time_server;			 		/* Server names, concatenated in MAXLINE blocks */
-	int		*time_server_icn_mapping;	/* Maps timer_server id to ICN ids, non ICN servers get -1 */
-	int		*time_server_icn_indexes;	/* Lists the ICN indexes relative to the time_server ordering. Eg given time_servers A B C. If A and C are ICN then this would be 0,2 */
-	int		time_server_icn_count;		/* The number of time_servers that are ICNs */
-	int		*time_server_ocn_mapping;	/* Maps timer_server id to OCN ids, non OCN servers get -1 */
+	int		*time_server_ntc_mapping;	/* Maps timer_server id to NTC ids, non NTC servers get -1 */
+	int		*time_server_ntc_indexes;	/* Lists the NTC server indexes relative to the time_server ordering. Eg given time_servers A B C. If A and C are NTC server then this would be 0,2 */
+	int		time_server_ntc_count;		/* The number of time_servers that are NTC servers */
 	char 	network_device[MAXLINE];	/* physical device string, eg xl0, eth0 */ 
 	char 	sync_in_pcap[MAXLINE];	 	/* read from stored instead of live input */
 	char 	sync_in_ascii[MAXLINE]; 	/* input is a preprocessed stamp file */
@@ -277,8 +272,7 @@ struct radclock_config {
 	char 	clock_out_ascii[MAXLINE];  /* output matlab requirements */
 	char 	vm_udp_list[MAXLINE];  		/* File containing list of udp vm's */
 	char 	shm_dag_client[MAXLINE];  	/* Ip address of SHM DAG client */
-	struct ICN_Config 	icn[MAX_ICNS];  				/* ICN definition */
-	struct ICN_Config 	ocn[MAX_OCNS];  				/* OCN definition */
+	struct NTC_Config 	ntc[MAX_NTC];  				/* NTC definition */
 };
 
 

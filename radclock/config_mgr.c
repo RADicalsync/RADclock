@@ -97,8 +97,7 @@ static struct _key keys[] = {
 	{ "sync_output_ascii",		CONFIG_SYNC_OUT_ASCII},
 	{ "clock_output_ascii",		CONFIG_CLOCK_OUT_ASCII},
 	{ "vm_udp_list",			CONFIG_VM_UDP_LIST},
-	{ "icn",					CONFIG_ICN},
-	{ "ocn",					CONFIG_OCN},
+	{ "ntc",					CONFIG_NTC},
 	{ "is_ocn",					CONFIG_IS_OCN},
 	{ "is_cn",					CONFIG_IS_CN},
 	{ "",			 			CONFIG_UNKNOWN} // Must be the last one
@@ -193,23 +192,16 @@ config_init(struct radclock_config *conf)
 	strcpy(conf->clock_out_ascii, "");
 	strcpy(conf->vm_udp_list, "");
 
-	conf->time_server_icn_mapping = 0; // Flag mapping as uninitialised
-	conf->time_server_icn_count = 0;
-	conf->time_server_ocn_mapping = 0;
+	conf->time_server_ntc_mapping = 0; // Flag mapping as uninitialised
+	conf->time_server_ntc_count = 0;
 
-	// Clear all ICN server data
-	for (int i =0; i < MAX_ICNS; i++)
+	// Clear all NTC server data
+	for (int i =0; i < MAX_NTC; i++)
 	{
-		conf->icn[i].id = -1;
-		conf->icn[i].domain[0] = 0;
+		conf->ntc[i].id = -1;
+		conf->ntc[i].domain[0] = 0;
 	}
 
-	// Clear all OCN server data
-	for (int i =0; i < MAX_OCNS; i++)
-	{
-		conf->ocn[i].id = -1;
-		conf->ocn[i].domain[0] = 0;
-	}	
 }
 
 
@@ -695,38 +687,19 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 	else
 		fprintf(fd, "#%s = %s\n\n", find_key_label(keys, CONFIG_CLOCK_OUT_ASCII), DEFAULT_CLOCK_OUT_ASCII);
 
-	/* Specifies ICNs to be used */
-	fprintf(fd, "# ICNs.\n");
-	fprintf(fd, "# %s = ICN_ID domain. ICN_ID should remain constant and never re-used.\n", find_key_label(keys, CONFIG_ICN));
-	int written_icns = 0;
+	/* Specifies NTC servers to be used */
+	fprintf(fd, "# NTC ids.\n");
+	fprintf(fd, "# %s = NTC_ID domain. NTC_ID should remain constant and never re-used.\n", find_key_label(keys, CONFIG_NTC));
+	int written_ntc_ids = 0;
 	if ( conf )
 	{
-		for (int i = 0; i<MAX_ICNS; i++)
-			if ( strlen(conf->icn[i].domain) > 0 )
+		for (int i = 0; i<MAX_NTC; i++)
+			if ( strlen(conf->ntc[i].domain) > 0 )
 			{
-				fprintf(fd, "%s = %s %d\n", find_key_label(keys, CONFIG_ICN), conf->icn[i].domain, conf->icn[i].id);
-				written_icns ++;
+				fprintf(fd, "%s = %s %d\n", find_key_label(keys, CONFIG_NTC), conf->ntc[i].domain, conf->ntc[i].id);
+				written_ntc_ids ++;
 			}
 	}
-
-	// No recorded values for ICNs were provided so write the default
-	if ( written_icns == 0 )
-		fprintf(fd, "%s = %s\n", find_key_label(keys, CONFIG_ICN), DEFAULT_ICN_1);
-
-	/* Specifies ICNs to be used */
-	fprintf(fd, "\n# OCNs.\n");
-	fprintf(fd, "# %s = OCN_ID domain. OCN_ID should remain constant and never re-used.\n", find_key_label(keys, CONFIG_OCN));
-	int written_ocns = 0;
-	if ( conf )
-	{
-		for (int i = 0; i<MAX_OCNS; i++)
-			if ( strlen(conf->ocn[i].domain) > 0 )
-			{
-				fprintf(fd, "%s = %s %d\n", find_key_label(keys, CONFIG_OCN), conf->ocn[i].domain, conf->ocn[i].id);
-				written_ocns ++;
-			}
-	}
-
 
 }
 
@@ -1371,57 +1344,29 @@ switch (codekey) {
 		break;
 
 
-	case CONFIG_ICN:
+	case CONFIG_NTC:
 		// If value specified on the command line
 
 		// Config line can accept one or two arguements (can optionally exclude id)
 		iqual = sscanf(value, "%s %d", sval, &ival);
-		if (! (iqual == 2 && ival >= 0 && ival < MAX_ICNS ) )
+		if (! (iqual == 2 && ival >= 0 && ival < MAX_NTC ) )
 			ival = -1;
 		if (iqual == 1)
 		{
 			ival = 0;
-			for (iqual =0; iqual< MAX_ICNS; iqual++)
-				if (conf->icn[iqual].domain[0] == 0)
+			for (iqual =0; iqual< MAX_NTC; iqual++)
+				if (conf->ntc[iqual].domain[0] == 0)
 				{
 					ival = iqual;
 					break;
 				}
 		}
 
-		if (0 <= ival && ival < MAX_ICNS)
+		if (0 <= ival && ival < MAX_NTC)
 		{
-			SET_UPDATE(*mask, UPDMASK_ICN);
-			strcpy(conf->icn[ival].domain, sval);
-			conf->icn[ival].id = ival;
-			// printf("Set ICN id %d to domain %s\n", ival, sval);
-		}
-		break;
-
-	case CONFIG_OCN:
-		// If value specified on the command line
-
-		// Config line can accept one or two arguements (can optionally exclude id)
-		iqual = sscanf(value, "%s %d", sval, &ival);
-		if (! (iqual == 2 && ival >= 0 && ival < MAX_OCNS ) )
-			ival = -1;
-		if (iqual == 1)
-		{
-			ival = 0;
-			for (iqual =0; iqual< MAX_OCNS; iqual++)
-				if (conf->ocn[iqual].domain[0] == 0)
-				{
-					ival = iqual;
-					break;
-				}
-		}
-
-		if (0 <= ival && ival < MAX_OCNS)
-		{
-			SET_UPDATE(*mask, UPDMASK_OCN);
-			strcpy(conf->ocn[ival].domain, sval);
-			conf->ocn[ival].id = ival;
-			// printf("Set OCN id %d to domain %s\n", ival, sval);
+			SET_UPDATE(*mask, UPDMASK_NTC);
+			strcpy(conf->ntc[ival].domain, sval);
+			conf->ntc[ival].id = ival;
 		}
 		break;
 
@@ -1716,44 +1661,36 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 		exit(1);
 	}
 
-	/* Set the mapping between time_server index and ICN ids
+	/* Set the mapping between time_server index and NTC server ids
 	 * Mapping value is -1 if there is no match
 	 */
 
-	if (conf->time_server_icn_mapping)
+	if (conf->time_server_ntc_mapping)
 	{
-		free(conf->time_server_icn_mapping);
-		free(conf->time_server_icn_indexes);
-		free(conf->time_server_ocn_mapping);
-		conf->time_server_icn_mapping = 0;
-		conf->time_server_icn_indexes = 0;
-		conf->time_server_ocn_mapping = 0;
+		free(conf->time_server_ntc_mapping);
+		free(conf->time_server_ntc_indexes);
+		conf->time_server_ntc_mapping = 0;
+		conf->time_server_ntc_indexes = 0;
 	}
 
-	conf->time_server_ocn_mapping = malloc(sizeof(int)*(*ns));
-	conf->time_server_icn_mapping = malloc(sizeof(int)*(*ns));
-	conf->time_server_icn_count = 0;
-	// Match time_servers with ICNs, Non matches get a value of -1
+	conf->time_server_ntc_mapping = malloc(sizeof(int)*(*ns));
+	conf->time_server_ntc_count = 0;
+	// Match time_servers with NTCs, Non matches get a value of -1
 	for (int time_server_id = 0; time_server_id < *ns; time_server_id++)
 	{
-		conf->time_server_icn_mapping[time_server_id] = -1; // Set mapping initially to -1
-		conf->time_server_ocn_mapping[time_server_id] = -1; // Set mapping initially to -1
+		conf->time_server_ntc_mapping[time_server_id] = -1; // Set mapping initially to -1
 		char *this_s = conf->time_server + time_server_id * MAXLINE;
-		for (int ICN_id = 0; ICN_id < MAX_ICNS; ICN_id ++)
+		for (int NTC_id = 0; NTC_id < MAX_NTC; NTC_id ++)
 		{
-			if (strcmp(conf->icn[ICN_id].domain, this_s) == 0) // If match is found set the ICN id
+			if (strcmp(conf->ntc[NTC_id].domain, this_s) == 0) // If match is found set the NTC id
 			{
-				conf->time_server_icn_mapping[time_server_id] = conf->icn[ICN_id].id;
-				conf->time_server_icn_count += 1;
-				conf->time_server_icn_indexes = realloc(conf->time_server_icn_indexes, sizeof(int)*conf->time_server_icn_count);
-				conf->time_server_icn_indexes[conf->time_server_icn_count -1] = time_server_id;
-				verbose(LOG_INFO, "Configuration matched time_server:%s mapping for ICN:%d", this_s, conf->icn[ICN_id].id);
+				conf->time_server_ntc_mapping[time_server_id] = conf->ntc[NTC_id].id;
+				conf->time_server_ntc_count += 1;
+				conf->time_server_ntc_indexes = realloc(conf->time_server_ntc_indexes, sizeof(int)*conf->time_server_ntc_count);
+				conf->time_server_ntc_indexes[conf->time_server_ntc_count -1] = time_server_id;
+				verbose(LOG_INFO, "Configuration matched time_server:%s mapping for NTC:%d", this_s, conf->ntc[NTC_id].id);
 			} 
-			if (strcmp(conf->ocn[ICN_id].domain, this_s) == 0) // If match is found set the OCN id
-			{
-				conf->time_server_ocn_mapping[time_server_id] = conf->ocn[ICN_id].id;
-				verbose(LOG_INFO, "Configuration matched time_server:%s mapping for OCN:%d", this_s, conf->ocn[ICN_id].id);
-			}
+			
 		}
 	}
 
@@ -1807,11 +1744,8 @@ void config_print(int level, struct radclock_config *conf, int ns)
 	verbose(level, "ascii sync output    : %s", conf->sync_out_ascii);
 	verbose(level, "ascii clock output   : %s", conf->clock_out_ascii);
 
-	for (int i = 0; i<MAX_ICNS; i++)
-		if ( strlen(conf->icn[i].domain) > 0 )
-			verbose(level, "ICN                  : %d %s", conf->icn[i].id, conf->icn[i].domain);
+	for (int i = 0; i<MAX_NTC; i++)
+		if ( strlen(conf->ntc[i].domain) > 0 )
+			verbose(level, "NTC                  : %d %s", conf->ntc[i].id, conf->ntc[i].domain);
 
-	for (int i = 0; i<MAX_OCNS; i++)
-		if ( strlen(conf->ocn[i].domain) > 0 )
-			verbose(level, "OCN                  : %d %s", conf->ocn[i].id, conf->ocn[i].domain);
 }

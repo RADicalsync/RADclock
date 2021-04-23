@@ -26,8 +26,8 @@
 
 #include "radclock_telemetry.h"
 
-// Typical expected size of a packet assuming 64 ICNS
-#define RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE (sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_ICN_Latest)*64 + sizeof(Radclock_Telemetry_Footer))
+// Typical expected size of a packet assuming 64 NTC servers
+#define RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE (sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*64 + sizeof(Radclock_Telemetry_Footer))
 
 // Max number of typical packets that can fit within the buffer
 #define RADCLOCK_RING_BUFFER_PACKETS 2064

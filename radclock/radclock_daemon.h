@@ -63,7 +63,7 @@ struct radclock_shm_ts {
 	long double	Te;		// timestamp [sec] of departure from server
 	vcounter_t	Tf;		// vcount timestamp [counter value] of pkt returning to client
 	char server_ipaddr[INET6_ADDRSTRLEN];
-	int icn_id;
+	int ntc_id;
 	uint64_t id;
 };
 
@@ -225,6 +225,7 @@ struct radclock_handle {
 #define SNTP_SERVER(h,s) (&(h->ntp_server[s]))
 #define NTP_CLIENT(h) (SNTP_CLIENT(h,h->pref_sID))
 #define NTP_SERVER(h) (SNTP_SERVER(h,h->pref_sID))
+#define OCN_ID(h) (h > MAX_NTC / 2 ? h - MAX_NTC / 2 : -1 )
 
 #define SRAD_DATA(h,s)  (&(h->rad_data[s]))		// ptr to data of server s
 #define SRAD_ERROR(h,s) (&(h->rad_error[s]))

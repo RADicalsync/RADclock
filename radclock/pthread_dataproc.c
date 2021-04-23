@@ -876,8 +876,9 @@ process_stamp(struct radclock_handle *handle)
 		verbose(LOG_WARNING, "Unrecognized stamp popped, skipping it");
 		return (1);
 	}
-	if (handle->conf->is_cn && handle->conf->time_server_ocn_mapping[sID] > -1)
-		if (stamp.auth_key_id != handle->conf->time_server_ocn_mapping[sID] + PRIVATE_CN_NTP_KEYS)
+
+	if (handle->conf->is_cn && OCN_ID(handle->conf->time_server_ntc_mapping[sID]) > -1)
+		if (stamp.auth_key_id != OCN_ID(handle->conf->time_server_ntc_mapping[sID]) + PRIVATE_CN_NTP_KEYS)
 		{
 			verbose(LOG_ERR, "CN received OCN NTP stamp with incorrect auth_key. Requires developer investigation");
 			return (1);
@@ -1140,7 +1141,7 @@ process_stamp(struct radclock_handle *handle)
 		SHM_stamp.Te = stamp.st.bstamp.Te;
 		SHM_stamp.Tf = stamp.st.bstamp.Tf;
 		SHM_stamp.id = stamp.id;
-		SHM_stamp.icn_id = handle->conf->time_server_icn_mapping[sID];
+		SHM_stamp.ntc_id = handle->conf->time_server_ntc_mapping[sID];
 		strcpy(SHM_stamp.server_ipaddr, stamp.server_ipaddr);
 		// verbose(LOG_INFO, "Pushing shm packet ip %s", SHM_stamp.server_ipaddr);
 
