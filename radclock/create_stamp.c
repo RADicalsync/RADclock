@@ -788,9 +788,9 @@ check_auth(struct radclock_handle *handle, struct ntp_pkt *ntp, struct sockaddr_
 {
 	char ** key_data = handle->ntp_keys;
 	int auth_pass = 0;
-	if (ntp_packet_size == 48)
+	if (ntp_packet_size == LEN_PKT_NOMAC)
 		auth_pass = 1;
-	else if (ntp_packet_size > 48 && key_data) // If the client has requested authentication and we have some key data
+	else if (ntp_packet_size > LEN_PKT_NOMAC && key_data) // If the client has requested authentication and we have some key data
 	{
 		unsigned int key_id = 0;
 		/* Authentication data structures*/
@@ -804,7 +804,7 @@ check_auth(struct radclock_handle *handle, struct ntp_pkt *ntp, struct sockaddr_
 
 			wc_InitSha(&sha);
 			wc_ShaUpdate(&sha, key_data[key_id], 20);
-			wc_ShaUpdate(&sha, ntp, 48);
+			wc_ShaUpdate(&sha, ntp, LEN_PKT_NOMAC);
 			wc_ShaFinal(&sha, pck_dgst);
 			// printf("size:%d %s %d key\n", n, key_data[key_id], key_id);
 
@@ -842,7 +842,7 @@ push_client_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 
 	stamp.id = ((uint64_t) ntohl(ntp->xmt.l_int)) << 32;
 	stamp.id |= (uint64_t) ntohl(ntp->xmt.l_fra);
-	if (ntp_packet_size == 48)
+	if (ntp_packet_size == LEN_PKT_NOMAC)
 		stamp.auth_key_id = -1;
 	else
 		stamp.auth_key_id = ntohl(ntp->exten[0]); // Get the NTP auth key id
@@ -882,7 +882,7 @@ push_server_halfstamp(struct stamp_queue *q, struct ntp_pkt *ntp,
 	stamp.type = STAMP_NTP;
 	stamp.id = ((uint64_t) ntohl(ntp->org.l_int)) << 32;
 	stamp.id |= (uint64_t) ntohl(ntp->org.l_fra);
-	if (ntp_packet_size == 48)
+	if (ntp_packet_size == LEN_PKT_NOMAC)
 		stamp.auth_key_id = -1;
 	else
 		stamp.auth_key_id = ntohl(ntp->exten[0]); // Get the NTP auth key id

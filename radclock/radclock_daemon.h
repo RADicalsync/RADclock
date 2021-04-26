@@ -55,15 +55,6 @@ typedef enum {
 
 struct radclock_handle;
 
-struct radclock_shm_ts {
-	vcounter_t	Ta;		// vcount timestamp [counter value] of pkt leaving client
-	long double	Tb;		// timestamp [sec] of arrival at server
-	long double	Te;		// timestamp [sec] of departure from server
-	vcounter_t	Tf;		// vcount timestamp [counter value] of pkt returning to client
-	char server_ipaddr[INET6_ADDRSTRLEN];
-	int icn_id;
-	uint64_t id;
-};
 
 
 // TODO: This network protocol code could be factored?
@@ -208,6 +199,10 @@ struct radclock_handle {
 	 */
 	uint64_t servertrust;
 
+	/* Public ntp serving stats. Reported through telemetry */
+	int accepted_public_ntp;
+	int rejected_public_ntp;
+
 };
 
 
@@ -239,6 +234,8 @@ struct radclock_handle {
 #define ADD_STATUS(r,y) ((r)->status = (r)->status | y )
 #define DEL_STATUS(r,y) ((r)->status = (r)->status & ~y )
 #define HAS_STATUS(r,y) (((r)->status & y) == y )
+
+#define OCN_ID(h) (h > MAX_NTC / 2 ? h - MAX_NTC / 2 : -1 )
 
 /* Function to map from IP address to server index */
 int serverIPtoID(struct radclock_handle *handle, char *server_ipaddr);

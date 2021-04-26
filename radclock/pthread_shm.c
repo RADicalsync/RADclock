@@ -296,7 +296,7 @@ thread_shm(void *c_handle)
 		//output->RADerror = clockerr;
 		verbose(VERB_QUALITY, "Error in this rAdclock on this stamp is %4.2lf [ms]", 1000*clockerr);
 
-		/* Sent output->RADerror as SHM telemetry for clock sID */
+		/* Send output->RADerror as SHM telemetry for clock sID */
 
 
 	}	// thread_stop while loop

@@ -826,10 +826,7 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Signal big error */
 	if (err == -1)
-	{
-		push_telemetry(handle, -1); // Check if telemetry message needs to be sent
 		return (-1);
-	}
 
 	/* Starvation test: have valid stamps stopped arriving to the algo?
 	 * Test is applied to all clocks, even that of the current stamp (if any).
@@ -842,11 +839,6 @@ process_stamp(struct radclock_handle *handle)
 	algodata = (struct bidir_algodata*)handle->algodata;
 	if (handle->run_mode == RADCLOCK_SYNC_LIVE) {
 		err_read = radclock_get_vcounter(handle->clock, &now);
-		// if (err_read < 0)
-		// {
-		// 	push_telemetry(handle, -1); // Check if telemetry message needs to be sent
-
-		// 	return (-1);
 	
 		for (s=0; s < handle->nservers; s++) {
 			rad_data = &handle->rad_data[s];
@@ -887,8 +879,9 @@ process_stamp(struct radclock_handle *handle)
 		verbose(LOG_WARNING, "Unrecognized stamp popped, skipping it");
 		return (1);
 	}
-	if (handle->conf->is_cn && handle->conf->time_server_ocn_mapping[sID] > -1)
-		if (stamp.auth_key_id != handle->conf->time_server_ocn_mapping[sID] + PRIVATE_CN_NTP_KEYS)
+
+	if (handle->conf->is_cn && OCN_ID(handle->conf->time_server_ntc_mapping[sID]) > -1)
+		if (stamp.auth_key_id != OCN_ID(handle->conf->time_server_ntc_mapping[sID]) + PRIVATE_CN_NTP_KEYS)
 		{
 			verbose(LOG_ERR, "CN received OCN NTP stamp with incorrect auth_key. Requires developer investigation");
 			return (1);
@@ -1058,8 +1051,6 @@ process_stamp(struct radclock_handle *handle)
 						&size_ctl, NULL, 0);
 				if (err == -1) {
 					verbose(LOG_ERR, "Can''t find kern.timecounter.hardware in sysctl");
-					push_telemetry(handle, sID); // Check if telemetry message needs to be sent
-
 					return (-1);
 				}
 				
@@ -1076,8 +1067,6 @@ process_stamp(struct radclock_handle *handle)
 
 					NTP_SERVER(handle)->burst = NTP_BURST;
 					strcpy(handle->clock->hw_counter, hw_counter);
-
-					push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 
 				// TODO: algo needs to reset:  many things not done here, need big look
 					return (0);
@@ -1134,7 +1123,6 @@ process_stamp(struct radclock_handle *handle)
 		if (VM_MASTER(handle)) {
 			err = push_data_vm(handle);
 			if (err < 0) {
-				push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 				verbose(LOG_WARNING, "Error attempting to push VM data");
 				return (1);
 			}

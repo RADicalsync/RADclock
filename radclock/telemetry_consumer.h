@@ -87,7 +87,7 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     
     // Access data and store to file
     Radclock_Telemetry_Latest * ocn_data = (Radclock_Telemetry_Latest *) data;
-    Radclock_Telemetry_ICN_Latest * ICN_data;
+    Radclock_Telemetry_NTC_Latest * NTC_data;
 
     // Split the timestamp into two parts - seconds and nano seconds as msgpuck doesn't support long double
     unsigned int ts_sec = (unsigned int) timestamp;
@@ -143,17 +143,17 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     w = mp_encode_uint(w, ocn_data->header.version);    
 
     w = mp_encode_str(w, "ocn_clock", strlen("ocn_clock"));
-    w = mp_encode_map(w, 6);
-    // A map of 5 elements
+    w = mp_encode_map(w, 8);
+    // A map of 8 elements
 
     w = mp_encode_str(w, "picn", 4);
     w = mp_encode_uint(w, ocn_data->PICN);
 
-    w = mp_encode_str(w, "asym", 4);
-    w = mp_encode_uint(w, ocn_data->asym);
+    // w = mp_encode_str(w, "asym", 4);
+    // w = mp_encode_uint(w, ocn_data->asym);
 
-    w = mp_encode_str(w, "icn_count", strlen("icn_count"));
-    w = mp_encode_uint(w, ocn_data->ICN_Count);
+    w = mp_encode_str(w, "ntc_count", strlen("ntc_count"));
+    w = mp_encode_uint(w, ocn_data->NTC_Count);
 
     w = mp_encode_str(w, "ts_sec", strlen("ts_sec"));
     w = mp_encode_uint(w, ts_sec);
@@ -161,26 +161,35 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     w = mp_encode_str(w, "ts_nsec", strlen("ts_nsec"));
     w = mp_encode_uint(w, ts_nsec);
 
-    // A map of ICN elements
-    w = mp_encode_str(w, "ICN", 3);
-    w = mp_encode_map(w, ocn_data->ICN_Count);
-    for (int i = 0; i < ocn_data->ICN_Count; i++)
+    w = mp_encode_str(w, "ntp_acc", strlen("ntp_acc"));
+    w = mp_encode_uint(w, ocn_data->accepted_public_ntp);
+
+    w = mp_encode_str(w, "ntp_rej", strlen("ntp_rej"));
+    w = mp_encode_uint(w, ocn_data->rejected_public_ntp);
+
+    w = mp_encode_str(w, "inband", strlen("inband"));
+    w = mp_encode_uint(w, ocn_data->inband_signal);
+
+    // A map of NTC server elements
+    w = mp_encode_str(w, "NTC", 3);
+    w = mp_encode_map(w, ocn_data->NTC_Count);
+    for (int i = 0; i < ocn_data->NTC_Count; i++)
     {
-        ICN_data =  (Radclock_Telemetry_ICN_Latest *)(data + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_ICN_Latest)*i);
-        char icn_name[128];
-        sprintf(icn_name, "%d", ICN_data->ICN_id);
+        NTC_data =  (Radclock_Telemetry_NTC_Latest *)(data + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*i);
+        char ntc_name[128];
+        sprintf(ntc_name, "%d", NTC_data->NTC_id);
         
-        w = mp_encode_str(w, icn_name, strlen(icn_name));
+        w = mp_encode_str(w, ntc_name, strlen(ntc_name));
         w = mp_encode_map(w, 3);
 
         w = mp_encode_str(w, "stat", 4);
-        w = mp_encode_uint(w, ICN_data->status_word);
+        w = mp_encode_uint(w, NTC_data->status_word);
 
         w = mp_encode_str(w, "ua", 2);
-        w = mp_encode_double(w, ICN_data->uA);
+        w = mp_encode_double(w, NTC_data->uA);
 
         w = mp_encode_str(w, "err_bound", strlen("err_bound"));
-        w = mp_encode_double(w, ICN_data->err_bound);
+        w = mp_encode_double(w, NTC_data->err_bound);
     }
 
     // Write OCN data to file

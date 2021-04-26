@@ -38,6 +38,7 @@
 #include <stdio.h>
 
 #include "verbose.h"
+
 #include "ntp_auth.h"
 
 /*
@@ -154,7 +155,7 @@ void read_key_file(char ** key_data, char * file_path, int is_private_key)
 		}
 	}
 
-	// Check if the last line with no '\n' had data
+	// Check if the last line with no '\n' had data. The add_auth_key checks that the contents of the line
 	buff[buff_size] = 0;
     add_auth_key(key_data, buff, is_private_key);
 	

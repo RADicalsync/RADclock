@@ -287,7 +287,7 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	 * This should be populated by the SHM
 	 * server anomaly detection functions of the SHM thread, and be accessed by
 	 * some to-be-determined SHM output structures off the handle.
-	 * Those functions can take care of mapping the icn_ids into the flag form
+	 * Those functions can take care of mapping the ntc_ids into the flag form
 	 * required here (also needed in thread_ntp_server when extracting the inband signal).
 	 */
 	uint64_t icn_status;	// status of ICN i recorded in (i-1)th LSBit
@@ -399,7 +399,7 @@ ntp_client(struct radclock_handle *handle)
 	int ocn_id = -1;
 	int key_id = -1;
 	if (handle->conf->is_cn) // Only attempt authenticated ntp communication to OCNs from CN
-		ocn_id = handle->conf->time_server_ocn_mapping[sID];
+		ocn_id = OCN_ID(handle->conf->time_server_ntc_mapping[sID]);
 
 	char * ntp_key = NULL;
 	if (ocn_id > -1 && ocn_id + PRIVATE_CN_NTP_KEYS < MAX_NTP_KEYS && handle->ntp_keys)
