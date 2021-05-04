@@ -18,6 +18,10 @@
 #include <asm/div64.h>
 #include <asm/io.h>
 
+#ifdef CONFIG_RADCLOCK
+typedef u64 vcounter_t;
+#endif
+
 /* clocksource cycle base type */
 typedef u64 cycle_t;
 struct clocksource;
@@ -188,6 +192,23 @@ struct clocksource {
 	void (*suspend)(struct clocksource *cs);
 	void (*resume)(struct clocksource *cs);
 
+#ifdef CONFIG_RADCLOCK
+	/* Store a record of the virtual counter updated on each harware clock
+	 * tick, and the current value of the virtual counter.
+	 */
+	vcounter_t vcounter_record;
+	vcounter_t vcounter_source_record;
+	/* Use of cumulative counter if the underlying hardware wraps up.
+	 * If we have a wide and reliable counter, pass the hardware reading
+	 * through. This is tunable via sysfs
+	 */
+#define VCOUNTER_PT_NO		0
+#define VCOUNTER_PT_YES		1
+	uint8_t vcounter_passthrough;
+	vcounter_t (*read_vcounter)(struct clocksource *cs);
+#endif
+
+
 	/* private: */
 #ifdef CONFIG_CLOCKSOURCE_WATCHDOG
 	/* Watchdog related data, used by the framework */
@@ -289,6 +310,10 @@ extern void clocksource_mark_unstable(struct clocksource *cs);
 
 extern void
 clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 minsec);
+
+#ifdef CONFIG_RADCLOCK
+extern vcounter_t read_vcounter(void);
+#endif
 
 /*
  * Don't call __clocksource_register_scale directly, use

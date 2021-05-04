@@ -62,6 +62,10 @@
 #include <net/dst.h>
 #include <net/checksum.h>
 
+#ifdef CONFIG_RADCLOCK
+#include <linux/clocksource.h>
+#endif
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -327,6 +331,11 @@ struct sock {
 	void			*sk_protinfo;
 	struct timer_list	sk_timer;
 	ktime_t			sk_stamp;
+	#ifdef CONFIG_RADCLOCK
+	vcounter_t		sk_vcount_stamp;
+	ktime_t			sk_stamp_fair; 	/* Receives the fair tv from skbuff, ns resolution */
+	int			sk_radclock_tsmode;
+	#endif
 	struct socket		*sk_socket;
 	void			*sk_user_data;
 	struct page		*sk_sndmsg_page;

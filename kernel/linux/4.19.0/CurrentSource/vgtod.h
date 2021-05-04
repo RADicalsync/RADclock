@@ -18,6 +18,10 @@ struct vsyscall_gtod_data {
 		cycle_t	mask;
 		u32	mult;
 		u32	shift;
+#ifdef CONFIG_RADCLOCK
+		vcounter_t vcounter_record;
+		vcounter_t vcounter_source_record;
+#endif
 	} clock;
 	struct timespec wall_to_monotonic;
 	struct timespec wall_time_coarse;

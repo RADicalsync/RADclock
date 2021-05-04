@@ -2613,6 +2613,24 @@ static int do_siocgstampns(struct net *net, struct socket *sock,
 	return err;
 }
 
+
+#ifdef CONFIG_RADCLOCK
+static int do_siocgradclockstamp(struct net *net, struct socket *sock,
+			 unsigned int cmd, unsigned long long __user *up)
+{
+	mm_segment_t old_fs = get_fs();
+	__u64 val;
+	int err;
+
+	set_fs (KERNEL_DS);
+	err = sock_do_ioctl(net, sock, cmd, (unsigned long)&val);
+	set_fs (old_fs);
+	if (!err)
+		err = put_user(val, up);
+	return err;
+}
+#endif
+
 static int dev_ifname32(struct net *net, struct compat_ifreq __user *uifr32)
 {
 	struct ifreq __user *uifr;
@@ -3155,6 +3173,10 @@ static int compat_sock_ioctl_trans(struct file *file, struct socket *sock,
 		return do_siocgstampns(net, sock, cmd, argp);
 	case SIOCSHWTSTAMP:
 		return compat_siocshwtstamp(net, argp);
+#ifdef CONFIG_RADCLOCK
+	case SIOCGRADCLOCKSTAMP:
+		return do_siocgradclockstamp(net, sock, cmd, argp);
+#endif
 
 	case FIOSETOWN:
 	case SIOCSPGRP:

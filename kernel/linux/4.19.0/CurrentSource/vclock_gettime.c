@@ -216,3 +216,98 @@ notrace time_t __vdso_time(time_t *t)
 }
 int time(time_t *t)
 	__attribute__((weak, alias("__vdso_time")));
+
+#ifdef CONFIG_RADCLOCK
+/* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
+/* Only called while gtod->lock is held */
+notrace static inline vcounter_t vread_ffcounter_delta(void)
+{
+	if (gtod->clock.vclock_mode == VCLOCK_TSC)
+		return((vread_tsc() - gtod->clock.vcounter_source_record)
+				& gtod->clock.mask);
+	else
+		return((vread_hpet() - gtod->clock.vcounter_source_record)
+				& gtod->clock.mask);
+
+}
+
+/* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
+notrace static inline vcounter_t vread_ffcounter(void)
+{
+	unsigned long seq;
+	vcounter_t vcount;
+
+	do {
+		seq = read_seqbegin(&gtod->lock);
+		vcount = gtod->clock.vcounter_record + vread_ffcounter_delta();
+	} while (read_seqretry(&gtod->lock, seq));
+
+	return vcount;
+}
+
+notrace static long vdso_fallback_get_vcounter(vcounter_t *vcounter)
+{
+	long ret;
+	asm("syscall" : "=a" (ret) :
+	    "0" (__NR_get_vcounter), "D" (vcounter) : "memory");
+	return ret;
+}
+
+notrace int __vdso_get_vcounter(vcounter_t *vcounter)
+{
+	vcounter_t vcount;
+
+	if (likely(gtod->clock.vclock_mode != VCLOCK_NONE)) {
+		vcount = vread_ffcounter();
+		*vcounter = vcount;
+		return 0;
+	}
+	return vdso_fallback_get_vcounter(vcounter);
+}
+int get_vcounter(vcounter_t *)
+	__attribute__((weak, alias("__vdso_get_vcounter")));
+
+
+notrace int __vdso_get_vcounter_latency(vcounter_t *vcounter, cycle_t *vcount_lat, cycle_t *tsc_lat)
+{
+/* XEN paravirtualization does not seem to like the rdtscll call, and redefines
+ * it in parvirt.h. It is a bit dodgy but allow compilation ... and not used so
+ * far, it is more a record what should be done.
+ */
+#ifdef CONFIG_PARAVIRT
+#define real_rdtscll(val) (val = __native_read_tsc())
+#else
+#define real_rdtscll(val) rdtscll(val)
+#endif
+	vcounter_t vcount;
+	cycle_t tsc1, tsc2, tsc3;
+
+	long ret;
+
+	if (likely(gtod->clock.vclock_mode != VCLOCK_NONE)) {
+		/* One for fun and warmup */
+		real_rdtscll(tsc1);
+		__asm __volatile("lfence" ::: "memory");
+		real_rdtscll(tsc1);
+		__asm __volatile("lfence" ::: "memory");
+		real_rdtscll(tsc2);
+		__asm __volatile("lfence" ::: "memory");
+		vcount = vread_ffcounter();
+		__asm __volatile("lfence" ::: "memory");
+		real_rdtscll(tsc3);
+		__asm __volatile("lfence" ::: "memory");
+
+		*vcounter = vcount;
+		*vcount_lat = tsc3 - tsc2;
+		*tsc_lat = tsc2 - tsc1;
+
+		return 0;
+	}
+	asm("syscall" : "=a" (ret) :
+	    "0" (__NR_get_vcounter_latency), "D" (vcounter), "S" (vcount_lat), "q" (tsc_lat)  : "memory");
+	return ret;
+}
+long get_vcounter_latency(vcounter_t *, cycle_t *, cycle_t *)
+	__attribute__((weak, alias("__vdso_get_vcounter_latency")));
+
+#endif  /* CONFIG_RADCLOCK */

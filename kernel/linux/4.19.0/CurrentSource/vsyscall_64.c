@@ -105,6 +105,10 @@ void update_vsyscall(struct timespec *wall_time, struct timespec *wtm,
 	vsyscall_gtod_data.wall_time_nsec	= wall_time->tv_nsec;
 	vsyscall_gtod_data.wall_to_monotonic	= *wtm;
 	vsyscall_gtod_data.wall_time_coarse	= __current_kernel_time();
+#ifdef CONFIG_RADCLOCK
+	vsyscall_gtod_data.clock.vcounter_record = clock->vcounter_record;
+	vsyscall_gtod_data.clock.vcounter_source_record = clock->vcounter_source_record;
+#endif
 
 	write_sequnlock_irqrestore(&vsyscall_gtod_data.lock, flags);
 }

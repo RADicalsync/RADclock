@@ -114,6 +114,49 @@ SYSCALL_DEFINE2(gettimeofday, struct timeval __user *, tv,
 	return 0;
 }
 
+
+#ifdef CONFIG_RADCLOCK
+asmlinkage long sys_get_vcounter(vcounter_t *vcounter)
+{
+	vcounter_t vcount;
+	vcount = read_vcounter();
+
+	if (copy_to_user(vcounter, &vcount, sizeof(vcounter_t)))
+		return -EFAULT;
+	return 0;
+}
+
+asmlinkage long sys_get_vcounter_latency(vcounter_t *vcounter, cycle_t *vcount_lat, cycle_t *tsc_lat)
+{
+	vcounter_t vcount;
+	cycle_t tsc1, tsc2, tsc3;
+
+	/* One for fun and warmup */
+	rdtscll(tsc1);
+	__asm __volatile("lfence" ::: "memory");
+	rdtscll(tsc1);
+	__asm __volatile("lfence" ::: "memory");
+	rdtscll(tsc2);
+	__asm __volatile("lfence" ::: "memory");
+	vcount = read_vcounter();
+	__asm __volatile("lfence" ::: "memory");
+	rdtscll(tsc3);
+	__asm __volatile("lfence" ::: "memory");
+
+	tsc1 = tsc2 - tsc1;
+	tsc2 = tsc3 - tsc2;
+
+	if (copy_to_user(vcounter, &vcount, sizeof(vcounter_t)))
+		return -EFAULT;
+	if (copy_to_user(vcount_lat, &tsc2, sizeof(cycle_t)))
+		return -EFAULT;
+	if (copy_to_user(tsc_lat, &tsc1, sizeof(cycle_t)))
+		return -EFAULT;
+	return 0;
+}
+#endif
+
+
 /*
  * Adjust the time obtained from the CMOS to be UTC time instead of
  * local time.

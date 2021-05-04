@@ -75,6 +75,9 @@ struct file_handle;
 #include <linux/quota.h>
 #include <linux/key.h>
 #include <trace/syscall.h>
+#ifdef CONFIG_RADCLOCK
+#include <linux/clocksource.h>
+#endif
 
 #define __SC_DECL1(t1, a1)	t1 a1
 #define __SC_DECL2(t2, a2, ...) t2 a2, __SC_DECL1(__VA_ARGS__)
@@ -856,5 +859,10 @@ asmlinkage long sys_process_vm_writev(pid_t pid,
 				      const struct iovec __user *rvec,
 				      unsigned long riovcnt,
 				      unsigned long flags);
+
+#ifdef CONFIG_RADCLOCK
+asmlinkage long sys_get_vcounter(vcounter_t *vcounter);
+asmlinkage long sys_get_vcounter_latency(vcounter_t *vcounter, cycle_t *vcount_lat, cycle_t *tsc_lat);
+#endif
 
 #endif

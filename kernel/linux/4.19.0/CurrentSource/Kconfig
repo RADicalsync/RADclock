@@ -1,0 +1,19 @@
+#
+# RADclock device driver configuration
+#
+
+menu "RADclock Driver"
+
+#
+# Would be nice to go back to having this as a module
+#
+config RADCLOCK
+	boolean "Kernel support for the RADclock"
+#	depends on EXPERIMENTAL && GENERIC_TIME
+	default y
+	help
+	  Defines support and access to a consistent virtual counter, the basis
+	  of the RADclock (a feed-forward synchronization algorithm) and corresponding
+	  applications.
+
+endmenu

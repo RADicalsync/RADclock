@@ -127,6 +127,10 @@
 /* hardware time stamping: parameters in linux/net_tstamp.h */
 #define SIOCSHWTSTAMP   0x89b0
 
+#ifdef CONFIG_RADCLOCK
+#define SIOCGRADCLOCKSTAMP 0x89b1	/* get current vcounter timestamp */
+#endif
+
 /* Device private ioctl calls */
 
 /*

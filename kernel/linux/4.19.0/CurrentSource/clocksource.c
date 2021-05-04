@@ -177,6 +177,72 @@ static DEFINE_MUTEX(clocksource_mutex);
 static char override_name[32];
 static int finished_booting;
 
+#ifdef CONFIG_RADCLOCK
+static char override_passthrough[8];
+
+/**
+ * read_vcounter_delta - retrieve the clocksource cycles since last tick
+ *
+ * private function, must hold xtime_lock lock when being
+ * called. Returns the number of cycles on the current
+ * clocksource since the last tick (since the last call to
+ * update_wall_time).
+ *
+ */
+static inline vcounter_t read_vcounter_delta(struct clocksource *cs)
+{
+	return((cs->read(cs) - cs->vcounter_source_record) & cs->mask);
+}
+
+/**
+ * read_vcounter_cumulative - compute the current value of the cumulative
+ * vcounter. This assumes the hardware wraps up (small counter)
+ *
+ */
+vcounter_t read_vcounter_cumulative(struct clocksource *cs)
+{
+//	unsigned long seq;
+	vcounter_t vcount;
+
+//	do {
+//		seq = read_seqbegin(&xtime_lock);
+		vcount = cs->vcounter_record + read_vcounter_delta(cs);
+//	} while (read_seqretry(&xtime_lock, seq));
+
+	return vcount;
+}
+
+/**
+ * read_vcounter_passthrough - the vcounter relies on the underlying hardware
+ * counter. Direct reads from hardware, required for virtual OS (e.g. Xen)
+ */
+vcounter_t read_vcounter_passthrough(struct clocksource *cs)
+{
+//	unsigned long seq;
+	vcounter_t vcount;
+
+//	do {
+//		seq = read_seqbegin(&xtime_lock);
+		vcount = cs->read(cs);
+//	} while (read_seqretry(&xtime_lock, seq));
+
+	return vcount;
+}
+
+
+/**
+ * read_vcounter - Return the value of the vcounter to functions within the
+ * kernel.
+ */
+vcounter_t read_vcounter(void)
+{
+	return curr_clocksource->read_vcounter(curr_clocksource);
+}
+
+EXPORT_SYMBOL(read_vcounter);
+#endif
+
+
 #ifdef CONFIG_CLOCKSOURCE_WATCHDOG
 static void clocksource_watchdog_work(struct work_struct *work);
 
@@ -590,6 +656,31 @@ static void clocksource_select(void)
 			best = cs;
 		break;
 	}
+
+#ifdef CONFIG_RADCLOCK
+	/*
+	 * Keep the current passthrough mode when changing clocksource.
+	 * If curr_clocksource == best, it is a bit useless, but simple code.
+	 */
+	if (curr_clocksource)
+	{
+		if (curr_clocksource->vcounter_passthrough == VCOUNTER_PT_YES)
+		{
+			best->read_vcounter = &read_vcounter_passthrough;
+			best->vcounter_passthrough = VCOUNTER_PT_YES;
+		}
+		if (curr_clocksource->vcounter_passthrough == VCOUNTER_PT_NO)
+		{
+			best->read_vcounter = &read_vcounter_cumulative;
+			best->vcounter_passthrough = VCOUNTER_PT_NO;
+		}
+	}
+	else {
+		best->read_vcounter = &read_vcounter_cumulative;
+		best->vcounter_passthrough = VCOUNTER_PT_NO;
+	}
+#endif
+
 	if (curr_clocksource != best) {
 		printk(KERN_INFO "Switching to clocksource %s\n", best->name);
 		curr_clocksource = best;
@@ -880,6 +971,90 @@ sysfs_show_available_clocksources(struct sys_device *dev,
 	return count;
 }
 
+
+
+#ifdef CONFIG_RADCLOCK
+/**
+ * sysfs_show_passthrough_clocksource - sysfs interface for showing vcounter
+ * reading mode
+ * @dev:	unused
+ * @buf:	char buffer to be filled with passthrough mode
+ *
+ * Provides sysfs interface for showing vcounter reading mode
+ */
+static ssize_t
+sysfs_show_passthrough_clocksource(struct sys_device *dev,
+				  struct sysdev_attribute *attr,
+				  char *buf)
+{
+	ssize_t count = 0;
+
+	mutex_lock(&clocksource_mutex);
+	if (curr_clocksource->vcounter_passthrough == VCOUNTER_PT_YES)
+		count = snprintf(buf,
+				 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
+				"1");
+	else
+		count = snprintf(buf,
+				 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
+				"0");
+
+	mutex_unlock(&clocksource_mutex);
+
+	count += snprintf(buf + count,
+			  max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
+
+	return count;
+}
+
+/**
+ * sysfs_override_passthrough_clocksource - interface for manually overriding
+ * the vcounter passthrough mode
+ * @dev:	unused
+ * @buf:	new value of passthrough mode (0 or 1)
+ * @count:	length of buffer
+ *
+ * Takes input from sysfs interface for manually overriding the vcounter
+ * passthrough mode.
+ */
+static ssize_t sysfs_override_passthrough_clocksource(struct sys_device *dev,
+					  struct sysdev_attribute *attr,
+					  const char *buf, size_t count)
+{
+	size_t ret = count;
+
+	/* strings from sysfs write are not 0 terminated! */
+	if (count >= sizeof(override_passthrough))
+		return -EINVAL;
+
+	/* strip of \n: */
+	if (buf[count-1] == '\n')
+		count--;
+
+	mutex_lock(&clocksource_mutex);
+
+	if (count > 0)
+		memcpy(override_passthrough, buf, count);
+	override_passthrough[count] = 0;
+
+	if ( !strcmp(override_passthrough, "0"))
+	{
+		curr_clocksource->vcounter_passthrough = VCOUNTER_PT_NO;
+		curr_clocksource->read_vcounter = &read_vcounter_cumulative;
+	}
+	if ( !strcmp(override_passthrough, "1"))
+	{
+		curr_clocksource->vcounter_passthrough = VCOUNTER_PT_YES;
+		curr_clocksource->read_vcounter = &read_vcounter_passthrough;
+	}
+
+	mutex_unlock(&clocksource_mutex);
+
+	return ret;
+}
+#endif
+
+
 /*
  * Sysfs setup bits:
  */
@@ -888,6 +1063,12 @@ static SYSDEV_ATTR(current_clocksource, 0644, sysfs_show_current_clocksources,
 
 static SYSDEV_ATTR(available_clocksource, 0444,
 		   sysfs_show_available_clocksources, NULL);
+
+#ifdef CONFIG_RADCLOCK
+static SYSDEV_ATTR(passthrough_clocksource, 0644, sysfs_show_passthrough_clocksource,
+		   sysfs_override_passthrough_clocksource);
+#endif
+
 
 static struct sysdev_class clocksource_sysclass = {
 	.name = "clocksource",
@@ -912,6 +1093,12 @@ static int __init init_clocksource_sysfs(void)
 		error = sysdev_create_file(
 				&device_clocksource,
 				&attr_available_clocksource);
+#ifdef CONFIG_RADCLOCK
+	if (!error)
+		error = sysdev_create_file(
+				&device_clocksource,
+				&attr_passthrough_clocksource);
+#endif
 	return error;
 }
 

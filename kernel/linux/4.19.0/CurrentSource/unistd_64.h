@@ -686,6 +686,12 @@ __SYSCALL(__NR_getcpu, sys_getcpu)
 __SYSCALL(__NR_process_vm_readv, sys_process_vm_readv)
 #define __NR_process_vm_writev			311
 __SYSCALL(__NR_process_vm_writev, sys_process_vm_writev)
+#ifdef CONFIG_RADCLOCK
+#define __NR_get_vcounter			312
+__SYSCALL(__NR_get_vcounter, sys_get_vcounter)
+#define __NR_get_vcounter_latency	313
+__SYSCALL(__NR_get_vcounter_latency, sys_get_vcounter_latency)
+#endif
 
 #ifndef __NO_STUBS
 #define __ARCH_WANT_OLD_READDIR

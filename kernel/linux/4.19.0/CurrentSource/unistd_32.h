@@ -354,10 +354,14 @@
 #define __NR_setns		346
 #define __NR_process_vm_readv	347
 #define __NR_process_vm_writev	348
+#ifdef CONFIG_RADCLOCK
+#define __NR_get_vcounter	349
+#define __NR_get_vcounter_latency	350
+#endif
 
 #ifdef __KERNEL__
 
-#define NR_syscalls 349
+#define NR_syscalls 351
 
 #define __ARCH_WANT_IPC_PARSE_VERSION
 #define __ARCH_WANT_OLD_READDIR
