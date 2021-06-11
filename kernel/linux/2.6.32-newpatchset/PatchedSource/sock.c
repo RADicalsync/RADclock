@@ -130,6 +130,10 @@
 #include <net/tcp.h>
 #endif
 
+#ifdef CONFIG_RADCLOCK
+extern int sysfs_ffclock_tsmode;
+#endif
+
 /*
  * Each address family might have different locking rules, so we have
  * one slock key per address family:
@@ -1885,6 +1889,11 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 	sk->sk_sndtimeo		=	MAX_SCHEDULE_TIMEOUT;
 
 	sk->sk_stamp = ktime_set(-1L, 0);
+	#ifdef CONFIG_RADCLOCK
+	sk->sk_radclock_tsmode = sysfs_ffclock_tsmode;
+	sk->sk_vcount_stamp = 0;
+	sk->sk_stamp_fair = ktime_set(-1L, -1L);
+	#endif
 
 	/*
 	 * Before updating sk_refcnt, we must commit prior changes to memory

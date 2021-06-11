@@ -336,3 +336,7 @@ ENTRY(sys_call_table)
 	.long sys_pwritev
 	.long sys_rt_tgsigqueueinfo	/* 335 */
 	.long sys_perf_event_open
+#ifdef CONFIG_RADCLOCK
+	.long sys_get_vcounter
+	.long sys_get_vcounter_latency
+#endif

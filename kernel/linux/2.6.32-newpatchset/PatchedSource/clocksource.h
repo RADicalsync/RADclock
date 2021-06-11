@@ -18,6 +18,10 @@
 #include <asm/div64.h>
 #include <asm/io.h>
 
+#ifdef CONFIG_RADCLOCK
+typedef u64 vcounter_t;
+#endif
+
 /* clocksource cycle base type */
 typedef u64 cycle_t;
 struct clocksource;
@@ -187,6 +191,22 @@ struct clocksource {
 	 */
 	cycle_t cycle_last ____cacheline_aligned_in_smp;
 
+#ifdef CONFIG_RADCLOCK
+	/* Store a record of the virtual counter updated on each harware clock
+	 * tick, and the current value of the virtual counter.
+	 */
+	vcounter_t vcounter_record;
+	vcounter_t vcounter_source_record;
+	/* Use of cumulative counter if the underlying hardware wraps up.
+	 * If we have a wide and reliable counter, pass the hardware reading
+	 * through. This is tunable via sysfs
+	 */
+#define VCOUNTER_PT_NO		0
+#define VCOUNTER_PT_YES		1
+	uint8_t vcounter_passthrough;
+	vcounter_t (*read_vcounter)(struct clocksource *cs);
+#endif
+
 #ifdef CONFIG_CLOCKSOURCE_WATCHDOG
 	/* Watchdog related data, used by the framework */
 	struct list_head wd_list;
@@ -295,5 +315,9 @@ static inline void update_vsyscall_tz(void)
 #endif
 
 extern void timekeeping_notify(struct clocksource *clock);
+
+#ifdef CONFIG_RADCLOCK
+extern vcounter_t read_vcounter(void);
+#endif
 
 #endif /* _LINUX_CLOCKSOURCE_H */

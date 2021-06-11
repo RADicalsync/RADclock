@@ -68,6 +68,9 @@ struct perf_event_attr;
 #include <linux/quota.h>
 #include <linux/key.h>
 #include <trace/syscall.h>
+#ifdef CONFIG_RADCLOCK
+#include <linux/clocksource.h>
+#endif
 
 #define __SC_DECL1(t1, a1)	t1 a1
 #define __SC_DECL2(t2, a2, ...) t2 a2, __SC_DECL1(__VA_ARGS__)
@@ -883,4 +886,10 @@ asmlinkage long sys_perf_event_open(
 asmlinkage long sys_mmap_pgoff(unsigned long addr, unsigned long len,
 			unsigned long prot, unsigned long flags,
 			unsigned long fd, unsigned long pgoff);
+
+#ifdef CONFIG_RADCLOCK
+asmlinkage long sys_get_vcounter(vcounter_t *vcounter);
+asmlinkage long sys_get_vcounter_latency(vcounter_t *vcounter, cycle_t *vcount_lat, cycle_t *tsc_lat);
+#endif
+
 #endif

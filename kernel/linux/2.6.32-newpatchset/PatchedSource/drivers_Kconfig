@@ -123,4 +123,7 @@ source "drivers/ixdsp/Kconfig"
 source "drivers/asysops/Kconfig"
 
 source "drivers/sensors/Kconfig"
+
+source "drivers/radclock/Kconfig"
+
 endmenu

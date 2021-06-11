@@ -101,6 +101,10 @@
 #include <linux/uid_stat.h>
 #endif
 
+#ifdef CONFIG_RADCLOCK
+#include <linux/clocksource.h>
+#endif
+
 static int sock_no_open(struct inode *irrelevant, struct file *dontcare);
 static ssize_t sock_aio_read(struct kiocb *iocb, const struct iovec *iov,
 			 unsigned long nr_segs, loff_t pos);
@@ -972,6 +976,15 @@ static long sock_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 				err = dlci_ioctl_hook(cmd, argp);
 			mutex_unlock(&dlci_ioctl_mutex);
 			break;
+		#ifdef CONFIG_RADCLOCK
+		case SIOCGRADCLOCKSTAMP:
+		{
+			vcounter_t *stamp = (vcounter_t *) arg;
+			*stamp = sock->sk->sk_vcount_stamp;
+			err =0;
+			break;
+		}
+		#endif
 		default:
 			err = sock->ops->ioctl(sock, cmd, arg);
 

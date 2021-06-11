@@ -84,6 +84,12 @@
 
 #define SIOCWANDEV	0x894A		/* get/set netdev parameters	*/
 
+#ifdef CONFIG_RADCLOCK
+#define SIOCGRADCLOCKSTAMP 0x894B	/* get current vcounter timestamp */
+#define SIOCSRADCLOCKTSMODE	0x894C	// manual port to fix this
+#define SIOCGRADCLOCKTSMODE	0x894D  //     "
+#endif
+
 /* ARP cache control calls. */
 		    /*  0x8950 - 0x8952  * obsolete calls, don't re-use */
 #define SIOCDARP	0x8953		/* delete ARP table entry	*/

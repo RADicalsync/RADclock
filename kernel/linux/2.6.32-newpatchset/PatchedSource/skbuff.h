@@ -30,6 +30,10 @@
 #include <linux/dmaengine.h>
 #include <linux/hrtimer.h>
 
+#ifdef CONFIG_RADCLOCK
+#include <linux/clocksource.h>
+#endif
+
 /* Don't change this without changing skb_csum_unnecessary! */
 #define CHECKSUM_NONE 0
 #define CHECKSUM_UNNECESSARY 1
@@ -317,6 +321,10 @@ struct sk_buff {
 
 	struct sock		*sk;
 	ktime_t			tstamp;
+	#ifdef CONFIG_RADCLOCK
+	vcounter_t		vcount_stamp;
+	ktime_t 		tstamp_fair; /* Specific to the FAIR_COMPARE mode, ns resolution */
+	#endif
 	struct net_device	*dev;
 
 	unsigned long		_skb_dst;

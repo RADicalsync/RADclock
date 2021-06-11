@@ -67,6 +67,11 @@ static void timekeeper_setup_internals(struct clocksource *clock)
 	timekeeper.clock = clock;
 	clock->cycle_last = clock->read(clock);
 
+#ifdef CONFIG_RADCLOCK
+	clock->vcounter_record = 0;
+	clock->vcounter_source_record = (vcounter_t) clock->cycle_last;
+#endif
+
 	/* Do the ns -> cycle conversion first, using original mult */
 	tmp = NTP_INTERVAL_LENGTH;
 	tmp <<= clock->shift;
@@ -744,6 +749,10 @@ void update_wall_time(void)
 	cycle_t offset;
 	u64 nsecs;
 
+#ifdef CONFIG_RADCLOCK
+	vcounter_t vcounter_delta;
+#endif
+
 	/* Make sure we're fully resumed: */
 	if (unlikely(timekeeping_suspended))
 		return;
@@ -755,6 +764,12 @@ void update_wall_time(void)
 	offset = timekeeper.cycle_interval;
 #endif
 	timekeeper.xtime_nsec = (s64)xtime.tv_nsec << timekeeper.shift;
+
+#ifdef CONFIG_RADCLOCK
+	vcounter_delta = (clock->read(clock) - clock->vcounter_source_record) & clock->mask;
+	clock->vcounter_record += vcounter_delta;
+	clock->vcounter_source_record += vcounter_delta;
+#endif
 
 	/* normally this loop will run just once, however in the
 	 * case of lost or late ticks, it will accumulate correctly.

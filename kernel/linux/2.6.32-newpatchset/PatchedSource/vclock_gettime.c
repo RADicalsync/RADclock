@@ -157,3 +157,90 @@ notrace int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz)
 }
 int gettimeofday(struct timeval *, struct timezone *)
 	__attribute__((weak, alias("__vdso_gettimeofday")));
+
+
+#ifdef CONFIG_RADCLOCK
+/* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
+/* Only called while gtod->lock is held */
+notrace static inline vcounter_t vread_vcounter_delta(void)
+{
+	return((gtod->clock.vread() - gtod->clock.vcounter_source_record) & gtod->clock.mask);
+}
+
+/* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
+notrace static inline vcounter_t vread_vcounter(void)
+{
+	unsigned long seq;
+	vcounter_t vcount;
+
+	do {
+		seq = read_seqbegin(&xtime_lock);
+		vcount = gtod->clock.vcounter_record + vread_vcounter_delta();
+	} while (read_seqretry(&xtime_lock, seq));
+
+	return vcount;
+}
+
+notrace int __vdso_get_vcounter(vcounter_t *vcounter)
+{
+	vcounter_t vcount;
+
+	long ret;
+	/* the reference to the gtod sysctl could be changed/removed */
+	if (likely(gtod->sysctl_enabled && gtod->clock.vread)) {
+		vcount = vread_vcounter();
+		*vcounter = vcount;
+		return 0;
+	}
+	asm("syscall" : "=a" (ret) :
+	    "0" (__NR_get_vcounter), "D" (vcounter) : "memory");
+	return ret;
+}
+long get_vcounter(vcounter_t *)
+	__attribute__((weak, alias("__vdso_get_vcounter")));
+
+
+notrace int __vdso_get_vcounter_latency(vcounter_t *vcounter, cycle_t *vcount_lat, cycle_t *tsc_lat)
+{
+/* XEN paravirtualization does not seem to like the rdtscll call, and redefines
+ * it in parvirt.h. It is a bit dodgy but allow compilation ... and not used so
+ * far, it is more a record what should be done.
+ */
+#ifdef CONFIG_PARAVIRT
+#define real_rdtscll(val) (val = __native_read_tsc())
+#else
+#define real_rdtscll(val) rdtscll(val)
+#endif
+	vcounter_t vcount;
+	cycle_t tsc1, tsc2, tsc3;
+
+	long ret;
+	/* the reference to the gtod sysctl could be changed/removed */
+	if (likely(gtod->sysctl_enabled && gtod->clock.vread)) {
+
+		/* One for fun and warmup */
+		real_rdtscll(tsc1);
+		__asm __volatile("lfence" ::: "memory");
+		real_rdtscll(tsc1);
+		__asm __volatile("lfence" ::: "memory");
+		real_rdtscll(tsc2);
+		__asm __volatile("lfence" ::: "memory");
+		vcount = read_vcounter();
+		__asm __volatile("lfence" ::: "memory");
+		real_rdtscll(tsc3);
+		__asm __volatile("lfence" ::: "memory");
+
+		*vcounter = vcount;
+		*vcount_lat = tsc3 - tsc2;
+		*tsc_lat = tsc2 - tsc1;
+
+		return 0;
+	}
+	asm("syscall" : "=a" (ret) :
+	    "0" (__NR_get_vcounter_latency), "D" (vcounter), "S" (vcount_lat), "q" (tsc_lat)  : "memory");
+	return ret;
+}
+long get_vcounter_latency(vcounter_t *, cycle_t *, cycle_t *)
+	__attribute__((weak, alias("__vdso_get_vcounter_latency")));
+
+#endif  /* CONFIG_RADCLOCK */
