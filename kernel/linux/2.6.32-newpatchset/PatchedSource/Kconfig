@@ -9,7 +9,7 @@ menu "RADclock Driver"
 #
 config RADCLOCK
 	boolean "Kernel support for the RADclock"
-	depends on EXPERIMENTAL && GENERIC_TIME
+#	depends on EXPERIMENTAL && GENERIC_TIME
 	default y
 	help
 	  Defines support and access to a consistent virtual counter, the basis

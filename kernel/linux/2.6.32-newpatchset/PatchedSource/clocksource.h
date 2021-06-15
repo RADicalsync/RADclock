@@ -26,6 +26,10 @@ typedef u64 vcounter_t;
 typedef u64 cycle_t;
 struct clocksource;
 
+#ifdef CONFIG_ARCH_CLOCKSOURCE_DATA
+#include <asm/clocksource.h>
+#endif
+
 /**
  * struct cyclecounter - hardware abstraction for a free running counter
  *	Provides completely state-free accessors to the underlying hardware.
@@ -71,7 +75,7 @@ struct timecounter {
 
 /**
  * cyclecounter_cyc2ns - converts cycle counter cycles to nanoseconds
- * @tc:		Pointer to cycle counter.
+ * @cc:		Pointer to cycle counter.
  * @cycles:	Cycles
  *
  * XXX - This could use some mult_lxl_ll() asm optimization. Same code
@@ -114,7 +118,7 @@ extern u64 timecounter_read(struct timecounter *tc);
  *                        time base as values returned by
  *                        timecounter_read()
  * @tc:		Pointer to time counter.
- * @cycle:	a value returned by tc->cc->read()
+ * @cycle_tstamp:	a value returned by tc->cc->read()
  *
  * Cycle counts that are converted correctly as long as they
  * fall into the interval [-1/2 max cycle count, +1/2 max cycle count],
@@ -156,40 +160,37 @@ extern u64 timecounter_cyc2time(struct timecounter *tc,
  * @mult:		cycle to nanosecond multiplier
  * @shift:		cycle to nanosecond divisor (power of two)
  * @max_idle_ns:	max idle time permitted by the clocksource (nsecs)
+ * @maxadj:		maximum adjustment value to mult (~11%)
  * @flags:		flags describing special properties
- * @vread:		vsyscall based read
+ * @archdata:		arch-specific data
+ * @suspend:		suspend function for the clocksource, if necessary
  * @resume:		resume function for the clocksource, if necessary
+ * @cycle_last:		most recent cycle counter value seen by ::read()
  */
 struct clocksource {
 	/*
-	 * First part of structure is read mostly
+	 * Hotpath data, fits in a single cache line when the
+	 * clocksource itself is cacheline aligned.
 	 */
-	char *name;
-	struct list_head list;
-	int rating;
 	cycle_t (*read)(struct clocksource *cs);
-	int (*enable)(struct clocksource *cs);
-	void (*disable)(struct clocksource *cs);
+	cycle_t cycle_last;
 	cycle_t mask;
 	u32 mult;
 	u32 shift;
 	u64 max_idle_ns;
-	unsigned long flags;
-	cycle_t (*vread)(void);
-	void (*resume)(void);
-#ifdef CONFIG_IA64
-	void *fsys_mmio;        /* used by fsyscall asm code */
-#define CLKSRC_FSYS_MMIO_SET(mmio, addr)      ((mmio) = (addr))
-#else
-#define CLKSRC_FSYS_MMIO_SET(mmio, addr)      do { } while (0)
+	u32 maxadj;
+#ifdef CONFIG_ARCH_CLOCKSOURCE_DATA
+	struct arch_clocksource_data archdata;
 #endif
 
-	/*
-	 * Second part is written at each timer interrupt
-	 * Keep it in a different cache line to dirty no
-	 * more than one cache line.
-	 */
-	cycle_t cycle_last ____cacheline_aligned_in_smp;
+	const char *name;
+	struct list_head list;
+	int rating;
+	int (*enable)(struct clocksource *cs);
+	void (*disable)(struct clocksource *cs);
+	unsigned long flags;
+	void (*suspend)(struct clocksource *cs);
+	void (*resume)(struct clocksource *cs);
 
 #ifdef CONFIG_RADCLOCK
 	/* Store a record of the virtual counter updated on each harware clock
@@ -207,12 +208,15 @@ struct clocksource {
 	vcounter_t (*read_vcounter)(struct clocksource *cs);
 #endif
 
+
+	/* private: */
 #ifdef CONFIG_CLOCKSOURCE_WATCHDOG
 	/* Watchdog related data, used by the framework */
 	struct list_head wd_list;
+	cycle_t cs_last;
 	cycle_t wd_last;
 #endif
-};
+} ____cacheline_aligned;
 
 /*
  * Clock source flags bits::
@@ -280,6 +284,9 @@ static inline u32 clocksource_hz2mult(u32 hz, u32 shift_constant)
 
 /**
  * clocksource_cyc2ns - converts clocksource cycles to nanoseconds
+ * @cycles:	cycles
+ * @mult:	cycle to nanosecond multiplier
+ * @shift:	cycle to nanosecond divisor (power of two)
  *
  * Converts cycles to nanoseconds, using the given mult and shift.
  *
@@ -291,21 +298,68 @@ static inline s64 clocksource_cyc2ns(cycle_t cycles, u32 mult, u32 shift)
 }
 
 
-/* used to install a new clocksource */
 extern int clocksource_register(struct clocksource*);
 extern void clocksource_unregister(struct clocksource*);
 extern void clocksource_touch_watchdog(void);
 extern struct clocksource* clocksource_get_next(void);
 extern void clocksource_change_rating(struct clocksource *cs, int rating);
+extern void clocksource_suspend(void);
 extern void clocksource_resume(void);
 extern struct clocksource * __init __weak clocksource_default_clock(void);
 extern void clocksource_mark_unstable(struct clocksource *cs);
 
+extern void
+clocks_calc_mult_shift(u32 *mult, u32 *shift, u32 from, u32 to, u32 minsec);
+
+#ifdef CONFIG_RADCLOCK
+extern vcounter_t read_vcounter(void);
+#endif
+
+/*
+ * Don't call __clocksource_register_scale directly, use
+ * clocksource_register_hz/khz
+ */
+extern int
+__clocksource_register_scale(struct clocksource *cs, u32 scale, u32 freq);
+extern void
+__clocksource_updatefreq_scale(struct clocksource *cs, u32 scale, u32 freq);
+
+static inline int clocksource_register_hz(struct clocksource *cs, u32 hz)
+{
+	return __clocksource_register_scale(cs, 1, hz);
+}
+
+static inline int clocksource_register_khz(struct clocksource *cs, u32 khz)
+{
+	return __clocksource_register_scale(cs, 1000, khz);
+}
+
+static inline void __clocksource_updatefreq_hz(struct clocksource *cs, u32 hz)
+{
+	__clocksource_updatefreq_scale(cs, 1, hz);
+}
+
+static inline void __clocksource_updatefreq_khz(struct clocksource *cs, u32 khz)
+{
+	__clocksource_updatefreq_scale(cs, 1000, khz);
+}
+
+static inline void
+clocksource_calc_mult_shift(struct clocksource *cs, u32 freq, u32 minsec)
+{
+	return clocks_calc_mult_shift(&cs->mult, &cs->shift, freq,
+				      NSEC_PER_SEC, minsec);
+}
+
 #ifdef CONFIG_GENERIC_TIME_VSYSCALL
-extern void update_vsyscall(struct timespec *ts, struct clocksource *c);
+extern void
+update_vsyscall(struct timespec *ts, struct timespec *wtm,
+			struct clocksource *c, u32 mult);
 extern void update_vsyscall_tz(void);
 #else
-static inline void update_vsyscall(struct timespec *ts, struct clocksource *c)
+static inline void
+update_vsyscall(struct timespec *ts, struct timespec *wtm,
+			struct clocksource *c, u32 mult)
 {
 }
 
@@ -316,8 +370,14 @@ static inline void update_vsyscall_tz(void)
 
 extern void timekeeping_notify(struct clocksource *clock);
 
-#ifdef CONFIG_RADCLOCK
-extern vcounter_t read_vcounter(void);
-#endif
+extern cycle_t clocksource_mmio_readl_up(struct clocksource *);
+extern cycle_t clocksource_mmio_readl_down(struct clocksource *);
+extern cycle_t clocksource_mmio_readw_up(struct clocksource *);
+extern cycle_t clocksource_mmio_readw_down(struct clocksource *);
+
+extern int clocksource_mmio_init(void __iomem *, const char *,
+	unsigned long, int, unsigned, cycle_t (*)(struct clocksource *));
+
+extern int clocksource_i8253_init(void);
 
 #endif /* _LINUX_CLOCKSOURCE_H */

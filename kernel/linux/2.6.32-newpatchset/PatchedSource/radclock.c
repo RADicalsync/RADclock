@@ -25,23 +25,22 @@
  *	Bounds checking on input
  */
 
-#include <linux/module.h>
-#include <linux/kernel.h>
-#include <linux/types.h>
-#include <linux/fcntl.h>
-#include <linux/poll.h>
-#include <linux/init.h>
-#include <linux/smp_lock.h>
-#include <linux/fs.h>
-#include <linux/random.h>
 #include <linux/bootmem.h>
+#include <linux/fcntl.h>
+#include <linux/fs.h>
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/poll.h>
+#include <linux/radclock.h>
+#include <linux/random.h>
+#include <linux/rwsem.h>
 #include <linux/sysdev.h>
-
+#include <linux/types.h>
 
 #include <net/genetlink.h>
 #include <net/sock.h>
 
-#include <linux/radclock.h>
 
 
 
