@@ -135,7 +135,7 @@ static int w_long(unsigned int fd, unsigned int cmd, unsigned long arg)
 	return err;
 }
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 static int rw_long_long(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
 	mm_segment_t old_fs = get_fs();
@@ -143,17 +143,21 @@ static int rw_long_long(unsigned int fd, unsigned int cmd, unsigned long arg)
 	int err;
 	__u64 val;
 
-	if(get_user(val, argptr))
+	if (get_user(val, argptr))
 		return -EFAULT;
-	set_fs (KERNEL_DS);
+
+	set_fs(KERNEL_DS);
 	err = sys_ioctl(fd, cmd, (unsigned long)&val);
-	set_fs (old_fs);
+	set_fs(old_fs);
+
 	if (!err && put_user(val, argptr))
 		return -EFAULT;
+
 	return err;
 }
-#endif
+#endif /* CONFIG_FFCLOCK */
 
+ 
 static int rw_long(unsigned int fd, unsigned int cmd, unsigned long arg)
 {
 	mm_segment_t old_fs = get_fs();
@@ -2607,11 +2611,11 @@ HANDLE_IOCTL(SIOCBRDELIF, dev_ifsioc)
 HANDLE_IOCTL(SIOCRTMSG, ret_einval)
 HANDLE_IOCTL(SIOCGSTAMP, do_siocgstamp)
 HANDLE_IOCTL(SIOCGSTAMPNS, do_siocgstampns)
-#ifdef CONFIG_RADCLOCK
-HANDLE_IOCTL(SIOCGRADCLOCKTSMODE, rw_long)
-HANDLE_IOCTL(SIOCSRADCLOCKTSMODE, rw_long)
-HANDLE_IOCTL(SIOCGRADCLOCKSTAMP, rw_long_long)
-#endif
+#ifdef CONFIG_FFCLOCK
+HANDLE_IOCTL(SIOCGFFCLOCKTSMODE, rw_long)
+HANDLE_IOCTL(SIOCSFFCLOCKTSMODE, rw_long)
+HANDLE_IOCTL(SIOCGFFCLOCKSTAMP, rw_long_long)
+#endif /* CONFIG_FFCLOCK */
 #endif
 #ifdef CONFIG_BLOCK
 HANDLE_IOCTL(SG_IO,sg_ioctl_trans)

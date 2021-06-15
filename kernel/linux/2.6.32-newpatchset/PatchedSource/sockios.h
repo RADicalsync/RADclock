@@ -22,7 +22,7 @@
 
 /* Linux-specific socket ioctls */
 #define SIOCINQ		FIONREAD
-#define SIOCOUTQ	TIOCOUTQ        /* output queue size (not sent + not acked) */
+#define SIOCOUTQ	TIOCOUTQ
 
 /* Routing table calls. */
 #define SIOCADDRT	0x890B		/* add routing table entry	*/
@@ -65,6 +65,7 @@
 #define SIOCDIFADDR	0x8936		/* delete PA address		*/
 #define	SIOCSIFHWBROADCAST	0x8937	/* set hardware broadcast addr	*/
 #define SIOCGIFCOUNT	0x8938		/* get number of devices */
+#define SIOCKILLADDR	0x8939		/* kill sockets with this local addr */
 
 #define SIOCGIFBR	0x8940		/* Bridging support		*/
 #define SIOCSIFBR	0x8941		/* Set bridging options 	*/
@@ -83,7 +84,11 @@
 
 #define SIOCWANDEV	0x894A		/* get/set netdev parameters	*/
 
-#define SIOCOUTQNSD	0x894B		/* output queue size (not sent only) */
+#ifdef CONFIG_FFCLOCK
+#define SIOCGFFCLOCKSTAMP 0x894B	/* get current ffcounter timestamp */
+#define SIOCSFFCLOCKTSMODE	0x894C	// manual port to fix this
+#define SIOCGFFCLOCKTSMODE	0x894D  //     "
+#endif
 
 /* ARP cache control calls. */
 		    /*  0x8950 - 0x8952  * obsolete calls, don't re-use */
@@ -126,10 +131,6 @@
 
 /* hardware time stamping: parameters in linux/net_tstamp.h */
 #define SIOCSHWTSTAMP   0x89b0
-
-#ifdef CONFIG_RADCLOCK
-#define SIOCGRADCLOCKSTAMP 0x89b1	/* get current vcounter timestamp */
-#endif
 
 /* Device private ioctl calls */
 

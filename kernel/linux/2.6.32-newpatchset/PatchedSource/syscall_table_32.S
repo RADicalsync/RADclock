@@ -81,7 +81,7 @@ ENTRY(sys_call_table)
 	.long sys_settimeofday
 	.long sys_getgroups16	/* 80 */
 	.long sys_setgroups16
-	.long sys_old_select
+	.long old_select
 	.long sys_symlink
 	.long sys_lstat
 	.long sys_readlink	/* 85 */
@@ -89,7 +89,7 @@ ENTRY(sys_call_table)
 	.long sys_swapon
 	.long sys_reboot
 	.long sys_old_readdir
-	.long sys_old_mmap	/* 90 */
+	.long old_mmap		/* 90 */
 	.long sys_munmap
 	.long sys_truncate
 	.long sys_ftruncate
@@ -168,7 +168,7 @@ ENTRY(sys_call_table)
 	.long ptregs_vm86
 	.long sys_ni_syscall	/* Old sys_query_module */
 	.long sys_poll
-	.long sys_ni_syscall	/* Old nfsservctl */
+	.long sys_nfsservctl
 	.long sys_setresgid16	/* 170 */
 	.long sys_getresgid16
 	.long sys_prctl
@@ -336,19 +336,3 @@ ENTRY(sys_call_table)
 	.long sys_pwritev
 	.long sys_rt_tgsigqueueinfo	/* 335 */
 	.long sys_perf_event_open
-	.long sys_recvmmsg
-	.long sys_fanotify_init
-	.long sys_fanotify_mark
-	.long sys_prlimit64		/* 340 */
-	.long sys_name_to_handle_at
-	.long sys_open_by_handle_at
-	.long sys_clock_adjtime
-	.long sys_syncfs
-	.long sys_sendmmsg		/* 345 */
-	.long sys_setns
-	.long sys_process_vm_readv
-	.long sys_process_vm_writev
-#ifdef CONFIG_RADCLOCK
-	.long sys_get_vcounter
-	.long sys_get_vcounter_latency
-#endif

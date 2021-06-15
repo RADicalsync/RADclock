@@ -27,3 +27,10 @@ config GENERIC_CLOCKEVENTS_BUILD
 	default y
 	depends on GENERIC_CLOCKEVENTS || GENERIC_CLOCKEVENTS_MIGR
 
+config FFCLOCK
+        bool
+        depends on EXPERIMENTAL
+        default y
+        help
+          This option enables feed-forward clock estimation ideally based on
+          the hardware counter value of the system's clock.
