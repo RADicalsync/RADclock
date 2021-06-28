@@ -1744,7 +1744,7 @@ void config_print(int level, struct radclock_config *conf, int ns)
 	verbose(level, "ascii sync output    : %s", conf->sync_out_ascii);
 	verbose(level, "ascii clock output   : %s", conf->clock_out_ascii);
 
-	for (int i = 0; i<MAX_NTC; i++)
+	for (int i=0; i<MAX_NTC; i++)
 		if ( strlen(conf->ntc[i].domain) > 0 )
 			verbose(level, "NTC                  : %d %s", conf->ntc[i].id, conf->ntc[i].domain);
 

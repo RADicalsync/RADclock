@@ -222,12 +222,27 @@
 #define SET_UPDATE(val,mask)	(val |= mask) 
 #define CLEAR_UPDATE(val,mask)	(val &= ~mask)
 
+
+/* NTC Command&Control assigns NTC nodes unique ids for NTC-global consistency.
+ * The NTC_id are allocated as follows:
+ * 	CN:  0                  (not currently used)
+ *		ICN: 1,2,...  ICN_MAX   (currently ICN_MAX = MAX_NTC/2)
+ *		OCN: ICN_MAX+1 ... MAX_NTC
+ *    non-NTC servers or uninitialized:  -1
+ * In `flag form` status words, the i-th LSB corresponds to ntc_id=i .
+ * Hence if #nodes>64 the implementation based on uint64_t will break.
+ * The ICN_MASK is used to null the bits in ntc_id status words
+ * corresponding to the OCNs (used in in-band signalling ICN status to OCNs)
+ */
 #define MAX_NTC 32
-struct NTC_Config
-{
+#define ICN_MASK (~(~0ULL << MAX_NTC/2))	// 000..0011...111  null OCN bits
+/* Convert the ntc_id of an OCN into a `OCN_id' starting at 1, or -1 if not an OCN */
+#define OCN_ID(h) (h > MAX_NTC/2 ? h - MAX_NTC/2 : -1 )
+struct NTC_Config {
 	int 	id;
 	char 	domain[MAXLINE];
 };
+
 
 /* This is a global structure used to keep track of the config parameters Mostly
  * used by signal handlers The fields present here correspond to the parameters
@@ -254,16 +269,17 @@ struct radclock_config {
 	int 	public_ntp;				/* Boolean - Flag indicates whether radclock responds to public NTP requests*/
 	int 	adjust_FFclock;			/* Boolean */
 	int 	adjust_FBclock;			/* Boolean */
-	double 	phat_init;					/* Initial value for phat */
-	double 	asym_host;					/* Host asymmetry estimate [sec] */
-	double	asym_net;					/* Network asymmetry estimate [sec] */ 
-	int     ntp_upstream_port;       /* NTP Upstream port */
-	int     ntp_downstream_port;     /* NTP Downstream port */
+	double 	phat_init;				/* Initial value for phat */
+	double 	asym_host;				/* Host asymmetry estimate [sec] */
+	double	asym_net;				/* Network asymmetry estimate [sec] */
+	int	ntp_upstream_port;       /* NTP Upstream port */
+	int	ntp_downstream_port;     /* NTP Downstream port */
 	char 	hostname[MAXLINE]; 			/* Client hostname */
 	char 	*time_server;			 		/* Server names, concatenated in MAXLINE blocks */
-	int		*time_server_ntc_mapping;	/* Maps timer_server id to NTC ids, non NTC servers get -1 */
-	int		*time_server_ntc_indexes;	/* Lists the NTC server indexes relative to the time_server ordering. Eg given time_servers A B C. If A and C are NTC server then this would be 0,2 */
-	int		time_server_ntc_count;		/* The number of time_servers that are NTC servers */
+	int	*time_server_ntc_mapping;	/* Maps timer_server id to NTC ids, non NTC servers get -1 */
+	int	*time_server_ntc_indexes;	/* Lists the NTC server indexes relative to the time_server ordering.
+	Eg given time_servers A B C. If A and C are NTC servers then this would be 0,2 */
+	int	time_server_ntc_count;		/* The number of time_servers that are NTC servers */
 	char 	network_device[MAXLINE];	/* physical device string, eg xl0, eth0 */ 
 	char 	sync_in_pcap[MAXLINE];	 	/* read from stored instead of live input */
 	char 	sync_in_ascii[MAXLINE]; 	/* input is a preprocessed stamp file */
@@ -272,7 +288,7 @@ struct radclock_config {
 	char 	clock_out_ascii[MAXLINE];  /* output matlab requirements */
 	char 	vm_udp_list[MAXLINE];  		/* File containing list of udp vm's */
 	char 	shm_dag_client[MAXLINE];  	/* Ip address of SHM DAG client */
-	struct NTC_Config 	ntc[MAX_NTC];  				/* NTC definition */
+	struct NTC_Config 	ntc[MAX_NTC];  /* NTC definition */
 };
 
 

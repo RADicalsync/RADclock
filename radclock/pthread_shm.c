@@ -62,6 +62,11 @@
 
 #define DAG_PORT 5671
 
+/* From create_stamp.c, include in create_stamp.h ? */
+int          insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode);
+int get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp);
+
+
 /*
  * Integrated thread and thread-work function for SHM module
  */
@@ -72,6 +77,7 @@ thread_shm(void *c_handle)
 
 	/* Multiple server management */
 	int sID; 							// server ID of new stamp popped here
+	int NTC_id;							// NTC global index of server sID
 	struct radclock_data *rad_data;
 	struct bidir_perfdata *perfdata = handle->perfdata;
 	struct bidir_perfoutput *output;
@@ -89,7 +95,7 @@ thread_shm(void *c_handle)
 	int fullerr;
 
 	/* UNIX socket related */
-	int socket_desc, c;
+	int socket_desc;
 	struct sockaddr_in server, client;
 	socklen_t socklen = sizeof(struct sockaddr_in);
 	int num_bytes;
@@ -170,7 +176,7 @@ thread_shm(void *c_handle)
 				}
 
 				verbose(VERB_DEBUG, " .. passed corruption checks, trying to insert "
-										  " copyinto match queue (%d)", next0-r );
+										  " copy into match queue (%d)", next0-r );
 				insertandmatch_halfstamp(perfdata->q, &copy, MODE_RAD);
 				r -= 1;
 			} else
@@ -205,7 +211,6 @@ thread_shm(void *c_handle)
 		 */
 		struct radclock_error *rad_error;
 		struct stamp_t RADstamp;
-		char server_ipaddr[INET6_ADDRSTRLEN];
 
 		if ( got_dag_msg == 0 && next0 != last_next0 )
 		{
@@ -263,8 +268,6 @@ thread_shm(void *c_handle)
 			continue;
 
 
-	/* TODO: code below here factor into a  process_RADperfstamp(handle, &RADperfstamp);  ?? */
-
 		/* If a recognized stamp is returned, record the server it came from */
 		sID = serverIPtoID(handle, RADperfstamp.server_ipaddr);
 		if (sID < 0) {
@@ -272,14 +275,72 @@ thread_shm(void *c_handle)
 			continue;
 		} else
 			verbose(VERB_DEBUG, "Popped a RADperf stamp from server %d: [%llu]  %llu %llu %.6Lf %.6Lf ",
-			sID, (long long unsigned) RADperfstamp.id,
-			(long long unsigned) PST(&RADperfstamp)->Ta, (long long unsigned) PST(&RADperfstamp)->Tf,
-			PST(&RADstamp)->Tb, PST(&RADperfstamp)->Te);
+				sID, (long long unsigned) RADperfstamp.id,
+				(long long unsigned) PST(&RADperfstamp)->Ta, (long long unsigned) PST(&RADperfstamp)->Tf,
+				PST(&RADstamp)->Tb, PST(&RADperfstamp)->Te);
 
 		/* Set pointers to data for this server */
-		rad_data  = &handle->rad_data[sID];
+		rad_data = &handle->rad_data[sID];
 		output = &perfdata->output[sID];
 		state  = &perfdata->state[sID];
+		NTC_id = handle->conf->time_server_ntc_mapping[sID];
+
+
+	/* TODO: code below here factor into a  process_perfstamp(handle, &RADperfstamp);  ??
+	 *		When processing this stamp state holds the state from Last time, until it updates it at
+	 *	 	the end, just before telemetry
+	 */
+
+	/* ********************** SHM specific ****************************/
+		/* Test code for SA detector */
+		int SA_detected;
+
+		/* Recall NTC_id mapping :
+		 * 	ICN:  (1,2,3,4,5) = (SYD,MEL,BRI,PER,ADL)
+		 *		OCN:  (1,2,3,4,5) = (SYD,MEL,BRI,PE)  and +16 for ntc_id:  (17,18,19,20)
+		 */
+		switch (NTC_id) {
+			case -1:	// Undefined
+				verbose(LOG_NOTICE, "SHM: Encountered an undefined NTC_id .");
+				break;
+			case 1:	// SYD
+				SA_detected = ((state->stamp_i % 33) ? 0 : 1);	// set SA rarely
+				break;
+			case 2:	// MEL
+				SA_detected = ((state->stamp_i % 153) ? 0 : 1);	// set SA rarely
+				break;
+			case 3:	// BRI
+			case 4:	// PER
+			case 5:	// ADL
+			default:	// other ICN, or an OCN
+				SA_detected = 0;
+				break;
+		}
+		//verbose(VERB_DEBUG, "[%llu] (sID, NTC_id) = (%d, %d):   SA_detected = %d",
+		//						state->stamp_i, sID, NTC_id, SA_detected);
+
+
+		/* Update servertrust */
+		if (state->SA != SA_detected) {
+			handle->servertrust &= ~(1ULL << sID);		// clear bit
+			if (SA_detected)
+				handle->servertrust |= (1ULL << sID);	// set bit
+			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with (sID, NTC_id) = (%d, %d), servertrust now 0x%llX",
+					state->stamp_i, sID, NTC_id, handle->servertrust);
+		}
+
+		/* Use SA update to update icn_status word sent to OCNs inband.
+		 * The word is in flag form (like servertrust, but NTC_id starts from 1 */
+		if (state->SA != SA_detected && NTC_id > -1) {
+			perfdata->ntc_status &= ~(1ULL << NTC_id-1);		// clear bit
+			if (SA_detected)
+				perfdata->ntc_status |= (1ULL << NTC_id-1);	// set bit
+			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with (sID, NTC_id) = (%d, %d),  ntc_status now 0x%llX",
+					state->stamp_i, sID, NTC_id, perfdata->ntc_status);
+		}
+
+
+	/* ********************** RAD Perf specific ****************************/
 
 		/* Output a measure of clock error for this stamp by comparing midpoints
 		 *  clockerr = ( ( rAd(Ta) + rAd(Tf) ) - ( Tout + Tin ) / 2  */
@@ -293,10 +354,37 @@ thread_shm(void *c_handle)
 		read_RADabs_UTC(rad_data, &ptuple->bstamp.Tf, &time, 1);
 		clockerr += time;
 		clockerr = ( clockerr - (ptuple->Tout + ptuple->Tin) ) / 2;
-		//output->RADerror = clockerr;
 		verbose(VERB_QUALITY, "Error in this rAdclock on this stamp is %4.2lf [ms]", 1000*clockerr);
 
-		/* Send output->RADerror as SHM telemetry for clock sID */
+
+
+	/* ********************** Combined ****************************/
+
+		/* Update state */
+		state->stamp_i++;
+		/* SHM */
+		state->SA = SA_detected;
+		state->SA_total++;
+		/* Perf */
+		state->RADerror = clockerr;
+
+		/* Update dumpable outputs [from state] */
+		/* SHM */
+		output->SA = state->SA;
+		/* Perf */
+		output->RADerror = state->RADerror;
+
+
+		/* Telemetry
+		 * SHM thread telemetry triggering dealt with in PROC:process_stamp .
+		 * Here just document SHM and Perf variables sent over telemetry.
+		 * For each of these, state->stamp_i can be used to detect during trigger
+		 * checking if a perfstamp output has been missed by PROC. */
+
+		/* SHM */
+			// RADclock DB:  perfdata->ntc_status  [let grafana separate ICNs and OCNs]
+		/* Perf */
+			// CN DB:        state->RADerror for clock sID
 
 
 	}	// thread_stop while loop

@@ -349,21 +349,29 @@ struct bidir_algostate {
 
 
 
-/* Holds all RADclock perf variables needed to be visible outside the SHM thread */
+/* Holds all RADclock perf variables needed to be visible outside the SHM thread
+ * Includes both RADperf and SHM outputs. */
 struct bidir_perfoutput {
 
-	/* Per-stamp output */
+	/* Per-stamp SHM output */
 	double auRTT;		// RTT measured using authoritative timestamps
+	int	SA;
+	/* Per-stamp RADperf output */
 	double RADerror;
-	int	SA;			// ServerAnomaly: flag {0,1} = {no,detected} SA
-
 };
 
 struct bidir_perfstate {
 
 	index_t stamp_i;
-
 	struct bidir_stamp_perf stamp;	// previous input bidir_perf stamp (hence leap-free)
+
+	/* Window sizes, measured in [pkt index] */
+	index_t warmup_win;			// warmup window, RTT estimation (indep of time and CPU, need samples)
+	index_t shift_win;			// shift detection window size
+	index_t shift_end;			// shift detection record of oldest pkt in shift window for RTT
+
+
+	/* ********* SHM variables: those not using RADclock timestamps ***********/
 
 	/* Histories */
 	history stamp_hist;
@@ -379,13 +387,17 @@ struct bidir_perfstate {
 	/* Path Asymmetry */
 	double Asymhat;				// Estimate of underlying asymmetry
 
-	/* Window sizes, measured in [pkt index] */
-	index_t warmup_win;			// warmup window, RTT estimation (indep of time and CPU, need samples)
-	index_t shift_win;			// shift detection window size
-	index_t shift_end;			// shift detection record of oldest pkt in shift window for RTT
+	/* SA variables */
+	int SA;				// ServerAnomaly: {0,1} = {no,detected} SA for this stamp
+	long SA_total;		// total number of per-stamp SA detections
+
+
+	/* ********* Perf variables: those using RADclock timestamps ***********/
+	/* Histories */
 
 	/* rAdclock error estimation */
 	double RADerror;
+
 };
 
 
@@ -409,7 +421,7 @@ struct bidir_algodata {
  *  - needed queues to perform matching
  */
 struct bidir_perfdata {
-	/* Queue of RADperf stamps to be processed. Must be first member.*/
+	/* Queue of RADperf stamps to be processed. Must be first member. */
 	struct stamp_queue *q;
 
 	/* Buffer for fast dumping of sane popped RADstamps within PROC */
@@ -420,6 +432,7 @@ struct bidir_perfdata {
 	struct stamp_t *laststamp;			// containing bidir_stamp_perf tuples
 	struct bidir_perfoutput *output;
 	struct bidir_perfstate *state;	// includes SHM state
+	uint64_t ntc_status;					// trust summary for servers with ntc indices
 };
 
 //#define OUTPUT(handle, x) ((struct bidir_algooutput*)handle->algo_output)->x

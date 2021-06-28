@@ -282,20 +282,15 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	
 	UTCld_to_timeval(&time, xmt_tval);			// need to pass back a timeval
 
-
-	/* Placeholder icn_status variable and setting - to be replaced.
-	 * This should be populated by the SHM
-	 * server anomaly detection functions of the SHM thread, and be accessed by
-	 * some to-be-determined SHM output structures off the handle.
-	 * Those functions can take care of mapping the ntc_ids into the flag form
-	 * required here (also needed in thread_ntp_server when extracting the inband signal).
-	 */
-	uint64_t icn_status;	// status of ICN i recorded in (i-1)th LSBit
-	icn_status = 6;		// test case: 6 = 00110 = Brisbane and Melbourne untrusted
-
    /* If we are the CN, push the ICN status word to all OCNs inband */
-    if (ntp_key && handle->conf->is_cn && IS_PRIVATE_KEY(key_id))
-        pkt->refid = htonl((uint32_t)icn_status);
+	if (handle->conf->is_cn) {
+		if (ntp_key && IS_PRIVATE_KEY(key_id)) {
+			uint64_t icn_status;			// status of ICN i recorded in (i-1)th LSBit
+			icn_status = ((struct bidir_perfdata *)handle->perfdata)->ntc_status & ICN_MASK;
+			//verbose(VERB_DEBUG, "icn_status = 0x%16llX", icn_status);
+			pkt->refid = htonl((uint32_t)icn_status);
+		}
+	}
 
 
 	// Tell the client that the same key was used for auth in reply
@@ -396,24 +391,6 @@ ntp_client(struct radclock_handle *handle)
 	pthread_mutex_unlock(&alarm_mutex);
 
 	/* Set to data for this server */
-	int ocn_id = -1;
-	int key_id = -1;
-	if (handle->conf->is_cn) // Only attempt authenticated ntp communication to OCNs from CN
-		ocn_id = OCN_ID(handle->conf->time_server_ntc_mapping[sID]);
-
-	char * ntp_key = NULL;
-	if (ocn_id > -1 && ocn_id + PRIVATE_CN_NTP_KEYS < MAX_NTP_KEYS && handle->ntp_keys)
-	{
-		key_id = ocn_id + PRIVATE_CN_NTP_KEYS;
-		ntp_key = handle->ntp_keys[key_id];
-	}
-	
-	if (handle->conf->is_cn && ocn_id > -1 && !ntp_key ) // Only attempt authenticated ntp communication to OCNs from CN
-	{
-		verbose(LOG_ERR, "NTPclient: NTP request failed, CN requires NTP key to communicate to OCN");
-		return(1);
-	}
-
 	client = &handle->ntp_client[sID];
 	server = &handle->ntp_server[sID];
 	timerid = &ntpclient_timerid[sID];
@@ -421,7 +398,32 @@ ntp_client(struct radclock_handle *handle)
 	rad_error = &handle->rad_error[sID];
 	state = &algodata->state[sID];
 	poll_period = (float) handle->conf->poll_period;	// upgrade after
-	
+
+	/* Setup keys for authenticated communication to this server.
+	 * Only attempted in the case of an CN client to an OCN server.
+	 */
+	int key_id = -1;
+	char * ntp_key = NULL;
+	if (handle->conf->is_cn) {
+		int NTC_id = handle->conf->time_server_ntc_mapping[sID];
+		int ocn_id = OCN_ID(NTC_id);
+
+		uint64_t ntc_status = ((struct bidir_perfdata *)handle->perfdata)->ntc_status;
+		verbose(VERB_DEBUG, "Sending to server with (sID, NTC_id, OCN_ID) = (%d, %d, %d),"
+			  "  {ntc,icn}_status = {0x%08llX, 0x%08llX} (ICN_MASK= 0x%llX)",
+				sID, NTC_id, ocn_id, ntc_status, ntc_status & ICN_MASK, ICN_MASK);
+
+		if (ocn_id > -1) {
+			key_id = ocn_id + PRIVATE_CN_NTP_KEYS;
+			if (key_id < MAX_NTP_KEYS && handle->ntp_keys)
+				ntp_key = handle->ntp_keys[key_id];			// = 0 if no key allocated
+			if ( ntp_key == -1 || ntp_key == 0 ) {
+				verbose(LOG_ERR, "NTPclient: NTP request failed, CN requires NTP key to communicate to OCN");
+				return(1);
+			}
+		}
+	}
+
 	/* Update adjusted_period [ the actual period used by timers ]
 	 *  - startup burst (using ntpd's BURST (#of pkts), BURST_DELAY (interval) )
 	 *  - sync algo as a function of starvation (not yet implemented)

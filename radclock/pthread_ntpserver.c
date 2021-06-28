@@ -319,25 +319,23 @@ thread_ntp_server(void *c_handle)
 					/* If the key is private, then packet must be from the CN.
 					 * In that case deal with possible CN inband signaling.
 					 */
-					if (IS_PRIVATE_KEY(key_id) && handle->conf->is_ocn)
-					{
-						uint64_t icn_status;
-						uint64_t inband_trust = 0;
+					if (IS_PRIVATE_KEY(key_id)) {
+						private_signed_ntp = 1;	// TODO: check if usage of this, given is now set without a is_ocn check
 
-						icn_status = (uint64_t) ntohl(((struct ntp_pkt*)pkt_in)->refid);
-						/* Map ntc_id-indexed inband status word to sID-indexed trustword
-						 * In each case, status of server i is recorded in the (i-1)th status bit
-						 */
-						for (int s=0; s < handle->nservers; s++) {
-							if ( handle->conf->time_server_ntc_mapping[s] != -1 &&
-								  icn_status & (1ULL << (handle->conf->time_server_ntc_mapping[s])-1) )
-								inband_trust |= (1ULL << s);
+						if (handle->conf->is_ocn) {
+							uint64_t icn_status = ntohl(((struct ntp_pkt*)pkt_in)->refid);
+							uint64_t inband_trust = 0;
+							int NTC_id;
+							/* Map ntc_id-indexed inband status word to sID-indexed trustword */
+							for (int s=0; s < handle->nservers; s++) {
+									NTC_id = handle->conf->time_server_ntc_mapping[s];
+									if ( NTC_id != -1 && icn_status & (1ULL << NTC_id-1) )
+										inband_trust |= (1ULL << s);	// if bit set, copy in
+							}
+							handle->servertrust = inband_trust;		// TODO: what if already set?
+							verbose(LOG_WARNING, "NTP Server received inband ICN status: %0XllX, "
+										"mapped to server trust %0XllX", icn_status, inband_trust);
 						}
-						handle->servertrust = inband_trust;
-						verbose(LOG_WARNING, "NTP Server received inband ICN status: %0XllX, "
-													"mapped to server trust %0XllX", icn_status, inband_trust);
-
-						private_signed_ntp = 1;
 					}
 
 					auth_pass = 1;

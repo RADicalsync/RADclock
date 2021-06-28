@@ -867,8 +867,7 @@ process_stamp(struct radclock_handle *handle)
 
 	/* TELEMETRY:  Test for timeout based telemetry trigger */
 	/* No error, but no stamp to process */
-	if (err == 1)
-	{
+	if (err == 1) {
 		push_telemetry(handle, -1); // Check if telemetry message needs to be sent
 		return (1);
 	}
@@ -880,17 +879,19 @@ process_stamp(struct radclock_handle *handle)
 		return (1);
 	}
 
-	if (handle->conf->is_cn && OCN_ID(handle->conf->time_server_ntc_mapping[sID]) > -1)
-		if (stamp.auth_key_id != OCN_ID(handle->conf->time_server_ntc_mapping[sID]) + PRIVATE_CN_NTP_KEYS)
-		{
-			verbose(LOG_ERR, "CN received OCN NTP stamp with incorrect auth_key. Requires developer investigation");
-			return (1);
-		}
-
 	verbose(VERB_DEBUG, "Popped a stamp from server %d: %llu %.6Lf %.6Lf %llu %llu", sID,
 			(long long unsigned) BST(&stamp)->Ta, BST(&stamp)->Tb, BST(&stamp)->Te,
 			(long long unsigned) BST(&stamp)->Tf, (long long unsigned) stamp.id);
-	
+
+	/* Authentication check for a CN using an OCN server */
+	if (handle->conf->is_cn) {
+		int ocn_id = OCN_ID(handle->conf->time_server_ntc_mapping[sID]);
+		if (ocn_id > -1 && stamp.auth_key_id != ocn_id + PRIVATE_CN_NTP_KEYS) {
+			verbose(LOG_ERR, "CN skipping received OCN stamp with incorrect auth_key!");
+			return (1);
+		}
+	}
+
 	/* Set pointers to data for this server */
 	rad_data  = &handle->rad_data[sID];		// = SRAD_DATA(handle,sID);
 	rad_error = &handle->rad_error[sID];
@@ -1131,44 +1132,12 @@ process_stamp(struct radclock_handle *handle)
    }  // RADCLOCK_SYNC_LIVE actions
 
 
-	/* Send telemetry data through ring buffer and eventually to NTC_CN */
-	push_telemetry(handle, sID); // Check if telemetry message needs to be sent
-
-	/* Write ascii output files if open, much less urgent than previous tasks */
-	print_out_files(handle, &stamp, output, sID);
-
-	/* View updated RADclock data and compare with NTP server stamps in nice
-	 * format. The first 10 then every 6 hours (poll_period can change, but
-	 * should be fine with a long term average, do not have to be very precise
-	 * anyway).
-	 * Note: ->n_stamps has been incremented by the algo to prepare for next
-	 * stamp. TODO: check this statement, is done here only I think
-	 */
-	if (VERB_LEVEL && (output->n_stamps < 10) ||
-			!(output->n_stamps % ((int)(3600*6/state->poll_period))) )
-	{
-		read_RADabs_UTC(rad_data, &(rad_data->last_changed), &currtime, PLOCAL_ACTIVE);
-		timediff = (double) (currtime - (long double) BST(&stamp)->Te);
-
-		verbose(VERB_CONTROL, "i=%ld: (sID=%d) Response timestamp %.6Lf, "
-				"RAD - NTPserver = %.3f [ms], RTT/2 = %.3f [ms]",
-				output->n_stamps - 1, sID,
-				BST(&stamp)->Te, 1000 * timediff, 1000 * rad_error->min_RTT / 2 );
-
-		verbose(VERB_CONTROL, "i=%ld: Clock Error Bound (cur,avg,std) %.6f "
-				"%.6f %.6f [ms]", output->n_stamps - 1,
-				1000 * rad_error->error_bound,
-				1000 * rad_error->error_bound_avg,
-				1000 * rad_error->error_bound_std);
-	}
-
-
 	/* Insert the RAD side of the perfstamp required by the SHM thread */
-	struct bidir_perfdata *perfdata = handle->perfdata;
-	int writehead;		// maps next write index into buffer position to write
-
-	if (handle->conf->server_shm == BOOL_ON)
+	if (handle->conf->server_shm == BOOL_ON)		// implies perfdata non-NULL
 	{
+		struct bidir_perfdata *perfdata = handle->perfdata;
+		int writehead;		// maps next write index into buffer position to write
+
 		/* Convert the popped algo stamp into a `client side' RAD perf halfstamp */
 		stamp.type = STAMP_NTP_PERF;
 		stamp.st.bstamp_p.bstamp = stamp.st.bstamp;
@@ -1202,6 +1171,37 @@ process_stamp(struct radclock_handle *handle)
 //		}
 	}
 
+
+	/* Send telemetry data through ring buffer and eventually to NTC_CN */
+	push_telemetry(handle, sID); // Check if telemetry message needs to be sent
+
+	/* Write ascii output files if open, much less urgent than previous tasks */
+	print_out_files(handle, &stamp, output, sID);
+
+	/* View updated RADclock data and compare with NTP server stamps in nice
+	 * format. The first 10 then every 6 hours (poll_period can change, but
+	 * should be fine with a long term average, do not have to be very precise
+	 * anyway).
+	 * Note: ->n_stamps has been incremented by the algo to prepare for next
+	 * stamp. TODO: check this statement, is done here only I think
+	 */
+	if (VERB_LEVEL && (output->n_stamps < 10) ||
+			!(output->n_stamps % ((int)(3600*6/state->poll_period))) )
+	{
+		read_RADabs_UTC(rad_data, &(rad_data->last_changed), &currtime, PLOCAL_ACTIVE);
+		timediff = (double) (currtime - (long double) BST(&stamp)->Te);
+
+		verbose(VERB_CONTROL, "i=%ld: (sID=%d) Response timestamp %.6Lf, "
+				"RAD - NTPserver = %.3f [ms], RTT/2 = %.3f [ms]",
+				output->n_stamps - 1, sID,
+				BST(&stamp)->Te, 1000 * timediff, 1000 * rad_error->min_RTT / 2 );
+
+		verbose(VERB_CONTROL, "i=%ld: Clock Error Bound (cur,avg,std) %.6f "
+				"%.6f %.6f [ms]", output->n_stamps - 1,
+				1000 * rad_error->error_bound,
+				1000 * rad_error->error_bound_avg,
+				1000 * rad_error->error_bound_std);
+	}
 
 
 

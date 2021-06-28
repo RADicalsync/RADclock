@@ -235,8 +235,6 @@ struct radclock_handle {
 #define DEL_STATUS(r,y) ((r)->status = (r)->status & ~y )
 #define HAS_STATUS(r,y) (((r)->status & y) == y )
 
-#define OCN_ID(h) (h > MAX_NTC / 2 ? h - MAX_NTC / 2 : -1 )
-
 /* Function to map from IP address to server index */
 int serverIPtoID(struct radclock_handle *handle, char *server_ipaddr);
 

@@ -620,11 +620,8 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	init_stamp_queue(algodata);
 	handle->algodata = (void*) algodata;	// enduring copy of ptr to algodata data
 
-	/* Handle structure for per-server perf data, stamp matching queue, and buffer */
-	struct bidir_perfdata *perfdata;
-	perfdata = malloc(sizeof *perfdata);
-	init_stamp_queue(perfdata);				// implicit cast works
-	handle->perfdata = (void*) perfdata;	// enduring copy of ptr to perfdata
+ 	/* perfdata can't be set before conf parsing determines if is_cn */
+	handle->perfdata = NULL;
 
 	/* Initialize all servers to trusted. */
 	handle->servertrust = 0;
@@ -669,14 +666,20 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	algodata->output = calloc(ns,sizeof(struct bidir_algooutput));
 	algodata->state = calloc(ns,sizeof(struct bidir_algostate));
 
-	/* Initialize remaining members of perfdata */
-	perfdata = handle->perfdata;
-	perfdata->laststamp = calloc(ns,sizeof(struct stamp_t));
-	perfdata->output = calloc(ns,sizeof(struct bidir_perfoutput));
-	perfdata->state = calloc(ns,sizeof(struct bidir_perfstate));
-	perfdata->RADBUFF_SIZE = ns * 8;
-	perfdata->RADbuff = calloc(perfdata->RADBUFF_SIZE,sizeof(struct stamp_t));
-	perfdata->RADbuff_next = 0;
+	/* If is_cn, create and initialize the perfdata handle, and all its internal
+	 * variables and structures. */
+	if (handle->conf->is_cn) {
+		perfdata = malloc(sizeof *perfdata);
+		init_stamp_queue(perfdata);				// implicit cast works
+		perfdata->laststamp = calloc(ns,sizeof(struct stamp_t));
+		perfdata->output = calloc(ns,sizeof(struct bidir_perfoutput));
+		perfdata->state = calloc(ns,sizeof(struct bidir_perfstate));
+		perfdata->RADBUFF_SIZE = ns * 8;
+		perfdata->RADbuff = calloc(perfdata->RADBUFF_SIZE,sizeof(struct stamp_t));
+		perfdata->RADbuff_next = 0;
+		perfdata->ntc_status = 0;		// initialize all NTC servers to trusted
+		handle->perfdata = (void*) perfdata;	// enduring copy of ptr to perfdata
+	}
 
 	return;
 }
@@ -1325,7 +1328,6 @@ main(int argc, char *argv[])
 	if (conf->verbose_level > 0)
 		SET_UPDATE(param_mask, UPDMASK_VERBOSE);
 
-
 	/* Create the radclock handle */
 	clock_handle = create_handle(conf, is_daemon);
 	if (!clock_handle) {
@@ -1333,7 +1335,6 @@ main(int argc, char *argv[])
 		return (-1);
 	}
 	handle = clock_handle;
-
 
 	/*
 	 * Have not parsed the config file yet, so will have to do it again since it
@@ -1415,8 +1416,8 @@ main(int argc, char *argv[])
 	else
 		handle->run_mode = RADCLOCK_SYNC_LIVE;
 
-	/* Check compatibility for SHM
-	 * TODO: note a `server', better module_shm ?
+	/* Check compatibility for SHM thread
+	 * TODO: not a `server', better module_shm ?
 	 */
 	if (handle->conf->server_shm == BOOL_ON)
 	{
@@ -1426,8 +1427,10 @@ main(int argc, char *argv[])
 			handle->conf->server_shm = BOOL_OFF;
 		}
 
+		// Probably scrap this, since have probably decided to only have MAIN in
+		// any DEAD mode anyway.
 		if (handle->run_mode != RADCLOCK_SYNC_DEAD &&	// must be 'RADCLOCK_SYNC_DEAD_WITHSHM'
-			 handle->run_mode != RADCLOCK_SYNC_LIVE) {		// hack: must be false currently
+			 handle->run_mode != RADCLOCK_SYNC_LIVE) {	// hack: must be false currently
 			verbose(LOG_ERR, "Configuration error. Disabling server_shm "
 				"(incompatible with running dead if DAG input not available).");
 			handle->conf->server_shm = BOOL_OFF;
