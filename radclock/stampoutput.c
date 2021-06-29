@@ -208,7 +208,7 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
 	long double currtime_out, currtime_in;
 
 	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_SPY))
-		verbose(LOG_ERR, "Do not know how to print these stamps!!");
+		verbose(LOG_ERR, "Do not know how to print a stamp of type %d", stamp->type);
 
 	currtime_out = (long double)(BST(stamp)->Ta * output->phat) + output->K;
 	currtime_in  = (long double)(BST(stamp)->Tf * output->phat) + output->K;

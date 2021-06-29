@@ -124,7 +124,6 @@ struct radclock_handle {
 
 	/* Points to an array of RADclock parameter sets, one per server */
 	struct radclock_data *rad_data;
-
 	/* Corresponding RADclock error estimate sets */
 	struct radclock_error *rad_error;
 
@@ -133,13 +132,11 @@ struct radclock_handle {
 
 	/* Protocol related state on the daemon client side (NTP case) */
 	struct radclock_ntp_client		*ntp_client;
-	
 	/* Protocol related state on the daemon's server side (NTP case) */
 	struct radclock_ntp_server		*ntp_server;
 	
 	/* Raw data capture buffer for libpcap */
 	struct raw_data_queue *pcap_queue;
-
 	/* Raw data capture buffer for 1588 error queue */
 	struct raw_data_queue *ieee1588eq_queue;
 
@@ -176,7 +173,6 @@ struct radclock_handle {
 
 	/* Points to an array of Synchronisation algodata, one per server */
 	void *algodata;
-
 	/* ID (array index) of preferred RADclock */  // perhaps call sI = server Index
 	int pref_sID;
 
@@ -204,7 +200,7 @@ struct radclock_handle {
 #define RAD_DATA(h)  (SRAD_DATA(h,h->pref_sID))	// ptr to data of preferred s
 #define RAD_ERROR(h) (SRAD_ERROR(h,h->pref_sID))
 
-#define RAD_VM(x) (&(x->rad_vm))
+#define RAD_VM(h) (&(h->rad_vm))
 
 /* Old: based on h being a pointer to handle, awkward when also need to know s */
 //#define SADD_STATUS(h,s,y) (SRAD_DATA(h,s)->status = SRAD_DATA(h,s)->status | y )

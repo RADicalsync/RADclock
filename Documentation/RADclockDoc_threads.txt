@@ -61,7 +61,7 @@ triggers everything else. If no packets flow, then on the whole nothing happens.
 [There are some exceptions to this to ensure awareness of starvation conditions.]
 
 Two other threads are started by MAIN depending on optional settings:
-	RADclock Server (NTP_SERV):  which serves external NTP timing requests from RADclock
+	RADclock Server (NTP_SERV):  which serves external NTP timing requests
 and
 	Virtual machine RADclock (VM_UDP_SERV): which serves RADclock clock parameters
 		 to guest OSes over UDP.
@@ -69,7 +69,7 @@ and
 Finally, in old RADclock kernel versions (version<2), a thread is needed to
 periodically update the kernel version of the RADclock `globaldata`, ie parameters,
 due to a lack of floating point capability in the kernel.
-	Kernel fixedpoint updater (FIXEDPOINT):	deprecated.
+	Kernel fixedpoint update (FIXEDPOINT):	deprecated.
 
 Codes for all threads except MAIN are defined in pthread_mgr.h :
 #define PTH_{NONE,DATA_PROC,TRIGGER,NTP_SERV,FIXEDPOINT,VM_UDP_SERV} = {0,1,2,3,4,5}
@@ -113,7 +113,7 @@ as a function of the input modes recorded in the configuration, with logic:
 if either ascii or pcap (trace) input selected,   // an error if both
 	run as dead
 else
-	run live.
+	run live
 Knowledge of run_mode then allows the critical choice of running as a single
 thread, or multi-threaded, to be taken in main.
 
@@ -161,17 +161,21 @@ The global variable, defined at the top of radclock_main.c :
 points to all the information needed to be shared across the process, and to other
 processes via the RADclock API library.
 The structure definition below is from radclock_daemon.h.
-It employs other structures many of which are defined in radclock-private.h .
+It employs other structures many of which are defined in libradclock/radclock-private.h .
 
 struct radclock_handle {
 
+	/* Number of different servers */
+	int nservers;
+
 	/* Library radclock structure */
 	struct radclock *clock;
-	
-	/* Clock data, the real stuff */
-	struct radclock_data rad_data;
-	/* Clock error estimates */
-	struct radclock_error rad_error;
+
+	/* Points to an array of RADclock parameter sets, one per server */
+	struct radclock_data *rad_data;
+	/* Corresponding RADclock error estimate sets */
+	struct radclock_error *rad_error;
+
 	/* Virtual Machine management */
 	struct radclock_vm rad_vm;
 
@@ -191,13 +195,14 @@ struct radclock_handle {
 	char hostIP[16];		// IP address of the host
 
 	/* UNIX signals */
-	unsigned int unix_signal;
+	unsigned int unix_signal;		// for recording of HUP and TERM
+	int lastalarm_sID;				// sID of last timer SIGALRM
 
 	/* Output file descriptors */
 	FILE* stampout_fd;
 	FILE* matout_fd;
 
-	/* Thread related */
+	/* Threads */
 	pthread_t threads[8];
 	int	pthread_flag_stop;
 	pthread_mutex_t globaldata_mutex;
@@ -210,14 +215,24 @@ struct radclock_handle {
 
 	/* Algo output */
 	radclock_syncalgo_mode_t syncalgo_mode;
-	void *algo_output; 	/* Defined as void* since not part of the library */
-								// sync_algo.h:bidir_algooutput  structure
+
 	/* Stamp source */
-	void *stamp_source;  /* Defined as void* since not part of the library */
-	/* Synchronisation algodata. algodata are of different nature (bidir, unidir) will cast */
-	void *algodata;   /* Internal algo variables */
-	
+	void *stamp_source; /* Defined as void* since not part of the library */
+
+	/* Points to an array of Synchronisation algodata, one per server */
+	void *algodata;
+	/* ID (array index) of preferred RADclock */
+	int pref_sID;
+
+	/* Server trust status word: 1 bit per server, denoting
+	 *   0: server is trusted
+	 *   1: an issue has been detected, use with caution
+	 * Mask to access server sID's bit is  mask = (1ULL << sID)
+	 */
+	uint64_t servertrust;
+
 };
+
 
 The global clock_handle is almost never used directly, instead access is controlled
 though passing it as a parameter, where internal to functions its copy goes under the name
@@ -229,14 +244,20 @@ and available everywhere via an extern declaration in verbose.h.
 It is protected by alarm_{mutex,cwait} as discussed below.
 
 Shortcuts to access certain members of the handle are provided in radclock_daemon.h :
-#define NTP_CLIENT(x) (x->ntp_client)
-#define NTP_SERVER(x) (x->ntp_server)
-#define RAD_DATA(x)   (&(x->rad_data))
-#define RAD_ERROR(x)  (&(x->rad_error))
-#define RAD_VM(x)     (&(x->rad_vm))
-#define ADD_STATUS(x,y) (RAD_DATA(x)->status = RAD_DATA(x)->status | y )
-#define DEL_STATUS(x,y) (RAD_DATA(x)->status = RAD_DATA(x)->status & ~y )
-#define HAS_STATUS(x,y) ((RAD_DATA(x)->status & y ) == y )
+/* These macros facilitate access to the data for the s-th server.
+ *    SMACRO(h,s,..)    macro where the s the ID of the desired server
+ *     MACRO(h,..  )    macro where s = h->pref_sID, the preferred server
+ */
+#define SNTP_CLIENT(h,s) (&(h->ntp_client[s]))
+#define SNTP_SERVER(h,s) (&(h->ntp_server[s]))
+#define NTP_CLIENT(h) (SNTP_CLIENT(h,h->pref_sID))
+#define NTP_SERVER(h) (SNTP_SERVER(h,h->pref_sID))
+
+#define SRAD_DATA(h,s)  (&(h->rad_data[s]))		// ptr to data of server s
+#define SRAD_ERROR(h,s) (&(h->rad_error[s]))
+#define RAD_DATA(h)  (SRAD_DATA(h,h->pref_sID))	// ptr to data of preferred s
+#define RAD_ERROR(h) (SRAD_ERROR(h,h->pref_sID))
+
 
 
 ==============================================================
@@ -244,7 +265,7 @@ Main and Basic Execution Flow
 ============================
 
 RADclock is launched from the command line, or via the startup script
-/etc/rc.d/radclock file  when run as a system service.
+/etc/rc.d/radclock file  when run as a system service: "service radclock start".
 To begin a description of the flow of execution, consider this summary of main.
 
  Simplified code:
@@ -254,17 +275,18 @@ To begin a description of the flow of execution, consider this summary of main.
 	initialize configuration system   	// includes command line parsing, see RADclockDoc_config
 
 	clock_handle = create_handle(conf, is_daemon); // create global handle variable
-	handle = clock_handle;                         // make local copy of pointer
+	handle = clock_handle;                         // make local copy of handle
 	set_logger((logger_verbose_bridge))	// initialize logging
 	daemonize(,)								// fork/exit check unique, open logfiles, close stdin etc
-	finalize configuration					// read conf file (create if needed), adjust, and print it
+	finalize configuration					// read conf file (create if needed), adjust, print, determine #servers
+	init_mRADclocks(handle, handle->nservers);		// initialize structures for all clocks
 
 	if (!is_live_source(handle))   		// depends on selected inputs recorded in handle->conf
 		handle->run_mode = RADCLOCK_SYNC_DEAD;
-	else
+	else {
 		handle->run_mode = RADCLOCK_SYNC_LIVE;
 		clock_init_live(clock)				// find KV, initialize kernel related clock members
-
+	}
 	init_handle(handle);						// creates data source, and SMS, fully initialize verbosity
 
 	if RADCLOCK_SYNC_DEAD
@@ -338,11 +360,11 @@ int pthread_attr_setschedparam	(pthread_attr_t*, const struct sched_param*)
 int pthread_attr_setschedpolicy	(pthread_attr_t*, int)
 /* Condition threads */
 int pthread_cond_init 			(pthread_cond_t*, pthread_condattr_t)
-//	 Blocks on cond variable, also unlocks mutex
-//  When awakens, will again own mutex, but won't wake until mutex is freed !
+	//	 Blocks on cond variable, also unlocks mutex
+	//  When awakens, will again own mutex, but won't wake until mutex is freed !
 int pthread_cond_wait			(pthread_cond_t* cond, pthread_mutex_t* mutex)
-//  Unblocks thread blocked on cond.
-//  Doesn't also release mutex used in cond_wait call, must be done separately
+	//  Unblocks thread blocked on cond.
+	//  Doesn't also release mutex used in cond_wait call, must be done separately
 int pthread_cond_signal       (pthread_cond_t*, pthread_t)
 int pthread_cond_destroy		(pthread_cond_t*);
 /* Mutexes */
@@ -372,7 +394,7 @@ alarm_mutex											// external defn pthread_trigger.c; decl client_ntp.c
 The following table maps out mutex usage, giving what the mutexes are used to protect,
 the functions they are used in, and within which threads.
 
-mutex    			Data it protects      	Thread,  	fns involved,  	notes
+mutex    			Data it protects      	Thread,  	fns involved,  			notes
 ------------------------------------------------------------------------------------------------
 	 wakeup_mutex  handle->wakeup_cond		MAIN			pthread_mutex_{init,destroy}
 				handle->wakeup_checkfordata	TRIGGER		thread_trigger(), 		pthread_cond_signal
@@ -532,9 +554,10 @@ Hence the callback, catch_alarm(), called under MAIN, must communicate back to T
 It does this as follows :
 	 void catch_alarm(int sig)
 	 {
-		 pthread_mutex_lock(&alarm_mutex);
-		 pthread_cond_signal(&alarm_cwait);
-		 pthread_mutex_unlock(&alarm_mutex);
+		pthread_mutex_lock(&alarm_mutex);
+		clock_handle->lastalarm_sID = info->si_value.sival_int;	// record which alarm caught
+		pthread_cond_signal(&alarm_cwait);
+		pthread_mutex_unlock(&alarm_mutex);
 	 }
 where the signal is caught by matching alarm_mutex protected wait code in ntp_client() :
 	pthread_cond_wait(&alarm_cwait, &alarm_mutex);
@@ -616,13 +639,35 @@ The use of retries does add a lot of complexity, both to trigger and stamp match
 s-halfstamps also requiring cleaning), and it so is explictly suppressed when
 poll_period is too small, eg ≤2.
                
+# Extension to mRADclock
+When there is more than 1 server, a separate timer and associated periodic stamp
+grid is generated for each in ntp_client_init(). The server id sID is passed to
+the timer so its identity can be recovered when the signal is caught, stored as
+lastalarm_sID off the handle or recovery by Trigger.
+Trigger handles packets for all clocks (ie to all servers) via ntp_client()
+dealing with the next alarm that fires, then determining what server it belongs to
+and adjusting pointers to use the corresponding state variables, after which
+the code is server-oblivious.
+
+Problem:
+There is a danger (since blocking sockets with timeout are used), that
+while ntp_client() is waiting for a response from one server and therefore not waiting
+on alarm_cwait, that an alarm may go off for one or more other servers, which would
+be missed as alarms are not queued.
+This risk increases with the number of servers and with smaller poll_period, where
+the server grids may drift be to too close to each other for extended periods.
+The result would be a failure of trigger to send more requests to the affected
+servers, resulting in those clocks being starved of data (this would be noted in PROC).
+Alternative mechanisms should be explored to ensure such sending-starvation cannot occur.
+
+
 
 
 ==============================================================
 Networking and Sockets
 =============================
 
-In the case of live capture, IP addresses of the host and server must be obtained
+In the case of live capture, IP addresses of the host and server(s)) must be obtained
 so that a tight bpf filter can be defined to isolate the desired client<-->server
 packets.
 
@@ -653,9 +698,10 @@ the daemon synchronized to, and the network information required to achieve this
 	/* Protocol related stuff on the server side (NTP, 1588, ...) */
 	struct radclock_ntp_server		*ntp_server;
 
-These have memory allocated in create_handle(), and are exclusively accessed via
-#define NTP_CLIENT(x) (x->ntp_client)
-#define NTP_SERVER(x) (x->ntp_server)
+These have memory `arrays` allocated in init_mRADclocks(), and the structure
+pointers (`array` index) for server s can be accessed via
+#define SNTP_CLIENT(h,s) (&(h->ntp_client[s]))
+#define SNTP_SERVER(h,s) (&(h->ntp_server[s]))
 
 
 The client side variable relates to protocol level information required for
@@ -699,7 +745,8 @@ uint32_t.  The minRTT member maps to the algo''s minRTT estimate.
 The idea is that this variable is the place to go to find out basic information
 characterizing the TYPical behaviour of the server. However its utility is
 low currently as most of the data it carries corresponds to the last stamp_t
-from the server in almost all cases, already recorded under handle->algodata->laststamp.
+from the server in almost all cases, already recorded under
+handle->algodata[sID]->laststamp.
 
 struct radclock_ntp_server {
 	int burst;
@@ -710,7 +757,9 @@ struct radclock_ntp_server {
 	double rootdispersion;	/* Cumulative clock error from top of stratum hierarchy */
 };
 
-A thread based breakdown of all uses of ntp_server follows.
+A thread based breakdown of all uses of ntp_server follows. Note that if the
+preferred server must be accessed, this is done through the macro
+#define NTP_SERVER(h) (SNTP_SERVER(h,h->pref_sID))
 
 # MAIN  :	  [ initializations in create_handle]
 stratum     : STRATUM_UNSPEC
@@ -718,32 +767,29 @@ burst       : NTP_BURST
 
 
 # PROC  :     [ sets the server information ]
-[refid,stratum,root{delay,dispersion}]  :  in  create_stamp.c:get_network_stamp(),
-   values from successfully popped stamps are stored in NTP_SERVER. Thus this
-   information is refreshed on a per-stamp basis.
+The relevant ntp_server variable is updated in process_stamp after the algo is run so that
+	minRTT       : the algo (sync_bidir) inserts the RTT estimate
+	burst        : reset to NTP_BURST in process_stamp if a counter change detected.
+can be set. Thus ntp_server information is refreshed on a per-stamp basis for each server.
 
-Other information from the response packet is also stored in get_network_stamp (within the peer variable):
-[refid, ttl, stratum, LI]   (thus refid and stratum are duplicated currently).
-and server information verbosity lives here.
-      
-minRTT       : the algo (sync_bidir) inserts the RTT estimate
-burst        : reset to NTP_BURST in process_stamp if a counter change detected.
+In addition received stamps are stored by process_stamp as the laststamp member of
+bidir_algodata:  this is a stamp_t which contains [refid, ttl, stratum, LI].
 
 # PROC  :     [ gets the server information ]
 root{delay,dispersion}  :  in update_FBclock (if activated)
 
 
 # TRIGGER :   [gets but not set, and uses burst internally]
-[refid,stratum]  : within create_ntp_request(), the values of the crafted outgoing
-                   request packets are set to [refid,stratum+1] wrt the NTP_SERVER values
-burst            : within ntp_client(), burst is a client-side state variable
-                   used to modify polling period on startup. It lives here since
-                   bursts are server specific, relating to a lack of path information
-                   at startup toward that server.
+[stratum]  : within create_ntp_request(), the values of the crafted outgoing
+				 request packets are set to [stratum+1] wrt the NTP_SERVER values
+burst      : within ntp_client(), burst is a client-side state variable
+				 used to modify polling period on startup. It lives here since
+				 bursts are server specific, relating to a lack of path information
+				 at startup toward that server.
 
 # NTP_SERV	 [ gets but not set: all within thread_ntp_server() ]
-[refid,stratum]  : the values of the crafted outgoing response packets are set to
-                   [refid,stratum+1]  wrt the NTP_SERVER values
+[stratum]  : the values of the crafted outgoing response packets are set to
+				 [stratum+1]  wrt the NTP_SERVER values
 
 rootdispersion   	  : used to calculate the rootdispersion inserted in response pkts
 [rootdelay,minRTT]  : used to calculate the rootdelay      inserted in response pkts
@@ -791,7 +837,8 @@ Code execution summary:
 		  radclock_get_vcounter(handle->clock, &vcount_rec); // take raw timestamp ASAP
 
 		  check external client request pkt is MODE_CLIENT
-		  prepare response pkt, fill all ntp_pkt fields
+		  prepare response pkt, fill all ntp_pkt fields, using both the Absolute
+		  and Difference clocks of the current daemon''s preferred clock
 		  sendto(s_server, (char*)pkt_out,.. )
 		    
   pthread_exit(NULL)										// terminate
