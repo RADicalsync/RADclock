@@ -73,13 +73,7 @@ extern pthread_mutex_t alarm_mutex;
 extern pthread_cond_t alarm_cwait;
 
 
-/* Initilize the client socket info, create the timer
- * mRADclock:  is a mix of one-off and s-specific stuff.
- *		Probably best to keep a single fn and loop on s for needed bits
- *    Hopefully can stick with a single signal catching structure,
- *    but when signal caught and pass back to TRIGGER, how tell which s-timer
- *		caused it?
- */
+/* Initilize the client socket info, create the timer */
 int
 ntp_client_init(struct radclock_handle *handle)
 {

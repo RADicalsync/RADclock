@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
  *
- * This file is part of the radclock program.
+ * This file is part of the RADclock program.
  */
 
 RADclock and FFclock documentation.
@@ -27,7 +27,7 @@ RADclockDoc_library
 RADclockDoc_config
 	Configuration system of RADclock, including command line options.
 RADclockDoc_verbose
-	The verbosity system for the deamon generally, the library and the RADclock algo.
+	The verbosity system for the daemon generally, the library and the RADclock algo.
 RADclockDoc_algo_bidir
 	The RADclock algorithm itself [Doc under construction].
 RADclockDoc_guide
@@ -38,7 +38,7 @@ FFclockDoc_FreeBSD
 For users of RADclock, the most useful documents would be RADclockDoc_library
 to understand the available library features, and RADclockDoc_config to understand
 the configuration options and radclock.conf file (though the essentials of this
-are covered below). It is useful to set your editor to colour according to C syntax.
+are covered below). It is useful to view the documents with colour settings set to C syntax.
 
 There are also the man pages in repo/man and repo/kernel/freebsd/FreeBSD-XX/CurrentSource
 and in the system once installed :
@@ -113,7 +113,7 @@ system clock.  Independently of this, it can also optionally serve time
 to other processes in a number of ways using a library.  In the case
 where the counter used is the TSC (Time Stamp Counter), radclock can take
 advantage of a defined `kernel bypass mode` when available, to access counter
-reads without system all overhead.
+reads without system call overhead.
 
 
 ==============================================================================
@@ -234,9 +234,11 @@ Now make and install the daemon.
 
 You can quickly test radclock is working with
 	radclock -h						# take a look at the command line options
-and test it on the sample ascii input data provided (one timestamp 4tuple per row)
+and test it on the sample ascii input data provided :
 radclock -p 1  -s radclock-0.4.0/tests/Stratum1Stamps.dat
 
+This file contains 1000 stamps (one per row) from a RADclock capture using the
+high quality non-public stratum-1 server  ntp.melbourne.nmi.gov.au .
 
 # Controlling radclock when running as a daemon
 To set this up, execute
@@ -259,7 +261,7 @@ If the file does not exist, then one populated with default values will be
 created, then radclock will exit.
 Running a second time should be successful, however it is highly likely that you
 will want to edit the file first! in particular to set parameters such as the
-time server, polling period, and ntp_server.
+time_server, polling_period, and ntp_server.
 [ See configuration section below ]
 
 Many of the parameters can be altered without having to restart the daemon
@@ -311,7 +313,7 @@ viewed with
 	radclock -h
 	
 RADclock allows many of its subsystems to be switched on or off  [default is shown]:
-	ipc_server = on			//	write to the SMS to support user radclocks
+	ipc_server = on			//	write to the SMS (Shared Memory Segment) to support user radclocks
 	adjust_FFclock = on		// let the daemon discipline the system FFclock
 	adjust_FBclock = off		// let the daemon discipline the system FBclock
 	ntp_server = off  		// allow the RADserver to serve clients
@@ -327,7 +329,7 @@ Other important parameters to keep in mind are
 	time_server					// the remote server queried by the daemon
 	polling_period				// the period separating the timing queries to time_server
 	verbose_level				// this should normally be quiet, but more if testing
-	
+
 The time_server should be selected to be reliable and as close as possible
 (in terms of RTT) to the host, and with stable routing.
 
@@ -335,7 +337,7 @@ Many of the parameters can be altered without having to restart the daemon
 (restart means stop, then start again from scratch).
 To do this, edit the configuration file as desired, then use
 	service radclock reload
-	
+
 Important examples of on-the-fly changes are
 	ntp_server					// to stop excessive incoming client traffic
 	verbose_level				// may want to set it high for a period to get more
@@ -646,7 +648,7 @@ The new FF bpf packet stamping architecture has another important feature.
 If a packet is set to be tapped by a number of different processes, each tap
 will deliver exactly the same timestamp. More precisely, a common raw
 timestamp is taken, as well and both FF and FB clock state,
-and these are used to deliver the timestamps to all listening process.
+and these are used to deliver the timestamps to all listening processes.
 The details specified by the respective tsmodes are obeyed, but the underlying
 timestamp is shared.
  

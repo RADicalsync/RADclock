@@ -738,7 +738,6 @@ preferred_RADclock(struct radclock_handle *handle)
 				}
 	}
 
-	/* Even if only 1 server, this diagnostic check will return useful information */
 	if (s_RTThat < 0) {
 		verbose(LOG_WARNING, "No server passed checks, preferred server based on minimum RTT only");
 		s_RTThat = s_mRTThat;
@@ -992,23 +991,16 @@ process_stamp(struct radclock_handle *handle)
 	 * Reevaluate preferred RADclock
 	 * Preferred clock is updated if it has changed, or if this stamp is from it
 	 */
-	 // Testing
-//	if (state->stamp_i == 300 || state->stamp_i == 2000)
-//		handle->servertrust = 2;
-//	else
-//		handle->servertrust = 0;
-//
-//	if (state->stamp_i == 1998) handle->servertrust = 4;
-
-	pref_sID_new = preferred_RADclock(handle);
-	if (pref_sID_new != handle->pref_sID) {
-		pref_updated = 1;
-		verbose(LOG_NOTICE, "Preferred clock changed from %d to %d",
-			handle->pref_sID, pref_sID_new);
-		handle->pref_sID = pref_sID_new;		// register change
-	} else
-		if (sID == handle->pref_sID) pref_updated = 1;
-		
+	if (handle->nservers > 1) {
+		pref_sID_new = preferred_RADclock(handle);
+		if (pref_sID_new != handle->pref_sID) {
+			pref_updated = 1;
+			verbose(LOG_NOTICE, "Preferred clock changed from %d to %d",
+				handle->pref_sID, pref_sID_new);
+			handle->pref_sID = pref_sID_new;		// register change
+		} else
+			if (sID == handle->pref_sID) pref_updated = 1;
+	}
 
 
 	/*
