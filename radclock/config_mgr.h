@@ -237,7 +237,7 @@
 #define MAX_NTC 32
 #define ICN_MASK (~(~0ULL << MAX_NTC/2))	// 000..0011...111  null OCN bits
 /* Convert the ntc_id of an OCN into a `OCN_id' starting at 1, or -1 if not an OCN */
-#define OCN_ID(h) (h > MAX_NTC/2 ? h - MAX_NTC/2 : -1 )
+#define OCN_ID(h) (h >= MAX_NTC/2 ? h - MAX_NTC/2 : -1 )
 struct NTC_Config {
 	int 	id;
 	char 	domain[MAXLINE];

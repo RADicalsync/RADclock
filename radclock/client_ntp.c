@@ -414,7 +414,7 @@ ntp_client(struct radclock_handle *handle)
 				sID, NTC_id, ocn_id, ntc_status, ntc_status & ICN_MASK, ICN_MASK);
 
 		if (ocn_id > -1) {
-			key_id = ocn_id + PRIVATE_CN_NTP_KEYS;
+			key_id = ocn_id + PRIVATE_CN_NTP_KEYS + 1; // Keys start from 1 where OCN ids start from 0. So +1 to key Id
 			if (key_id < MAX_NTP_KEYS && handle->ntp_keys)
 				ntp_key = handle->ntp_keys[key_id];			// = 0 if no key allocated
 			if ( ntp_key == -1 || ntp_key == 0 ) {

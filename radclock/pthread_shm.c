@@ -297,7 +297,7 @@ thread_shm(void *c_handle)
 
 		/* Recall NTC_id mapping :
 		 * 	ICN:  (1,2,3,4,5) = (SYD,MEL,BRI,PER,ADL)
-		 *		OCN:  (1,2,3,4,5) = (SYD,MEL,BRI,PE)  and +16 for ntc_id:  (17,18,19,20)
+		 *		OCN:  (0,1,2,3,4) = (SYD,MEL,BRI,PE)  and +16 for ntc_id:  (16,17,18,19)
 		 */
 		switch (NTC_id) {
 			case -1:	// Undefined

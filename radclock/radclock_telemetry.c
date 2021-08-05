@@ -3,7 +3,7 @@
 
 #include "radclock_telemetry.h"
 
-Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, int NTC_Count, long double timestamp, int accepted_public_ntp, int rejected_public_ntp, int inband_signal)
+Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, int NTC_Count, long double timestamp, int delta_accepted_public_ntp, int delta_rejected_public_ntp, uint64_t servertrust, unsigned int public_ntp_state, uint64_t SA)
 {
     // Make telemetry packet
     Radclock_Telemetry_Latest data;
@@ -23,16 +23,18 @@ Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, int NTC_
     data.NTC_Count = NTC_Count;
     data.timestamp = timestamp;
 
-    data.accepted_public_ntp = accepted_public_ntp;
-    data.rejected_public_ntp = rejected_public_ntp;
-    data.inband_signal = inband_signal;
+    data.delta_accepted_public_ntp = delta_accepted_public_ntp;
+    data.delta_rejected_public_ntp = delta_rejected_public_ntp;
+    data.servertrust = servertrust;
+    data.public_ntp_state = public_ntp_state;
+    data.sa = SA;
 
     return data;
 }
 
 
 
-Radclock_Telemetry_NTC_Latest make_telemetry_NTC_packet(unsigned int status_word, int NTC_id, double uA, double err_bound)
+Radclock_Telemetry_NTC_Latest make_telemetry_NTC_packet(unsigned int status_word, int NTC_id, double uA, double err_bound, double min_RTT, double clockErr)
 {
     Radclock_Telemetry_NTC_Latest data;
 
@@ -41,7 +43,8 @@ Radclock_Telemetry_NTC_Latest make_telemetry_NTC_packet(unsigned int status_word
     data.NTC_id = NTC_id;
     data.uA = uA;
     data.err_bound = err_bound;
-
+    data.min_RTT = min_RTT;
+    data.clockErr = clockErr;
     return data;
 }
 
@@ -108,6 +111,28 @@ void print_telegraf(char * filename, const char * log_dir, const char * processe
         printf(" %.0Lf\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp 
 
     }
+    else if (header.version == 6)
+    {
+        struct Radclock_Telemetry_v6 ocn_data;
+        // Offset by header bytes as they have already been read in
+        fread((void*)(&ocn_data)+sizeof(Radclock_Telemetry_Header), sizeof(ocn_data) - sizeof(Radclock_Telemetry_Header), 1, fp);
+        struct Radclock_Telemetry_NTC_v6 ntc_data;
+
+        fread((void*)(&ntc_data), sizeof(ntc_data), 1, fp);
+
+        printf("clock_stats,ocn=%s ", hostname);
+
+        printf("picn=%d,",      ocn_data.PICN);
+        // printf("asym=%d,",      ocn_data.asym);
+        printf("ntc_count=%d,", ocn_data.NTC_Count);
+        printf("ocn_clock_ts=%.09Lf,", ocn_data.timestamp); // Timestamp in seconds (cant pass in nanoseconds as far as I can tell)
+        printf("ocn_clock_ICN_1_uA=%.20f,", ntc_data.uA); // uA
+        printf("ocn_clock_ICN_1_err_bound=%.20f", ntc_data.err_bound); // err_bound
+        // todo fix so this isnt a decimal (seems some precision issues occur when doing the operation below)
+        printf(" %.0Lf\n",ocn_data.timestamp*1000000000); // End of the line must end with a timestamp 
+
+    }
+
     else
 
     {

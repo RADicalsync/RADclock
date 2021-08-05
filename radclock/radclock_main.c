@@ -580,6 +580,8 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Public serving */
 	handle->accepted_public_ntp = 0;
 	handle->rejected_public_ntp = 0;
+	handle->prior_ntp_sent = 0;
+	handle->prior_ntp_rejected = 0;
 
 	gettimeofday(&handle->telemetry_data.last_msg_time,NULL);
 
@@ -674,6 +676,7 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 		perfdata->laststamp = calloc(ns,sizeof(struct stamp_t));
 		perfdata->output = calloc(ns,sizeof(struct bidir_perfoutput));
 		perfdata->state = calloc(ns,sizeof(struct bidir_perfstate));
+		memset(perfdata->state, 0, ns * sizeof(struct bidir_perfstate));
 		perfdata->RADBUFF_SIZE = ns * 8;
 		perfdata->RADbuff = calloc(perfdata->RADBUFF_SIZE,sizeof(struct stamp_t));
 		perfdata->RADbuff_next = 0;

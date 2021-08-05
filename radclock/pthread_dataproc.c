@@ -886,7 +886,7 @@ process_stamp(struct radclock_handle *handle)
 	/* Authentication check for a CN using an OCN server */
 	if (handle->conf->is_cn) {
 		int ocn_id = OCN_ID(handle->conf->time_server_ntc_mapping[sID]);
-		if (ocn_id > -1 && stamp.auth_key_id != ocn_id + PRIVATE_CN_NTP_KEYS) {
+		if (ocn_id > -1 && stamp.auth_key_id != ocn_id + PRIVATE_CN_NTP_KEYS + 1) {
 			verbose(LOG_ERR, "CN skipping received OCN stamp with incorrect auth_key!");
 			return (1);
 		}

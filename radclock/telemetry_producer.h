@@ -119,7 +119,7 @@ push_telemetry(struct radclock_handle *handle, int sID)
         else
             keep_alive_trigger = 1;
         
-        push_telemetry_batch(handle->telemetry_data.packetId, &handle->telemetry_data.write_pos, handle->telemetry_data.buffer, &handle->telemetry_data.holding_buffer_size, handle->telemetry_data.holding_buffer, handle, radclock_ts, keep_alive_trigger, PICN, handle->conf->time_server_ntc_count);
+        push_telemetry_batch(handle->telemetry_data.packetId, &handle->telemetry_data.write_pos, handle->telemetry_data.buffer, &handle->telemetry_data.holding_buffer_size, handle->telemetry_data.holding_buffer, handle, radclock_ts, keep_alive_trigger, PICN, handle->nservers);
 
         handle->telemetry_data.packetId += 1;
         handle->telemetry_data.last_msg_time = radclock_ts;
@@ -134,6 +134,8 @@ push_telemetry(struct radclock_handle *handle, int sID)
             handle->telemetry_data.prior_data[sID].prior_status = handle->rad_data[sID].status;
             handle->telemetry_data.prior_data[sID].prior_uA = uA;
             handle->telemetry_data.prior_data[sID].prior_leapsec_total = handle->rad_data[sID].leapsec_total;
+            handle->telemetry_data.prior_data[sID].prior_minRTT = handle->ntp_server[sID].minRTT;
+            
         }
 
     }
@@ -169,7 +171,31 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
  //   }
 //    else
     {
-        *header_data = make_telemetry_packet(packetId, PICN, NTC_Count, timestamp, handle->accepted_public_ntp, handle->rejected_public_ntp, handle->servertrust);
+        int delta_accepted_public_ntp = handle->accepted_public_ntp - handle->prior_ntp_sent;
+        int delta_rejected_public_ntp = handle->rejected_public_ntp - handle->prior_ntp_rejected;
+        // printf("Telem delta %d %d (%d, %d), (%d, %d)\n", delta_accepted_public_ntp, delta_rejected_public_ntp, handle->accepted_public_ntp, handle->prior_ntp_sent, handle->rejected_public_ntp, handle->prior_ntp_rejected);
+
+        handle->prior_ntp_sent = handle->accepted_public_ntp;
+        handle->prior_ntp_rejected = handle->rejected_public_ntp;
+        uint64_t SA = 0;
+
+        // Create a bit compressed array of server anomalies sorted by NTC id
+        if (handle->conf->is_cn)
+        {
+            for (int sID =0;sID<NTC_Count;sID++)
+            {
+                int NTC_id = handle->conf->time_server_ntc_mapping[sID];
+                if (sID != -1)
+                {
+                    int temp_SA = ((struct bidir_perfdata *)(handle->perfdata))->state[sID].SA;
+                    if (temp_SA)
+                        SA |= 1 << NTC_id;
+                }
+            }
+        }
+
+        // printf("Telemetry SA val: %d\n", SA);
+        *header_data = make_telemetry_packet(packetId, PICN, NTC_Count, timestamp, delta_accepted_public_ntp, delta_rejected_public_ntp, handle->servertrust, handle->conf->public_ntp, SA);
 
         // Write OCN specific telemetry packet to shared memory
         // bytes_written += ring_buffer_write(&header_data, sizeof(Radclock_Telemetry_Latest), shared_memory_handle, ring_write_pos);
@@ -183,10 +209,14 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
 
             double uA = state->Asymhat; // (float)(rand()%1000) * 0.001; 
             double err_bound = handle->rad_data[time_server_id].ca_err;
+            double min_RTT = handle->rad_error[time_server_id].min_RTT; //;handle->ntp_server[time_server_id].minRTT;
+            double clockErr = 0;
+            if (handle->conf->is_cn)
+                clockErr= ((struct bidir_perfdata *)(handle->perfdata))->state[time_server_id].RADerror;
 
             // Create a telemetry NTC server specific packet
             Radclock_Telemetry_NTC_Latest * NTC_data = (Radclock_Telemetry_NTC_Latest *) (holding_buffer + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*i);
-            *NTC_data = make_telemetry_NTC_packet(status_word, NTC_id, uA, err_bound);
+            *NTC_data = make_telemetry_NTC_packet(status_word, NTC_id, uA, err_bound, min_RTT, clockErr);
         }
 
         // Create and copy footer data to holding buffer

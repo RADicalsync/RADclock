@@ -143,32 +143,38 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
     w = mp_encode_uint(w, ocn_data->header.version);    
 
     w = mp_encode_str(w, "ocn_clock", strlen("ocn_clock"));
-    w = mp_encode_map(w, 8);
-    // A map of 8 elements
+    w = mp_encode_map(w, 9);
+    // A map of 9 elements
 
     w = mp_encode_str(w, "picn", 4);
     w = mp_encode_uint(w, ocn_data->PICN);
 
-    // w = mp_encode_str(w, "asym", 4);
-    // w = mp_encode_uint(w, ocn_data->asym);
-
     w = mp_encode_str(w, "ntc_count", strlen("ntc_count"));
     w = mp_encode_uint(w, ocn_data->NTC_Count);
 
-    w = mp_encode_str(w, "ts_sec", strlen("ts_sec"));
-    w = mp_encode_uint(w, ts_sec);
+    // w = mp_encode_str(w, "ts_sec", strlen("ts_sec"));
+    // w = mp_encode_uint(w, ts_sec);
 
-    w = mp_encode_str(w, "ts_nsec", strlen("ts_nsec"));
-    w = mp_encode_uint(w, ts_nsec);
+    // w = mp_encode_str(w, "ts_nsec", strlen("ts_nsec"));
+    // w = mp_encode_uint(w, ts_nsec);
+
+    w = mp_encode_str(w, "ts", strlen("ts"));
+    w = mp_encode_double(w, (double)timestamp);
 
     w = mp_encode_str(w, "ntp_acc", strlen("ntp_acc"));
-    w = mp_encode_uint(w, ocn_data->accepted_public_ntp);
+    w = mp_encode_uint(w, ocn_data->delta_accepted_public_ntp);
 
     w = mp_encode_str(w, "ntp_rej", strlen("ntp_rej"));
-    w = mp_encode_uint(w, ocn_data->rejected_public_ntp);
+    w = mp_encode_uint(w, ocn_data->delta_rejected_public_ntp);
 
-    w = mp_encode_str(w, "inband", strlen("inband"));
-    w = mp_encode_uint(w, ocn_data->inband_signal);
+    w = mp_encode_str(w, "servertrust", strlen("servertrust"));
+    w = mp_encode_uint(w, ocn_data->servertrust);
+
+    w = mp_encode_str(w, "pub_ntp_s", strlen("pub_ntp_s"));
+    w = mp_encode_uint(w, ocn_data->public_ntp_state);
+
+    w = mp_encode_str(w, "sa", strlen("sa"));
+    w = mp_encode_uint(w, ocn_data->sa);
 
     // A map of NTC server elements
     w = mp_encode_str(w, "NTC", 3);
@@ -180,7 +186,7 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
         sprintf(ntc_name, "%d", NTC_data->NTC_id);
         
         w = mp_encode_str(w, ntc_name, strlen(ntc_name));
-        w = mp_encode_map(w, 3);
+        w = mp_encode_map(w, 5);
 
         w = mp_encode_str(w, "stat", 4);
         w = mp_encode_uint(w, NTC_data->status_word);
@@ -190,6 +196,12 @@ void packet_callback_msgpuck(void * data, int packetId, int dataSize, long doubl
 
         w = mp_encode_str(w, "err_bound", strlen("err_bound"));
         w = mp_encode_double(w, NTC_data->err_bound);
+
+        w = mp_encode_str(w, "min_RTT", strlen("min_RTT"));
+        w = mp_encode_double(w, NTC_data->min_RTT);        
+
+        w = mp_encode_str(w, "clockErr", strlen("clockErr"));
+        w = mp_encode_double(w, NTC_data->clockErr);            
     }
 
     // Write OCN data to file
