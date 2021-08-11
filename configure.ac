@@ -1,6 +1,6 @@
 dnl
 dnl Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
-dnl Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+dnl Copyright (C) 2013-2021, Darryl Veitch <darryl.veitch@uts.edu.au>
 dnl All rights reserved.
 dnl
 dnl Redistribution and use in source and binary forms, with or without
@@ -103,7 +103,7 @@ AC_SUBST([ADD_INCLS])
 AC_SUBST([ADD_LIBS])
 AC_SUBST([PACKAGE_NAME])
 AC_SUBST([PACKAGE_VERSION])
-AC_SUBST([CFLAGS], "${CFLAGS} -Wall -g -I /usr/src/sys")
+AC_SUBST([CFLAGS], "${CFLAGS} -Wall -g -I /usr/src/sys -I /usr/include/libnl3")
 
 
 
@@ -161,30 +161,30 @@ dnl 3 headers to test in Linux, but seems it is not available anymore anyway
 	linux*)
 		AC_CHECK_HEADER([asm/msr.h])
 		if test "$ac_cv_header_asm_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtscll],
+			AC_CHECK_DECL([rdtsc],
 						  [AC_DEFINE([HAVE_RDTSCLL_ASM],
 									 [1],
-									 [Define to 1 if rdtscll() in asm/msr.h])],
+									 [Define to 1 if rdtsc() in asm/msr.h])],
 						  [],
 						  [#include <asm/msr.h>])
 		fi
 
 		AC_CHECK_HEADER([asm-x86/msr.h])
 		if test "$ac_cv_header_asm_x86_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtscll],
+			AC_CHECK_DECL([rdtsc],
 						  [AC_DEFINE([HAVE_RDTSCLL_ASM_X86],
 									 [1],
-									 [Define to 1 if rdtscll() in asm-x86/msr.h])],
+									 [Define to 1 if rdtsc() in asm-x86/msr.h])],
 						  [],
 						  [#include <asm-x86/msr.h>])
 		fi
 
 		AC_CHECK_HEADER([asm-x86_64/msr.h])
 		if test "$ac_cv_header_asm_x86_64_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtscll],
+			AC_CHECK_DECL([rdtsc],
 						  [AC_DEFINE([HAVE_RDTSCLL_ASM_X86_64],
 									 [1],
-									 [Define to 1 if rdtscll() in asm-x86_64/msr.h])],
+									 [Define to 1 if rdtsc() in asm-x86_64/msr.h])],
 						  [],
 						  [#include <asm-x86_64/msr.h>])
 		fi
@@ -267,9 +267,9 @@ if test "$tscexts" = "no"; then
 case "$target_os" in
 	linux*)
 		osversion=$(uname -r | sed -e 's/\([0-9]*.[0-9]*.[0-9]*\)-.*/\1/')
-		if test -e /sys/devices/system/ffclock/ffclock0/version; then
+		if test -e /sys/devices/system/ffclock/ffclock0/version_ffclock; then
 			tscexts=yes
-			ffsupportversion=`cat /sys/devices/system/ffclock/ffclock0/version`
+			ffsupportversion=`cat /sys/devices/system/ffclock/ffclock0/version_ffclock`
 		else
 			if test -e  /proc/sys/net/core/radclock_default_tsmode ; then
 				tscexts=yes
@@ -317,6 +317,7 @@ case $target_os in
 
 	linux*)
 		netlink=yes
+#		genl=yes
 
 		AC_CHECK_HEADERS([linux/netlink.h],
 						 [],
@@ -330,20 +331,9 @@ case $target_os in
 						 [],
 						 [netlink=no],
 						 [#include <sys/socket.h>])
-		AC_CHECK_LIB([nl], [nl_handle_alloc], [], netlink=no)
-		AC_MSG_CHECKING([nl_recv for four or three params])
-		AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <sys/socket.h>
-											 #include <linux/netlink.h>
-											 #include <netlink/netlink.h>]],
-										   [[nl_recv(NULL,NULL,NULL,NULL);]])],
-						  [nl_recv=four],
-						  [nl_recv=unknown])
-		if test "${nl_recv}" = "four"; then
-			AC_DEFINE([WITH_NL_RECV_FOUR_PARM], [], [nl_recv takes 4 params])
-			AC_MSG_RESULT([four])
-		else
-			AC_MSG_RESULT([three])
-		fi
+		AC_CHECK_LIB([nl-3], [nl_socket_alloc], [], [netlink=no])
+		AC_CHECK_LIB([nl-genl-3], [genl_ctrl_resolve], [], [genl=no])
+#		AC_SEARCH_LIBS([nl_socket_alloc], [nl3,nl-3,nl3_3.4], [], [netlink=no])
 
 		if test "${netlink}" = "no"; then
 			AC_DEFINE([WITH_FFKERNEL_NONE],
@@ -352,7 +342,7 @@ case $target_os in
 			AM_CONDITIONAL([MK_FFKERNEL_NONE], [test 1 = 1])
 		else
 			if test "$tscexts" = "yes"; then
-				LIBRADCLOCK_LIBS="${LIBRADCLOCK_LIBS} -lnl"
+				LIBRADCLOCK_LIBS="${LIBRADCLOCK_LIBS} -lnl-3 -lnl-genl-3"
 				AC_DEFINE([WITH_FFKERNEL_LINUX],
 						  [1],
 						  [Define to 1 if detected patched radclock kernel])
@@ -539,7 +529,19 @@ case "$target_os" in
 					;;
 				esac
 			;;	
-			*)
+			4.19.*)
+				# Set the SYSCALL numbers
+				case "$target_cpu" in
+					i386 | i486 | i586 | i686)
+						syscall_get_vcounter_number=387
+						syscall_get_vcounter_latency_number=388
+					;;
+					x86_64)
+						syscall_get_vcounter_number=335
+						syscall_get_vcounter_latency_number=336
+					;;
+				esac
+			;;				*)
 				syscall_get_vcounter_number=0
 				syscall_get_vcounter_latency_number=0
 			;;
@@ -576,21 +578,20 @@ AC_MSG_NOTICE([Feed-forward kernel: $tscexts (version: $ffsupportversion)])
 case $target_os in
 	
 	linux*)
-	if test "$tscexts" = yes
-	then
+	if test "$tscexts" = yes; then
 		AC_MSG_NOTICE([get_counter syscall number: $syscall_get_vcounter_number])
-		AC_MSG_NOTICE([get_counter_latency syscall number:
-					   $syscall_get_vcounter_latency_number])
-		if test "$netlink" = no
-		then
-		AC_MSG_NOTICE([**ERROR** - Netlink library (libnl) not found])
+		AC_MSG_NOTICE([get_counter_latency syscall number: $syscall_get_vcounter_latency_number])
+		if test "$netlink" = no; then
+			AC_MSG_NOTICE([**ERROR** - Netlink library (libnl) not found])
+		fi
+		if test "$genl" = no; then
+			AC_MSG_NOTICE([**ERROR** - Generic Netlink library (genl) not found])
 		fi
 	fi
 	;;
 
 	freebsd*)
-	if test "$tscexts" = yes
-	then
+	if test "$tscexts" = yes; then
 		AC_MSG_NOTICE([ioctl Count Starting At $ioctlcount])
 	fi
 	;;

@@ -40,6 +40,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <syslog.h>
+#include <stdlib.h>			// for calloc
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -246,23 +247,25 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 		verbose(LOG_ERR, "NTPclient: xmt = last_time !! pkt id not unique! "
 							"last_time =%10.9Lf, time = %10.9Lf, vcount= %llu",
 							last_time, time, (long long unsigned) vcount);
-		return (1);  // return to try again
+		//return (1);  // return to try again
 	}
 
 	UTCld_to_NTPtime(&time, &xmt);
 
-	//verbose(LOG_DEBUG, "last nonce: %10ld.%10lu [s]", last_xmt.l_int, last_xmt.l_fra);
-	//verbose(LOG_DEBUG, "xmt  nonce: %10ld.%10lu [s]", xmt.l_int, xmt.l_fra);
+	//verbose(LOG_DEBUG, "last nonce: %10lu.%10lu [s]", last_xmt.l_int, last_xmt.l_fra);
+	//verbose(LOG_DEBUG, "xmt  nonce: %10lu.%10lu [s]", xmt.l_int, xmt.l_fra);
 
-	/* Check, and ensure, that xmt timestamp unique, needed for use as a nonce */
-	if ( last_time > 0 && xmt.l_int == last_xmt.l_int
-							 && xmt.l_fra == last_xmt.l_fra) {
+	/* Check, and ensure, that xmt timestamp unique, needed for use as a nonce
+	 * This only protects against uniqueness wrt the previous packet, not globally
+	 */
+//	if ( last_time > 0 && xmt.l_int == last_xmt.l_int
+	if ( xmt.l_int == last_xmt.l_int && xmt.l_fra == last_xmt.l_fra ) {
 		verbose(LOG_WARNING, "NTPclient: xmt nonce not unique: %10lu.%10lu [s], "
 				"vcount= %llu", xmt.l_int, xmt.l_fra, (long long unsigned) vcount);
 		xmt.l_fra += 1;
 		if (xmt.l_fra == 0) xmt.l_int += 1;		// if overflowed, advance second
 
-		verbose(LOG_WARNING,"  nonce fraction increased to %10lu [s]", xmt.l_fra);
+		verbose(LOG_WARNING,"  nonce fraction increased to %10lu", xmt.l_fra);
 	}
 
 	pkt->xmt.l_int = htonl(xmt.l_int);

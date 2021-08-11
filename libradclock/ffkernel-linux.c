@@ -27,19 +27,18 @@
 
 #include "../config.h"
 #ifdef WITH_FFKERNEL_LINUX
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
+
 #include <asm/types.h>
 #include <sys/ioctl.h>
 #include <sys/sysctl.h>
 #include <sys/socket.h>
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <errno.h>
 #include <err.h>
 #include <string.h>
-
-/* Check for kernel memory mapped capability */
-#include <linux/if_packet.h>
 
 #include "radclock.h"
 #include "radclock-private.h"
@@ -66,7 +65,7 @@ found_ffwd_kernel_version (void)
 	int version = -1;
 	FILE *fd = NULL;
 
-	fd = fopen ("/sys/devices/system/ffclock/ffclock0/version", "r");
+	fd = fopen ("/sys/devices/system/ffclock/ffclock0/version_ffclock", "r");
 	if (fd) {
 		fscanf(fd, "%d", &version);
 		fclose(fd);
@@ -74,7 +73,6 @@ found_ffwd_kernel_version (void)
 				"(version: %d)", version);
 	}
 	else {
-
 		/* This is the old way we used before explicit versioning */
 		fd = fopen ("/proc/sys/net/core/radclock_default_tsmode", "r");
 		if (fd) {
@@ -111,7 +109,7 @@ found_ffwd_kernel_version (void)
 int
 has_vm_vcounter(struct radclock *clock)
 {
-	int passthrough_counter = 0;
+	int bypass_active = 0;
 	char clocksource[32];
 	FILE *fd = NULL;
 
@@ -124,10 +122,10 @@ has_vm_vcounter(struct radclock *clock)
 		logger(RADLOG_ERR, "Cannot open passthrough_clocksource from sysfs");
 		return (0);
 	}
-	fscanf(fd, "%d", &passthrough_counter);
+	fscanf(fd, "%d", &bypass_active);
 	fclose(fd);
 
-	if (passthrough_counter == 0) {
+	if (bypass_active == 0) {
 		logger(RADLOG_ERR, "Clocksource not in pass-through mode. Cannot init "
 				"virtual machine mode");
 		return (0);
@@ -179,7 +177,7 @@ inline vcounter_t
 radclock_readtsc(void)
 {
 	vcounter_t val;
-    rdtscll(val);
+	rdtscll(val);
 	return (val);
 }
 
@@ -203,14 +201,6 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 		logger(RADLOG_NOTICE, "registered get_vcounter syscall at %d",
 				clock->syscall_get_vcounter);
 		break;
-
-	case 2:
-		/* From config.h */
-		clock->syscall_get_vcounter = LINUX_SYSCALL_GET_VCOUNTER;
-		logger(RADLOG_NOTICE, "registered get_ffcounter syscall at %d",
-				clock->syscall_get_vcounter);
-		break;
-
 	default:
 		logger(RADLOG_ERR, "Unknown kernel version, cannot register "
 				"get_ffcounter syscall");
@@ -225,10 +215,15 @@ int
 radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
 {
 	int ret;
+
 	if (vcount == NULL)
 		return (-1);
 
-	ret = syscall(clock->syscall_get_vcounter, vcount);
+	ret = syscall(clock->syscall_get_vcounter, vcount);	// direct call
+	// glibc provided wrapper autogend?
+	//  listed already in syscall_64.tbl as a syscall
+	//  listed as a weak alias to  vdso call  vclockgettime.c
+	//ret = get_vcounter(vcount);
 	
 	if (ret < 0) {
 		logger(RADLOG_ERR, "error on syscall get_vcounter: %s", strerror(errno));
@@ -245,25 +240,12 @@ radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
 int
 radclock_init_vcounter(struct radclock *clock)
 {
-	int passthrough_counter = 0;
 	char clocksource[32];
+	int bypass_active;
 	FILE *fd = NULL;
-	
-	if (clock->kernel_version < 1)
-		passthrough_counter = 0;
-	else {
-		fd = fopen ("/sys/devices/system/clocksource/clocksource0/"
-				"passthrough_clocksource", "r");
-		if (!fd) {
-			logger(RADLOG_ERR, "Cannot open passthrough_clocksource from sysfs");
-			return (-1);
-		}
-		fscanf(fd, "%d", &passthrough_counter);
-		fclose(fd);
-	}
 
-	fd = fopen ("/sys/devices/system/clocksource/clocksource0/"
-			"current_clocksource", "r");
+	/* Retrieve name of hardware counter used by the kernel clocksource */
+	fd = fopen ("/sys/devices/system/clocksource/clocksource0/current_clocksource", "r");
 	if (!fd) {
 		logger(RADLOG_ERR, "Cannot open current_clocksource from sysfs");
 		return (-1);
@@ -272,7 +254,42 @@ radclock_init_vcounter(struct radclock *clock)
 	fclose(fd);
 	logger(RADLOG_NOTICE, "Clocksource used is %s", clocksource);
 
-	if (passthrough_counter == 0) {
+	/* Retrieve available and current sysclock */
+	// SYSclock choice concept not yet implemented for Linux
+
+
+
+	/* Retrieve value of kernel PT mode */
+	bypass_active = 0;
+	switch (clock->kernel_version) {
+	case 0:
+		bypass_active = 0;
+		break;
+
+	case 1:
+		fd = fopen ("/sys/devices/system/clocksource/clocksource0/passthrough_clocksource", "r");
+		if (!fd) {
+			logger(RADLOG_ERR, "Cannot open passthrough_clocksource from sysfs");
+			return (-1);
+		}
+		fscanf(fd, "%d", &bypass_active);
+		fclose(fd);
+		break;
+	}
+	logger(RADLOG_NOTICE, "Kernel bypass mode is %d", bypass_active);
+
+
+	/* Make decision on mode and assign corresponding get_vcounter function.
+	 *  Here activatePT authorizes deamons to activate the kernal PT option if
+	 *  appropriate, but not to deactivate it.
+	 *  Sufficient for now to keep activatePT an internal parameter (see algo Doc)
+	 *  If want to make a config parameter later, must read it in clock_init_live
+	 *  where handle->conf is available and pass here as 2nd argument.
+	 */
+	int activatePT = 0;		// user's intention regarding passthrough=bypass
+
+	// TODO:  Update this to match FreeBSD
+	if (bypass_active == 0 && activatePT == 0) {
 		clock->get_vcounter = &radclock_get_vcounter_syscall;
 		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter with syscall.");
 		return (0);
@@ -288,7 +305,7 @@ radclock_init_vcounter(struct radclock *clock)
 	}
 
 	/* Last, a warning */
-	if (passthrough_counter == 1) {
+	if (bypass_active == 1) {
 		if ((strcmp(clocksource, "tsc") != 0) && (strcmp(clocksource, "xen") != 0))
 			logger(RADLOG_ERR, "Passthrough mode in ON but the clocksource does "
 					"not support it!!");

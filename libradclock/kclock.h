@@ -31,15 +31,12 @@
 
 #include "../config.h"
 
-/*
- * This is very strongly inspired by the bintime structure in FreeBSD. See
- * sys/time.h there for the details.
- */
+/* Ensure bintime defined (is standard in FreeBSD, but not linux) */
 #if defined (__FreeBSD__)
 #include <sys/time.h>
 #else
 struct bintime {
-	int64_t sec;
+	time_t sec;
 	uint64_t frac;
 };
 #endif
@@ -113,5 +110,21 @@ struct radclock_fixedpoint
  */
 int set_kernel_fixedpoint(struct radclock *clock, struct radclock_fixedpoint *fp);
 
+
+#define	TWO32 ((long double)4294967296.0)	// 2^32
+
+static inline void
+bintime_to_ld(long double *time, struct bintime *bt)
+{
+	*time = bt->sec;
+	*time += (long double)(bt->frac) / TWO32 / TWO32;
+}
+
+static inline void
+ld_to_bintime(struct bintime *bt, long double *time)
+{
+	bt->sec = (time_t)*time;
+	bt->frac =  (*time - bt->sec) * TWO32 * TWO32;
+}
 
 #endif 	/* _KCLOCK_H */

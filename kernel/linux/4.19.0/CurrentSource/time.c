@@ -31,7 +31,7 @@
 #include <linux/kernel.h>
 #include <linux/timex.h>
 #include <linux/capability.h>
-#include <linux/timekeeper_internal.h>
+#include <linux/timekeeper_internal.h>	// includes linux/clocksource.h, hence vcounter_t, read_vcounter
 #include <linux/errno.h>
 #include <linux/syscalls.h>
 #include <linux/security.h>
@@ -265,6 +265,45 @@ COMPAT_SYSCALL_DEFINE2(settimeofday, struct compat_timeval __user *, tv,
 	return do_sys_settimeofday64(tv ? &new_ts : NULL, tz ? &new_tz : NULL);
 }
 #endif
+
+#ifdef CONFIG_RADCLOCK
+/* Add two syscall callback functions */
+SYSCALL_DEFINE1(get_vcounter, vcounter_t __user *, vcounter)
+{
+	vcounter_t vcount;
+	vcount = read_vcounter();
+	//printk("sys_get_vcounter : is called.\n");
+
+	if (copy_to_user(vcounter, &vcount, sizeof(vcounter_t)))
+		return -EFAULT;
+	return 0;
+}
+
+SYSCALL_DEFINE3(get_vcounter_latency, vcounter_t __user *, vcounter, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
+{
+	vcounter_t vcount;
+	u64 tsc1, tsc2, tsc3;
+
+	/* One for fun and warmup */
+	tsc1 = rdtsc_ordered();
+	tsc1 = rdtsc_ordered();
+	tsc2 = rdtsc_ordered();
+	vcount = read_vcounter();
+	tsc3 = rdtsc_ordered();
+
+	tsc1 = tsc2 - tsc1;		// latency of rdtsc back to back
+	tsc2 = tsc3 - tsc2;		// latency of FFcounter read
+
+	if (copy_to_user(vcounter, &vcount, sizeof(vcounter_t)))
+		return -EFAULT;
+	if (copy_to_user(vcount_lat, &tsc2, sizeof(u64)))
+		return -EFAULT;
+	if (copy_to_user(tsc_lat, &tsc1, sizeof(u64)))
+		return -EFAULT;
+	return 0;
+}
+#endif
+
 
 SYSCALL_DEFINE1(adjtimex, struct timex __user *, txc_p)
 {

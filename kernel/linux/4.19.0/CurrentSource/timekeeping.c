@@ -299,6 +299,14 @@ static void tk_setup_internals(struct timekeeper *tk, struct clocksource *clock)
 	tk->tkr_raw.mask = clock->mask;
 	tk->tkr_raw.cycle_last = tk->tkr_mono.cycle_last;
 
+#ifdef CONFIG_RADCLOCK
+	/* tkr_mono won't be used, but initialize for completeness */
+	tk->tkr_mono.clock->vcounter_record = 0;
+	tk->tkr_mono.clock->vcounter_source_record = 0;
+	tk->tkr_raw.clock->vcounter_record = 0;
+	tk->tkr_raw.clock->vcounter_source_record = (vcounter_t) tk->tkr_raw.cycle_last;
+#endif
+
 	/* Do the ns -> cycle conversion first, using original mult */
 	tmp = NTP_INTERVAL_LENGTH;
 	tmp <<= clock->shift;
@@ -2056,6 +2064,10 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	int shift = 0, maxshift;
 	unsigned int clock_set = 0;
 	unsigned long flags;
+#ifdef CONFIG_RADCLOCK
+	vcounter_t vcounter_delta;
+	struct clocksource *clock;
+#endif
 
 	raw_spin_lock_irqsave(&timekeeper_lock, flags);
 
@@ -2075,6 +2087,16 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	/* Check if there's really nothing to do */
 	if (offset < real_tk->cycle_interval && mode == TK_ADV_TICK)
 		goto out;
+#endif
+
+#ifdef CONFIG_RADCLOCK
+//	vcounter_t vcounter_delta;
+//	struct clocksource *clock;
+	clock = real_tk->tkr_raw.clock;	// mono clock not used by RADCLOCK
+
+	vcounter_delta = (clock->read(clock) - clock->vcounter_source_record) & clock->mask;
+	clock->vcounter_record += vcounter_delta;
+	clock->vcounter_source_record += vcounter_delta;
 #endif
 
 	/* Do some additional sanity checking */

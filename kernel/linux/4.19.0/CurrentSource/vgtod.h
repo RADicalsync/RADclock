@@ -35,6 +35,12 @@ struct vsyscall_gtod_data {
 
 	int		tz_minuteswest;
 	int		tz_dsttime;
+
+//#ifdef CONFIG_RADCLOCK
+//	/* Placed at the end to encourage binary compatibility */
+//	vcounter_t vcounter_record;
+//	vcounter_t vcounter_source_record;
+//#endif
 };
 extern struct vsyscall_gtod_data vsyscall_gtod_data;
 

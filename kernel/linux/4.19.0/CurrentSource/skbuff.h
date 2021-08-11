@@ -41,6 +41,10 @@
 #include <linux/if_packet.h>
 #include <net/flow.h>
 
+#ifdef CONFIG_RADCLOCK
+#include <linux/clocksource.h>
+#endif
+
 /* The interface for checksum offload between the stack and networking drivers
  * is as follows...
  *
@@ -691,6 +695,12 @@ struct sk_buff {
 		ktime_t		tstamp;
 		u64		skb_mstamp;
 	};
+
+#ifdef CONFIG_RADCLOCK   // does skb_mstamp act as a raw already?
+	vcounter_t		vcount_stamp;
+	ktime_t 		tstamp_fair; /* Specific to the FAIR_COMPARE mode, ns resolution */
+#endif
+
 	/*
 	 * This is the control buffer. It is free to use for every
 	 * layer. Please put your private variables there. If you

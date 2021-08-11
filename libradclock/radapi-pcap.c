@@ -153,8 +153,8 @@ struct routine_priv_data
 
 /* Callback for pcap_loop
  * Compare the standard parameter list with the callback used in the daemon :
- * void fill_rawdata_pcap(u_char *c_handle, const struct pcap_pkthdr *pcap_hdr,
-		const u_char *packet_data)
+ * void fill_rawdata_pcap(u_char *c_handle,
+ *                const struct pcap_pkthdr *pcap_hdr, const u_char *packet_data)
  */
 void kernelclock_routine(u_char *user, const struct pcap_pkthdr *phdr, const u_char *pdata)
 {

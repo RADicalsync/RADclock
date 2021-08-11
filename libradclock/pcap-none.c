@@ -56,4 +56,12 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 	return (1);
 }
 
+
+void
+ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
+{
+	return;
+}
+
+
 #endif

@@ -341,8 +341,14 @@
 330	common	pkey_alloc		__x64_sys_pkey_alloc
 331	common	pkey_free		__x64_sys_pkey_free
 332	common	statx			__x64_sys_statx
+
+
 333	common	io_pgetevents		__x64_sys_io_pgetevents
 334	common	rseq			__x64_sys_rseq
+#ifdef CONFIG_RADCLOCK
+335	64	get_vcounter				__x64_sys_get_vcounter
+336	64	get_vcounter_latency		__x64_sys_get_vcounter_latency
+#endif
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact
@@ -386,3 +392,7 @@
 545	x32	execveat		__x32_compat_sys_execveat/ptregs
 546	x32	preadv2			__x32_compat_sys_preadv64v2
 547	x32	pwritev2		__x32_compat_sys_pwritev64v2
+//#ifdef CONFIG_RADCLOCK
+//548	x32	get_vcounter				__x32_compat_sys_get_vcounter
+//549	x32	get_vcounter_latency		__x32_compat_sys_get_vcounter_latency
+//#endif

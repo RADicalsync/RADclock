@@ -132,6 +132,10 @@
 #define SIOCSHWTSTAMP	0x89b0		/* set and get config		*/
 #define SIOCGHWTSTAMP	0x89b1		/* get config			*/
 
+#ifdef CONFIG_RADCLOCK
+#define SIOCGRADCLOCKSTAMP 0x89b2	/* get current vcounter timestamp */
+#endif
+
 /* Device private ioctl calls */
 
 /*

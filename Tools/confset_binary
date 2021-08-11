@@ -1,10 +1,10 @@
-#!/usr/local/bin/bash
+#!/usr/bin/env bash
 
 # Enable easy CLI adjustment of the binary parameters within radclock.conf
 # It looks for the conf file in the currect dir and prompts otherwise
-#  conf_binary_set ipc_server on 		# set to on  (if it isn't already)
-#  conf_binary_set ipc_server off 		# set to off (if it isn't already)
-#  conf_binary_set ipc_server 			# toggle existing value 
+#  confset_binary ipc_server on 		# set to on  (if it isn't already)
+#  confset_binary ipc_server off 	# set to off (if it isn't already)
+#  confset_binary ipc_server 			# toggle existing value
 
 
 # Check first argument is a valid and supported binary parameter
@@ -38,14 +38,14 @@ case $2 in
 	"")	[ $currset == "on" ] && newstate="off";;	# asked to toggle current setting
 	*)	echo " ? unrecognised input, exiting"; exit;;
 esac
-#echo "Current IPC state is $currset, will set to $newstate"
+echo "Current IPC state is $currset, will set to $newstate"
 
 # Action execution
 varon=$varstr" = on"
 varoff=$varstr" = off"
 if [ $currset != $newstate ]; then
 	case $newstate in
-		on)	sed -i "" "s/$varoff/$varon/" $conf; echo " --> setting to on" ;;
-		off)	sed -i "" "s/$varon/$varoff/" $conf; echo " --> setting to off" ;;
+		on)	sed -i "s/$varoff/$varon/" $conf; echo " --> setting to on" ;;
+		off)	sed -i "s/$varon/$varoff/" $conf; echo " --> setting to off" ;;
 	esac
 fi

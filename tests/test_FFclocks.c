@@ -44,8 +44,8 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-//#include <pcap.h>			// includes <net/bpf.h>
-#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
+#include <pcap.h>			// includes <net/bpf.h>
+//#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
 
 /* RADclock API and RADclock packet capture API */
 #include <radclock.h>		// includes <pcap.h>
@@ -118,79 +118,6 @@ initialise_pcap_device(char * network_device, char * filtstr)
 	return phandle;
 }
 
-
-/* This routine interprets the contents of the timeval-typed ts field from
- * the pcap header according to the BPF_T_FORMAT options, and converts the
- * timestamp to a long double.
- * The options where the tv_usec field have been used to store the fractional
- * component of time (MICROTIME (mus, the original tval format), and
- * and NANOTIME (ns)) both fit within either 32 or 64 bits tv_usec field,
- * whereas BINTIME can only work in the 64 bit case.
- */
-#define	MS_AS_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
-
-static void
-ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
-{
-	static int limit = 0;					// limit verbosity to once-only
-	//long double two32 = 4294967296.0;	// 2^32
-	//long double timetest;
-	
-	*timestamp = pcapts->tv_sec;
-	
-	switch (BPF_T_FORMAT(tstype)) {
-	case BPF_T_MICROTIME:
-		if (!limit) fprintf(stdout, "converting microtime\n");
-		*timestamp += 1e-6 * pcapts->tv_usec;
-		break;
-	case BPF_T_NANOTIME:
-		if (!limit) fprintf(stdout, "converting nanotime\n");
-		*timestamp += 1e-9 * pcapts->tv_usec;
-		break;
-	case BPF_T_BINTIME:
-		if (!limit) fprintf(stdout, "converting bintime\n");
-		if (sizeof(struct timeval) < 16)
-			fprintf(stderr, "Looks like timeval frac field is only 32 bits, ignoring!\n");
-		else {
-//			*timestamp += ((long double)pcapts->tv_usec)/( 1000*(long double)MS_AS_BINFRAC );
-//			*timestamp += ((long double)((long long unsigned)pcapts->tv_usec))/( two32*two32 );
-			bintime_to_ld(timestamp, (struct bintime *) pcapts);	// treat the ts as a bintime
-			//if (*timestamp - timetest != 0)
-			//	fprintf(stderr, "conversion error:  %3.4Lf [ns] \n", 1e9*(*timestamp - timetest));
-		}
-		break;
-	}
-	
-	limit++;
-}
-
-
-/* Takes a bintime input, converts it to the desired tstype FORMAT, then forces
- * it into a bpf_ts type which can handle all cases.
- */
-//static void
-//bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)
-//{
-//	struct timeval tsm;
-//	struct timespec tsn;
-//
-//	switch (BPF_T_FORMAT(tstype)) {
-//	case BPF_T_MICROTIME:
-//		bintime2timeval(bt, &tsm);
-//		ts->bt_sec = tsm.tv_sec;
-//		ts->bt_frac = tsm.tv_usec;
-//		break;
-//	case BPF_T_NANOTIME:
-//		bintime2timespec(bt, &tsn);
-//		ts->bt_sec = tsn.tv_sec;
-//		ts->bt_frac = tsn.tv_nsec;
-//		break;
-//	case BPF_T_BINTIME:
-//		ts->bt_sec = bt->sec;
-//		ts->bt_frac = bt->frac;
-//		break;
-//	}
-//}
 
 int
 main (int argc, char *argv[])

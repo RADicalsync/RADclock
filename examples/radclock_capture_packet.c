@@ -45,8 +45,8 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-//#include <pcap.h>			// includes <net/bpf.h>
-#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
+#include <pcap.h>			// includes <net/bpf.h>
+//#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
 
 /* RADclock API and RADclock packet capture API */
 #include <radclock.h>		// includes <pcap.h>
@@ -117,47 +117,6 @@ initialise_pcap_device(char * network_device, char * filtstr)
 	}
 	return phandle;
 }
-
-
-/* This routine interprets the contents of the timeval-typed ts field from
- * the pcap header according to the BPF_T_FORMAT options, and converts the
- * timestamp to a long double.
- * The options where the tv_usec field have been used to store the fractional
- * component of time (MICROTIME (mus, the original tval format), and
- * and NANOTIME (ns)) both fit within either 32 or 64 bits tv_usec field,
- * whereas BINTIME can only work in the 64 bit case.
- */
-static void
-ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
-{
-	static int limit = 0;					// limit verbosity to once-only
-	//long double two32 = 4294967296.0;	// 2^32
-	
-	*timestamp = pcapts->tv_sec;
-	
-	switch (BPF_T_FORMAT(tstype)) {
-	case BPF_T_MICROTIME:
-		if (!limit) fprintf(stdout, "converting timestamp as a microtime\n");
-		*timestamp += 1e-6 * pcapts->tv_usec;
-		break;
-	case BPF_T_NANOTIME:
-		if (!limit) fprintf(stdout, "converting timestamp as a nanotime\n");
-		*timestamp += 1e-9 * pcapts->tv_usec;
-		break;
-	case BPF_T_BINTIME:
-		if (!limit) fprintf(stdout, "converting timestamp as a bintime\n");
-		if (sizeof(struct timeval) < 16)
-			fprintf(stderr, "Looks like timeval frac field is only 32 bits, ignoring!\n");
-		else {
-//			*timestamp += ((long double)((long long unsigned)pcapts->tv_usec))/( two32*two32 );
-			bintime_to_ld(timestamp, (struct bintime *) pcapts);	// treat the ts as a bintime
-		}
-		break;
-	}
-	
-	limit++;
-}
-
 
 
 int

@@ -152,7 +152,7 @@ int found_ffwd_kernel_version(void);
 /**
  * System specific call for getting the capture mode on the pcap capture device.
  */
-int descriptor_get_tsmode(struct radclock *clock, pcap_t *p_handle, int *kmode);
+int descriptor_get_tsmode(struct radclock *clock, pcap_t *p_handle, int *mode);
 
 
 /**
@@ -247,23 +247,9 @@ struct ffclock_estimate;
 void printout_raddata(struct radclock_data *rad_data);
 void printout_FFdata(struct ffclock_estimate *cest);
 
-
-#define	TWO32 ((long double)4294967296.0)	// 2^32
-
-static inline void
-bintime_to_ld(long double *time, struct bintime *bt)
-{
-	*time = bt->sec;
-	*time += (long double)(bt->frac) / TWO32 / TWO32;
-}
- 
-static inline void
-ld_to_bintime(struct bintime *bt, long double *time)
-{
-	bt->sec = (time_t)*time;
-	bt->frac =  (*time - bt->sec) * TWO32 * TWO32;
-}
- 
-     
+/* OS/KV dependent function that interprets the contents of the timeval-typed
+ * ts field from the pcap header according to the kernel support timestamping
+ * options, and converts the timestamp to a long double. */
+void ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp);
 
 #endif

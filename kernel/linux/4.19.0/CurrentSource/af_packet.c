@@ -95,6 +95,10 @@
 #include <linux/bpf.h>
 #include <net/compat.h>
 
+#ifdef CONFIG_RADCLOCK
+#include <linux/radclock.h>
+#endif
+
 #include "internal.h"
 
 /*
@@ -2166,6 +2170,10 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	unsigned int netoff;
 	struct sk_buff *copy_skb = NULL;
 	struct timespec ts;
+#ifdef CONFIG_RADCLOCK
+	unsigned short vcountoff;
+	ktime_t rad_ktime;
+#endif
 	__u32 ts_status;
 	bool is_drop_n_account = false;
 	unsigned int slot_id = 0;
@@ -2213,13 +2221,31 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 		snaplen = res;
 
 	if (sk->sk_type == SOCK_DGRAM) {
+#ifdef CONFIG_RADCLOCK
+/* We would prefer to push the timestamp in the tpacket header instead of
+ * hiding it into the gap between the sockaddr_ll and the mac/net header.
+ * But this needs a new libpcap, so simply ensure we make enough space
+ * for libpcap to play with all of this without it stepping on our
+ * timestamp. Due to the 16bit alignment, in most cases we should not
+ * use more memory.
+ */
+		macoff = netoff = TPACKET_ALIGN(po->tp_hdrlen + 16 + sizeof(vcounter_t)) +
+				po->tp_reserve;
+#else
 		macoff = netoff = TPACKET_ALIGN(po->tp_hdrlen) + 16 +
 				  po->tp_reserve;
+#endif
 	} else {
-		unsigned int maclen = skb_network_offset(skb);
+		unsigned maclen = skb_network_offset(skb);
+#ifdef CONFIG_RADCLOCK
+		netoff = TPACKET_ALIGN(po->tp_hdrlen +
+				       (maclen < 16 ? 16 : maclen) + sizeof(vcounter_t)) +
+						 po->tp_reserve;
+#else
 		netoff = TPACKET_ALIGN(po->tp_hdrlen +
 				       (maclen < 16 ? 16 : maclen)) +
 				       po->tp_reserve;
+#endif
 		if (po->has_vnet_hdr) {
 			netoff += sizeof(struct virtio_net_hdr);
 			do_vnet = true;
@@ -2308,6 +2334,26 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	skb_copy_bits(skb, 0, h.raw + macoff, snaplen);
 
+#ifdef CONFIG_RADCLOCK
+	/* Provide a timeval stamp build based on the RADclock or a timestamp for
+	 * fair comparison. Replace existing timestamp in the skbuff if in the right
+	 * mode. Default is to return normal stamp.
+	 */
+	//printk("processing sk_radclock_tsmode (%s:%d)\n", __FILE__, __LINE__);
+	switch ( sk->sk_radclock_tsmode ) {
+	case RADCLOCK_TSMODE_RADCLOCK:
+		printk("RAD tpacket_rcv: radclock_fill_ktime using skb->vcount_stamp = %llu\n", skb->vcount_stamp);
+		sk->sk_vcount_stamp = skb->vcount_stamp;		//  should do in all modes
+		radclock_fill_ktime(skb->vcount_stamp, &rad_ktime);
+		skb->tstamp = rad_ktime;
+		break;
+
+	case RADCLOCK_TSMODE_FAIRCOMPARE:
+		skb->tstamp = skb->tstamp_fair;
+		break;
+	}
+#endif
+
 	if (!(ts_status = tpacket_get_timestamp(skb, &ts, po->tp_tstamp)))
 		getnstimeofday(&ts);
 
@@ -2369,6 +2415,43 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 		sll->sll_ifindex = orig_dev->ifindex;
 	else
 		sll->sll_ifindex = dev->ifindex;
+
+#ifdef CONFIG_RADCLOCK
+	/* Insert vcount timestamp in here. It has to be inserted in front of the
+	 * pointer libpcap passes to the user callback. Because libpcap does write
+	 * in the gap between the SLL header and tp_mac, things are a bit messy.
+	 * Mimic libpcap logic in here, which will hopefully not change ...
+	 * Clearly this code depends on libpcap design, a poor feature, but no
+	 * other choice so far.
+	 */
+	vcountoff = macoff;
+
+	/* If the socket has been open in mode DGRAM, libpcap will add a
+	 * sll_header (16bytes) (cooked interface)
+	 */
+	if (sk->sk_type == SOCK_DGRAM)
+		vcountoff -= 16;
+
+	/* If packet of type 2 or 3, and vlan and enough data, libpcap will rebuild
+	 * the vlan tag in the header
+	 */
+	if ( po->tp_version == TPACKET_V2 &&
+		h.h2->tp_vlan_tci && h.h2->tp_snaplen >= 2 * 6 /* ETH_ALEN=6 */)
+	{
+		vcountoff -= 4 /* VLAN_TAG_LEN=4 */;
+		printk("adjusting VLAN offset for TPACKET_V2 (%s:%d)\n", __FILE__, __LINE__);
+	}
+	if (po->tp_version == TPACKET_V3 &&
+		h.h3->hv1.tp_vlan_tci && h.h3->tp_snaplen >= 2 * 6 /* ETH_ALEN=6 */)
+	{
+		vcountoff -= 4 /* VLAN_TAG_LEN=4 */;
+		printk("adjusting VLAN offset for TPACKET_V3 (%s:%d)\n", __FILE__, __LINE__);
+	}
+
+	/* Copy the vcount stamp just before where the mac/sll header wil be */
+	vcountoff -= sizeof(vcounter_t);
+	memcpy(h.raw + vcountoff, &(skb->vcount_stamp), sizeof(vcounter_t));
+#endif
 
 	smp_mb();
 
@@ -3398,6 +3481,16 @@ static int packet_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		sll->sll_protocol = skb->protocol;
 	}
 
+#ifdef CONFIG_RADCLOCK
+	/* Pass the two extra raw timestamps specific to the RADCLOCK to the socket:
+	 * the raw vcounter and the timeval stamps used in the RADCLOCK_TSMODE_FAIRCOMPARE mode.
+	 */
+	printk("*** RAD packet_recvmsg: passing skb->vcount_stamp (%llu) to overwrite sk_vcount_stamp (%llu)\n",
+				skb->vcount_stamp, sk->sk_vcount_stamp);
+	sk->sk_vcount_stamp = skb->vcount_stamp;
+	sk->sk_stamp_fair   = skb->tstamp_fair;
+#endif
+
 	sock_recv_ts_and_drops(msg, sk, skb);
 
 	if (msg->msg_name) {
@@ -4127,9 +4220,71 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 		return put_user(amount, (int __user *)arg);
 	}
 	case SIOCGSTAMP:
+	{
+#ifdef CONFIG_RADCLOCK
+		printk("processing SIOC Get STAMP (%s:%d)\n", __FILE__, __LINE__);
+		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
+		{ /* Provide timeval stamp based on RADclock */
+			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_vcount_stamp = %llu\n", sk->sk_vcount_stamp);
+			// why calculate, isnt it already there?
+			radclock_fill_ktime(sk->sk_vcount_stamp, &(sk->sk_stamp));
+		} else if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_FAIRCOMPARE)
+		{ /* Overwrite timestamp that is returned right below */
+			sk->sk_stamp = sk->sk_stamp_fair;
+		}
+#endif
 		return sock_get_timestamp(sk, (struct timeval __user *)arg);
+	}
 	case SIOCGSTAMPNS:
+	{
+#ifdef CONFIG_RADCLOCK
+		printk("processing SIOC Get STAMPNS (%s:%d)\n", __FILE__, __LINE__);
+		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
+		{ /* Provide timeval stamp based on RADclock */
+			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_vcount_stamp = %llu\n", sk->sk_vcount_stamp);
+			radclock_fill_ktime(sk->sk_vcount_stamp, &(sk->sk_stamp));
+		} else if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_FAIRCOMPARE)
+		{ /* Overwrite timestamp that is returned right below */
+			sk->sk_stamp = sk->sk_stamp_fair;
+		}
+#endif
 		return sock_get_timestampns(sk, (struct timespec __user *)arg);
+	}
+#ifdef CONFIG_RADCLOCK
+	case SIOCSRADCLOCKTSMODE:
+	{
+		long mode;
+		printk("#### processing SIOC Set RADCLOCKTSMODE (%s:%d) ####\n", __FILE__, __LINE__);
+		printk("  - sk_radclock_tsmode = %d \n", sk->sk_radclock_tsmode);
+		get_user(mode, (long __user *)arg);
+		switch (mode)
+		{
+			case RADCLOCK_TSMODE_FAIRCOMPARE:
+			case RADCLOCK_TSMODE_SYSCLOCK:
+			case RADCLOCK_TSMODE_RADCLOCK:
+				sk->sk_radclock_tsmode = mode;
+				break;
+			default:
+				return -EINVAL;
+		}
+		//printk("  - sk_radclock_tsmode after setting = %d \n", sk->sk_radclock_tsmode);
+		printk(KERN_DEBUG "RADclock: Setting PACKET socket to mode %d\n", sk->sk_radclock_tsmode );
+//		*((long *)arg) = mode;		// provides `get after set', so caller can check it worked
+
+		return (0);
+	}
+	case SIOCGRADCLOCKTSMODE:
+	{
+//		printk("processing SIOC Get RADCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+//		printk("  - sk_radclock_tsmode = %d , arg = %lu \n", sk->sk_radclock_tsmode, arg);
+		return put_user(sk->sk_radclock_tsmode, (long __user *)arg);
+	}
+	case SIOCGRADCLOCKSTAMP:
+	{
+		printk("RAD vcount via Get RADCLOCKSTAMP IOCTL:  sk_vcount_stamp = %llu \n", sk->sk_vcount_stamp);
+		return put_user(sk->sk_vcount_stamp, (vcounter_t __user *)arg);
+	}
+#endif
 
 #ifdef CONFIG_INET
 	case SIOCADDRT:

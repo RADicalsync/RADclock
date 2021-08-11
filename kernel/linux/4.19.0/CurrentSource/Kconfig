@@ -8,7 +8,7 @@ menu "RADclock Driver"
 # Would be nice to go back to having this as a module
 #
 config RADCLOCK
-	boolean "Kernel support for the RADclock"
+	bool "Kernel support for the RADclock"
 #	depends on EXPERIMENTAL && GENERIC_TIME
 	default y
 	help

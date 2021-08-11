@@ -1,4 +1,4 @@
-#!/usr/local/bin/bash
+#!/usr/bin/env bash
 
 # Will attempt a kernel build and install of FFclock.
 # Assumes the FFCLOCK kernel config file is already installed

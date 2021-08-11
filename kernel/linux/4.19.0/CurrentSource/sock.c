@@ -143,6 +143,10 @@
 #include <net/tcp.h>
 #include <net/busy_poll.h>
 
+#ifdef CONFIG_RADCLOCK
+extern int sysfs_ffclock_tsmode;
+#endif
+
 static DEFINE_MUTEX(proto_list_mutex);
 static LIST_HEAD(proto_list);
 
@@ -2832,6 +2836,12 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 	sk->sk_sndtimeo		=	MAX_SCHEDULE_TIMEOUT;
 
 	sk->sk_stamp = SK_DEFAULT_STAMP;
+#ifdef CONFIG_RADCLOCK
+	sk->sk_vcount_stamp = 0;
+	sk->sk_stamp_fair = ktime_set(-1L, -1L);
+	sk->sk_radclock_tsmode = sysfs_ffclock_tsmode;
+#endif
+
 #if BITS_PER_LONG==32
 	seqlock_init(&sk->sk_stamp_seq);
 #endif

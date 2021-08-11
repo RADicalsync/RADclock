@@ -35,7 +35,7 @@
 #include <linux/radclock.h>
 #include <linux/random.h>
 #include <linux/rwsem.h>
-#include <linux/sysdev.h>
+#include <linux/device.h>
 #include <linux/types.h>
 
 #include <net/genetlink.h>
@@ -52,7 +52,6 @@ static DECLARE_RWSEM(radclock_fixedpoint_mtx);
 
 
 static struct genl_family radclock_genl = {
-	.id = GENL_ID_GENERATE,
 	.name = RADCLOCK_NAME,
 	.version = 0x1,
 	.hdrsize = 0,
@@ -60,21 +59,36 @@ static struct genl_family radclock_genl = {
 };
 
 /**
- * Fill an skb with the global data
+ * Fill an skb `message' with the global data as an attribute.
  */
-static int radclock_fill_skb(u32 pid, u32 seq, u32 flags, struct sk_buff *skb, u8 cmd)
+static int radclock_fill_skb(struct genl_info *info, u32 flags, struct sk_buff *skb, u8 cmd)
 {
 	void * hdr;
-	hdr = genlmsg_put(skb, pid, seq, &radclock_genl, flags, cmd);
+	int puterr;
+
+	hdr = genlmsg_put(skb, info->snd_portid, info->snd_seq, &radclock_genl, flags, cmd);
 	if (hdr == NULL)
 		return -1;
+
+	/* Fill message with each available attribute */
+	//printk(KERN_INFO " ** getting RAD attr data \n");
 	down_read(&radclock_data_mtx);
-	NLA_PUT(skb, RADCLOCK_ATTR_DATA, sizeof(radclock_data),&radclock_data);
+	puterr = nla_put(skb, RADCLOCK_ATTR_DATA, sizeof(radclock_data), &radclock_data);
 	up_read(&radclock_data_mtx);
-	return genlmsg_end(skb, hdr);
+	if (puterr<0)
+		goto nla_put_failure;
+
+	down_read(&radclock_fixedpoint_mtx);
+	//printk(KERN_INFO " ** getting RAD attr fp \n");
+	puterr = nla_put(skb, RADCLOCK_ATTR_FIXEDPOINT, sizeof(radclock_fp), &radclock_fp);
+	up_read(&radclock_fixedpoint_mtx);
+	if (puterr<0)
+		goto nla_put_failure;
+
+	genlmsg_end(skb, hdr);
+	return 0;
 
 nla_put_failure:
-	up_read(&radclock_data_mtx);
 	genlmsg_cancel(skb, hdr);
 	return -1;
 }
@@ -82,28 +96,47 @@ nla_put_failure:
 /**
  * Build a reply for a global data request
  */
-static struct sk_buff * radclock_build_msg(u32 pid, int seq, int cmd)
+static struct sk_buff * radclock_build_msg(struct genl_info *info, int cmd)
 {
 	struct sk_buff *skb;
 	int err;
-	skb= nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
+
+	skb = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
 	if (skb == NULL)
 		return ERR_PTR(-ENOBUFS);
 
-	err = radclock_fill_skb(pid, seq, 0, skb, cmd);
-	if (err < 0)
-	{
+	err = radclock_fill_skb(info, 0, skb, cmd);
+	if (err < 0) {
 		nlmsg_free(skb);
 		return ERR_PTR(err);
 	}
 	return skb;
 }
 
+/**
+ * Respond to a get request. The request does not specify which attribute is desired.
+ * All available will be sent in the message.
+ */
+static int radclock_getattr(struct sk_buff *skb, struct genl_info *info)
+{
+	struct sk_buff *msg;
+
+	msg = radclock_build_msg(info, RADCLOCK_CMD_GETATTR);
+	if (IS_ERR(msg))
+		return PTR_ERR(msg);
+
+	return genlmsg_unicast(genl_info_net(info), msg, info->snd_portid);
+}
+
+static struct nla_policy radclock_policy[RADCLOCK_ATTR_MAX +1] __read_mostly = {
+	[RADCLOCK_ATTR_DATA] 		= {  .len = sizeof(struct radclock_data) },
+	[RADCLOCK_ATTR_FIXEDPOINT] = {  .len = sizeof(struct radclock_fixedpoint) },
+};
 
 /**
- * Set the global data
- *
- * TODO: only let privilidged processes set global data?
+ * Set the global data by transferring attributes from the received set message to the global variables
+ * Each of the two active kinds of global data acted on, if present.
+ * TODO: only let priviledged processes set global data
  */
 static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
 {
@@ -112,57 +145,40 @@ static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
 		BUG();
 	if (!info->attrs)
 		BUG();
+
+	//printk(KERN_INFO " ** RADclock_setattr entered \n");
+
+	/* `Loop' over all possible attribute types */
 	if (info->attrs[RADCLOCK_ATTR_DATA] != NULL)
 	{
+		//printk(KERN_INFO " ** setting RAD attr data \n");
 		struct radclock_data *value;
 		if (nla_len(info->attrs[RADCLOCK_ATTR_DATA]) != sizeof(radclock_data))
 			return -EINVAL;
 
 		value = nla_data(info->attrs[RADCLOCK_ATTR_DATA]);
-		//TODO sanity check
-		//
 		down_write(&radclock_data_mtx);
 		memcpy(&radclock_data, value, sizeof(radclock_data));
 		up_write(&radclock_data_mtx);
 	}
+
 	if (info->attrs[RADCLOCK_ATTR_FIXEDPOINT] != NULL)
 	{
-		struct radclock_fixedpoint *value;
+		//printk(KERN_INFO " ** setting RAD attr fp \n");
+		struct radclock_fixedpoint *valuefp;
 		if (nla_len(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]) != sizeof(radclock_fp))
 			return -EINVAL;
 
-		value = nla_data(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]);
-		//TODO sanity check
-		//
+		valuefp = nla_data(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]);
 		down_write(&radclock_fixedpoint_mtx);
-		memcpy(&radclock_fp, value, sizeof(radclock_fp));
+		memcpy(&radclock_fp, valuefp, sizeof(radclock_fp));
 		up_write(&radclock_fixedpoint_mtx);
 	}
 
 	return 0;
 }
 
-/**
- * Respond to a request
- *
- * TODO: handle requests for radclock_fp. We currently don't need it though, since
- * no one else has a use for the data.
- */
-static int radclock_getattr(struct sk_buff *skb, struct genl_info *info)
-{
-	//TODO check perms
-	struct sk_buff *msg;
-	msg = radclock_build_msg(info->snd_pid, info->snd_seq, RADCLOCK_CMD_GETATTR);
-	if (IS_ERR(msg))
-		return PTR_ERR(msg);
-	return genlmsg_unicast(genl_info_net(info), msg, info->snd_pid);
-}
-
-static struct nla_policy radclock_policy[RADCLOCK_ATTR_MAX +1] __read_mostly = {
-	[RADCLOCK_ATTR_DATA] = {  .len = sizeof(struct radclock_data) },
-	[RADCLOCK_ATTR_FIXEDPOINT] = {  .len = sizeof(struct radclock_fixedpoint) },
-};
-
+/* Setup the callbacks */
 static struct  genl_ops radclock_ops[] = {
 	{
 		.cmd = RADCLOCK_CMD_GETATTR,
@@ -177,6 +193,7 @@ static struct  genl_ops radclock_ops[] = {
 };
 
 
+/* Read radclock at the passed raw timestamp using the radclock_fp parameters */
 void radclock_fill_ktime(vcounter_t vcounter, ktime_t *ktime)
 {
 	vcounter_t countdiff;
@@ -192,12 +209,12 @@ void radclock_fill_ktime(vcounter_t vcounter, ktime_t *ktime)
 	down_read(&radclock_fixedpoint_mtx);
 
 	countdiff = vcounter - radclock_fp.vcount;
-	if (countdiff & ~((1ll << (radclock_fp.countdiff_maxbits +1)) -1))
-		printk(KERN_WARNING "RADclock: warning stamp may overflow timeval at %llu!\n",
-				(long long unsigned) vcounter);
+//	if (countdiff & ~((1ll << (radclock_fp.countdiff_maxbits +1)) -1))
+//		printk(KERN_WARNING "RADclock: warning stamp may overflow timeval at %llu!\n",
+//				(long long unsigned) vcounter);
 
 	/* Add the counter delta in second to the recorded fixed point time */
-	time_f 	= radclock_fp.time_int
+	time_f = radclock_fp.time_int
 		  + ((radclock_fp.phat_int * countdiff) >> (radclock_fp.phat_shift - radclock_fp.time_shift)) ;
 
 	tspec.tv_sec = time_f >> radclock_fp.time_shift;
@@ -206,9 +223,7 @@ void radclock_fill_ktime(vcounter_t vcounter, ktime_t *ktime)
 	tspec.tv_nsec = (frac * 1000000000LL)  >> radclock_fp.time_shift;
 	/* tv.nsec truncates at the nano-second digit, so check for next digit rounding */
 	if ( ((frac * 10000000000LL) >> radclock_fp.time_shift) >= (tspec.tv_nsec * 10LL + 5) )
-	{
 		tspec.tv_nsec++;
-	}
 
 	/* Push the timespec into the ktime, Ok for 32 and 64 bit arch (see ktime.h) */
 	*ktime = timespec_to_ktime(tspec);
@@ -233,15 +248,14 @@ static char sysfs_user_input[32];
 int sysfs_ffclock_version = FFCLOCK_VERSION;
 
 /**
- * sysfs_show_ffclock_version- sysfs interface to get ffclock version
+ * version_ffclock_show -  interface to get ffclock version
  * @dev:	unused
  * @buf:	char buffer to be filled with passthrough mode
  *
  * Provides sysfs interface to get ffclock version
  */
-static ssize_t
-sysfs_show_ffclock_version(struct sys_device *dev,
-				  struct sysdev_attribute *attr,
+static ssize_t version_ffclock_show(struct device *dev,
+				  struct device_attribute *attr,
 				  char *buf)
 {
 	ssize_t count = 0;
@@ -258,8 +272,7 @@ sysfs_show_ffclock_version(struct sys_device *dev,
 
 	return count;
 }
-
-static SYSDEV_ATTR(version, 0444, sysfs_show_ffclock_version, NULL);
+static DEVICE_ATTR_RO(version_ffclock);
 
 
 /*
@@ -268,15 +281,14 @@ static SYSDEV_ATTR(version, 0444, sysfs_show_ffclock_version, NULL);
 int sysfs_ffclock_tsmode = RADCLOCK_TSMODE_SYSCLOCK;
 
 /**
- * sysfs_show_ffclock_tsmode- sysfs interface to get ffclock timestamping mode
+ * tsmode_ffclock_show -  interface to get ffclock timestamping mode
  * @dev:	unused
  * @buf:	char buffer to be filled with passthrough mode
  *
  * Provides sysfs interface to get ffclock timestamping mode
  */
-static ssize_t
-sysfs_show_ffclock_tsmode(struct sys_device *dev,
-				  struct sysdev_attribute *attr,
+static ssize_t tsmode_ffclock_show(struct device *dev,
+				  struct device_attribute *attr,
 				  char *buf)
 {
 	ssize_t count = 0;
@@ -296,8 +308,7 @@ sysfs_show_ffclock_tsmode(struct sys_device *dev,
 
 
 /**
- * sysfs_change_ffclock_tsmode - interface for manually changing the default
- * timestamping mode
+ * tsmode_ffclock_store - interface for manually changing the default timestamping mode
  * @dev:	unused
  * @buf:	new value of passthrough mode (0 or 1)
  * @count:	length of buffer
@@ -305,8 +316,8 @@ sysfs_show_ffclock_tsmode(struct sys_device *dev,
  * Takes input from sysfs interface for manually changing the default
  * timestamping mode.
  */
-static ssize_t sysfs_change_ffclock_tsmode(struct sys_device *dev,
-					  struct sysdev_attribute *attr,
+static ssize_t tsmode_ffclock_store(struct device *dev,
+					  struct device_attribute *attr,
 					  const char *buf, size_t count)
 {
 	long val;
@@ -316,7 +327,7 @@ static ssize_t sysfs_change_ffclock_tsmode(struct sys_device *dev,
 	if (count >= sizeof(sysfs_user_input))
 		return -EINVAL;
 
-	/* strip of \n: */
+	/* strip off \n: */
 	if (buf[count-1] == '\n')
 		count--;
 
@@ -346,67 +357,64 @@ static ssize_t sysfs_change_ffclock_tsmode(struct sys_device *dev,
 
 	return ret;
 }
-
-
-static SYSDEV_ATTR(timestamping_mode, 0644, sysfs_show_ffclock_tsmode, sysfs_change_ffclock_tsmode);
+static DEVICE_ATTR_RW(tsmode_ffclock);
 
 
 
 
-static struct sysdev_class ffclock_sysclass = {
+static struct attribute *ffclock_attrs[] = {
+	&dev_attr_version_ffclock.attr,
+	&dev_attr_tsmode_ffclock.attr,
+	NULL
+};
+ATTRIBUTE_GROUPS(ffclock);
+
+static struct bus_type ffclock_subsys = {
 	.name = "ffclock",
+	.dev_name = "ffclock",
 };
 
-static struct sys_device device_ffclock = {
+static struct device device_ffclock = {
 	.id	= 0,
-	.cls	= &ffclock_sysclass,
+	.bus	= &ffclock_subsys,
+	.groups	= ffclock_groups,
 };
 
 
-//static int __init init_ffclock_sysfs(void)
-static int init_ffclock_sysfs(void)
+static int __init init_ffclock_sysfs(void)
 {
-	int error = sysdev_class_register(&ffclock_sysclass);
+	int error = subsys_system_register(&ffclock_subsys, NULL);
 
 	if (!error)
-		error = sysdev_register(&device_ffclock);
+		error = device_register(&device_ffclock);
 
-	if (!error)
-		error = sysdev_create_file(
-				&device_ffclock,
-				&attr_version);
-	if (!error)
-		error = sysdev_create_file(
-				&device_ffclock,
-				&attr_timestamping_mode);
 	return error;
 }
-// Pushed into module_init
-//device_initcall(init_ffclock_sysfs);
 
 
+/* RADclock module definition */
 
-
-
+/* Register radclock with netlink and sysfs, and initialize. */
 static int __init radclock_register(void)
 {
-	int i;
-	if (genl_register_family(&radclock_genl))
-	{
+	/* Register family and operations with netlink */
+	radclock_genl.ops = radclock_ops;
+	radclock_genl.n_ops = 2;
+	if (genl_register_family(&radclock_genl)) {
 		printk(KERN_WARNING "RADclock netlink socket could not be created, exiting\n");
 		goto errout;
-	}
-	for (i =0; i < ARRAY_SIZE(radclock_ops); i++)
-		if (genl_register_ops(&radclock_genl, &radclock_ops[i]) < 0)
-			goto errout_unregister;
+	} else
+		printk(KERN_INFO "%s netlink family registered with id %d\n",
+							radclock_genl.name, radclock_genl.id);
 
-	/* TODO: more sensible start than 0? */
-	memset(&radclock_data, 0, sizeof(radclock_data));
-	printk(KERN_INFO "RADclock netlink socket registered with id %d\n", radclock_genl.id);
-
+	/* Register ffclock sysfs subsystem */
 	if ( init_ffclock_sysfs() )
 		goto errout_unregister;
 	printk(KERN_INFO "Feed-Forward Clock sysfs initialized\n");
+
+	/* Initialize global data [so far raddata only] */
+	memset(&radclock_data, 0, sizeof(radclock_data));
+	memset(&radclock_fp, 0, sizeof(radclock_fp));
 
 	return 0;
 
@@ -418,7 +426,7 @@ errout:
 
 static void __exit radclock_unregister(void)
 {
-	printk(KERN_INFO "RADclock netlink socket unregistered\n");
+	printk(KERN_INFO "RADclock netlink family unregistered\n");
 	genl_unregister_family(&radclock_genl);
 }
 
@@ -427,6 +435,6 @@ static void __exit radclock_unregister(void)
 module_init(radclock_register);
 module_exit(radclock_unregister);
 
-MODULE_AUTHOR("Thomas Young, Julien Ridoux");
+MODULE_AUTHOR("Thomas Young, Julien Ridoux, Darryl Veitch");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("RADclock driver support");

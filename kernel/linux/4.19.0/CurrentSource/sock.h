@@ -74,6 +74,10 @@
 #include <net/smc.h>
 #include <net/l3mdev.h>
 
+#ifdef CONFIG_RADCLOCK
+#include <linux/clocksource.h>
+#endif
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -475,6 +479,11 @@ struct sock {
 	const struct cred	*sk_peer_cred;
 	long			sk_rcvtimeo;
 	ktime_t			sk_stamp;
+#ifdef CONFIG_RADCLOCK
+	vcounter_t		sk_vcount_stamp;
+	ktime_t			sk_stamp_fair; 	/* Receives the fair tv from skbuff, ns resolution */
+	int			sk_radclock_tsmode;
+#endif
 #if BITS_PER_LONG==32
 	seqlock_t		sk_stamp_seq;
 #endif
