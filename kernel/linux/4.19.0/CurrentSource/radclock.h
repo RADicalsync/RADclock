@@ -2,60 +2,58 @@
 #define __LINUX_RADCLOCK_H
 
 #include <linux/types.h>
-#include <linux/clocksource.h>
+//#include <linux/clocksource.h>
+
+typedef u64 ffcounter;	// perhaps put in a _ffcounter.h
 
 
-/*
- * Version of feed-forward clock kernel support.
+/* Copied from RADclock source file: libradclock/kclock.h
+ * Structure representing the ffclock parameters
  */
-#define FFCLOCK_VERSION 1
+struct bintime {
+	time_t sec;
+	__u64 frac;
+};
+
+struct ffclock_estimate {
+	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
+	ffcounter	update_ffcount;	/* Counter value at last update */
+	ffcounter	leapsec_expected;	/* Estimated counter value of next leap second */
+	__u64	period;					/* Estimate of current counter period  [2^-64 s] */
+	__u32	errb_abs;				/* Bound on absolute clock error [ns] */
+	__u32	errb_rate;				/* Bound on relative counter period error [ps/s] */
+	__u32	status;					/* Clock status */
+	__u16	secs_to_nextupdate;	/* Estimated wait til next update [s] */
+	int8_t	leapsec_total;			/* Sum of leap secs seen since clock start */
+	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
+};
+
+/* Constants to hold errors and error rates in 64bit binary fraction fields */
+#define	MS_AS_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
+#define	MUS_AS_BINFRAC	(uint64_t)18446744073709ULL		// floor(2^64/1e6)
+#define	NS_AS_BINFRAC	(uint64_t)18446744073ULL			// floor(2^64/1e9)
+#define	PS_AS_BINFRAC	(uint64_t)18446744ULL				// floor(2^64/1e12)
 
 
-/*
- * Defines timestamping modes for the RADclock
+/* Flag defining if counter bypass mode is desired or not.
+ * This is only possible if the counter is a TSC with rdtsc defined.
+ */
+extern uint8_t ffcounter_bypass;
+
+
+/* Defines timestamping modes for the RADclock
  * Deprecated... work with for now
  */
 #define RADCLOCK_TSMODE_SYSCLOCK	1		// leave normal pcap ts field, hide vcount in padded hdr
 #define RADCLOCK_TSMODE_RADCLOCK	2		// fill ts with RADclock Abs clock, hide vcount in hdr
 #define RADCLOCK_TSMODE_FAIRCOMPARE	3	// as _SYSCLOCK, but ts and raw timestamps back-to-back
+extern int ffclock_tsmode;		// needed in sock.c
+
+/* Return the current value of the feed-forward clock counter. */
+void ffclock_read_counter(ffcounter *ffcount);
 
 
 
-/* Copied from RADclock source file:  libradclock/radclock.h
- * Enumeration of the possible higher-level intents of the deamon.
- * All except PKTCAP_TSMODE_NOMODE set FLAG = NORMAL (UTC and !FAST) and
- * FCOUNTER = FFC  (try to get raw counter as well a normal timestamp).
- *
- * Descriptions below specify high level intent, whether fully possible given KV or not. */
-enum pktcap_tsmode {
-	PKTCAP_TSMODE_NOMODE = 0,			// no FF support in pcap, or very early versions
-	PKTCAP_TSMODE_SYSCLOCK = 1,		// get raw, plus normal timestamp from sysclock
-	PKTCAP_TSMODE_FBCLOCK = 2,			//                "                    FBclock
-	PKTCAP_TSMODE_FFCLOCK = 3,			//                "                    FFclock (mono)
-	PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
-	PKTCAP_TSMODE_FFDIFFCLOCK = 5,	//                "                    FF difference clock
-	PKTCAP_TSMODE_RADCLOCK = 6,		//    "   , plus RADclock timestamp (userland)
-	PKTCAP_TSMODE_CUSTOM = 100			// adopt the customised tsmode
-};
-
-
-/* Copied from RADclock source file: libradclock/radclock-private.h
- * Structure representing the radclock parameters
- */
-struct radclock_data {
-	double phat;				// very stable estimate of long term counter period [s]
-	double phat_err;			// estimated bound on the relative error of phat [unitless]
-	double phat_local;		//	stable estimate on shorter timescale period [s]
-	double phat_local_err;  // estimated bound on the relative error of plocal [unitless]
-	long double ca;			// K_p - thetahat(t) - leapsectotal? [s]
-	double ca_err;				// estimated error (currently minET) in thetahat and ca [s]
-	unsigned int status;		// status word (contains 10 bit fields)
-	vcounter_t last_changed;	// raw timestamp T(tf) of last stamp processed [counter]
-	vcounter_t next_expected;	// estimated T value of next stamp, and hence update [counter]
-	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none
-	int leapsec_total;				// sum of leap seconds seen since clock start
-	int leapsec_next;					// value of the expected next leap second {-1 0 1}
-};
 
 struct radclock_fixedpoint
 {
@@ -64,7 +62,7 @@ struct radclock_fixedpoint
 	/* Record of last time update from synchronization algorithm as an int */
 	__u64 time_int;
 	/* The counter value to convert in seconds */
-	vcounter_t vcount;
+	ffcounter vcount;
 	/* the shift amount for phat_int */
 	__u8 phat_shift;
 	/* the shift amount for time_int */
@@ -93,6 +91,6 @@ enum {
 };
 #define RADCLOCK_CMD_MAX (__RADCLOCK_CMD_MAX - 1)
 
-void radclock_fill_ktime(vcounter_t vcounter, ktime_t *ktime);
+void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime);
 
 #endif

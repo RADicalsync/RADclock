@@ -23,10 +23,10 @@
 #include <linux/kernel.h>
 
 //#ifdef CONFIG_RADCLOCK
-//#include <linux/clocksource.h>		// needed for defn of vcounter_t
+//#include <linux/radclock.h>		// needed for defn of ffcounter
 ///* Add because of implicit declarations of sys_  fns in asm("syscall" .. ) lines */
-//extern  int __vdso_get_vcounter(vcounter_t *vcounter);
-//extern  long __vdso_get_vcounter_latency(vcounter_t *vcounter, u64 *vcount_lat, u64 *tsc_lat);
+//extern  int __vdso_get_ffcounter(ffcounter *ffcount);
+//extern  long __vdso_get_ffcounter_latency(ffcounter *ffcount, u64 *vcount_lat, u64 *tsc_lat);
 //#endif
 
 #define gtod (&VVAR(vsyscall_gtod_data))
@@ -353,53 +353,53 @@ time_t time(time_t *t)
 ///* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
 ///* Only called while seq lock is held */
 //// Note vread_tsc accesses the TSC via rdtsc_ordered()
-//notrace static inline vcounter_t vread_ffcounter_delta(void)
+//notrace static inline ffcounter vread_ffcounter_delta(void)
 //{
 //	if (gtod->vclock_mode == VCLOCK_TSC)
-//		return ((vread_tsc() - gtod->vcounter_source_record) & gtod->mask);
+//		return ((vread_tsc() - gtod->ffcount_source_record) & gtod->mask);
 //	else
 //		return 0;
 //}
 //
 ///* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
-//notrace static inline vcounter_t vread_ffcounter(void)
+//notrace static inline ffcounter vread_ffcounter(void)
 //{
 //	unsigned long seq;
-//	vcounter_t vcount;
+//	ffcounter vcount;
 //
 //	do {
 //		seq = gtod_read_begin(gtod);
-//		vcount = gtod->vcounter_record + vread_ffcounter_delta();
+//		vcount = gtod->tick_ffcount + vread_ffcounter_delta();
 //	} while (unlikely(gtod_read_retry(gtod, seq)));
 //
 //	return vcount;
 //}
 //
-//notrace static long vdso_fallback_get_vcounter(vcounter_t *vcounter)
+//notrace static long vdso_fallback_get_ffcounter(ffcounter *ffcount)
 //{
 //	long ret;
 //	asm("syscall" : "=a" (ret) :
-//	    "0" (__NR_get_vcounter), "D" (vcounter) : "memory");
+//	    "0" (__NR_get_ffcounter), "D" (ffcount) : "memory");
 //	return ret;
 //}
 //
-//notrace int __vdso_get_vcounter(vcounter_t *vcounter)
+//notrace int __vdso_get_ffcounter(ffcounter *ffcount)
 //{
-//	vcounter_t vcount;
+//	ffcounter vcount;
 //
 //	if (likely(gtod->vclock_mode != VCLOCK_NONE)) {
 //		vcount = vread_ffcounter();
-//		*vcounter = vcount;
+//		*ffcount = vcount;
 //		return 0;
 //	}
-//	return vdso_fallback_get_vcounter(vcounter);
+//	return vdso_fallback_get_ffcounter(ffcount);
 //}
-//int get_vcounter(vcounter_t *)		// alias for userland
-//	__attribute__((weak, alias("__vdso_get_vcounter")));
+//int get_ffcounter(ffcounter *)		// alias for userland
+//	__attribute__((weak, alias("__vdso_get_ffcounter")));
 //
-//notrace long __vdso_get_vcounter_latency(vcounter_t *vcounter, u64 *vcount_lat, u64 *tsc_lat)
+//notrace long __vdso_get_ffcounter_latency(ffcounter *ffcount, u64 *vcount_lat, u64 *tsc_lat)
 //{
-//	vcounter_t vcount;
+//	ffcounter vcount;
 //	u64 tsc1, tsc2, tsc3;
 //
 //	long ret;
@@ -412,17 +412,17 @@ time_t time(time_t *t)
 //		vcount = vread_ffcounter();
 //		tsc3 = rdtsc_ordered();
 //
-//		*vcounter = vcount;
+//		*ffcount = vcount;
 //		*vcount_lat = tsc3 - tsc2;		// latency of FFcounter read
 //		*tsc_lat = tsc2 - tsc1;			// latency of rdtsc back to back
 //
 //		return 0;
 //	}
 //	asm("syscall" : "=a" (ret) :
-//	    "0" (__NR_get_vcounter_latency), "D" (vcounter), "S" (vcount_lat), "q" (tsc_lat)  : "memory");
+//	    "0" (__NR_get_ffcounter_latency), "D" (ffcount), "S" (vcount_lat), "q" (tsc_lat)  : "memory");
 //	return ret;
 //}
-//long get_vcounter_latency(vcounter_t *, u64 *, u64 *)
-//	__attribute__((weak, alias("__vdso_get_vcounter_latency")));
+//long get_ffcounter_latency(ffcounter *, u64 *, u64 *)
+//	__attribute__((weak, alias("__vdso_get_ffcounter_latency")));
 //
 //#endif  /* CONFIG_RADCLOCK */

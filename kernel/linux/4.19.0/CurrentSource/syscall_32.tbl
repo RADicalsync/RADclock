@@ -400,6 +400,6 @@
 386	i386	rseq			sys_rseq			__ia32_sys_rseq
 //#ifdef CONFIG_RADCLOCK
 ///* FIXME: I have no 32 compat version here, so omit last column? */
-//387	i386	get_vcounter			sys_get_vcounter				sys_get_vcounter
-//388	i386	get_vcounter_latency	sys_get_vcounter_latency	sys_get_vcounter_latency
+//387	i386	get_ffcounter			sys_get_ffcounter				sys_get_ffcounter
+//388	i386	get_ffcounter_latency	sys_get_ffcounter_latency	sys_get_ffcounter_latency
 //#endif

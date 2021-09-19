@@ -346,8 +346,8 @@
 333	common	io_pgetevents		__x64_sys_io_pgetevents
 334	common	rseq			__x64_sys_rseq
 #ifdef CONFIG_RADCLOCK
-335	64	get_vcounter				__x64_sys_get_vcounter
-336	64	get_vcounter_latency		__x64_sys_get_vcounter_latency
+335	64	get_ffcounter				__x64_sys_get_ffcounter
+336	64	get_ffcounter_latency		__x64_sys_get_ffcounter_latency
 #endif
 
 #
@@ -393,6 +393,6 @@
 546	x32	preadv2			__x32_compat_sys_preadv64v2
 547	x32	pwritev2		__x32_compat_sys_pwritev64v2
 //#ifdef CONFIG_RADCLOCK
-//548	x32	get_vcounter				__x32_compat_sys_get_vcounter
-//549	x32	get_vcounter_latency		__x32_compat_sys_get_vcounter_latency
+//548	x32	get_ffcounter				__x32_compat_sys_get_ffcounter
+//549	x32	get_ffcounter_latency		__x32_compat_sys_get_ffcounter_latency
 //#endif

@@ -43,7 +43,7 @@ struct bintime {
 
 
 #if defined (__FreeBSD__) && defined (HAVE_SYS_TIMEFFC_H)
-#include <sys/timeffc.h>			// in userland, defines syscalls only
+#include <sys/timeffc.h>			// in userland, defines syscalls (only)
 #endif
 
 /* This is THE interface data structure with FF code.
@@ -57,6 +57,10 @@ struct bintime {
  *
  * The native FFclock corresponds to the native RADclock Ca(t), namely the
  * clock WithOut leaps since boot added in.
+ * Raw timestamp type correspondance
+ *    daemon:   typedef uint64_t vcounter_t  [ libradclock/radclock.h ]
+ *		FreeBSD:  typedef uint64_t ffcounter   [ timeffc.h ]
+ *		Linux:	 typedef u64 		ffcounter   [ radclock.h ]
 */
 struct ffclock_estimate {
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */

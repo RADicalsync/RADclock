@@ -42,7 +42,7 @@
 #include <net/flow.h>
 
 #ifdef CONFIG_RADCLOCK
-#include <linux/clocksource.h>
+#include <linux/radclock.h>
 #endif
 
 /* The interface for checksum offload between the stack and networking drivers
@@ -697,8 +697,7 @@ struct sk_buff {
 	};
 
 #ifdef CONFIG_RADCLOCK   // does skb_mstamp act as a raw already?
-	vcounter_t		vcount_stamp;
-	ktime_t 		tstamp_fair; /* Specific to the FAIR_COMPARE mode, ns resolution */
+	ffcounter		ffcount_stamp;
 #endif
 
 	/*

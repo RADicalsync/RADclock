@@ -8,7 +8,7 @@
  *
  */
 
-#include <linux/timekeeper_internal.h>
+#include <linux/timekeeper_internal.h>		// includes radclock.h
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/percpu.h>
@@ -272,6 +272,83 @@ static inline u64 timekeeping_get_delta(const struct tk_read_base *tkr)
 }
 #endif
 
+#ifdef CONFIG_RADCLOCK
+///**
+// * ffclock_read_counter_delta - retrieve the clocksource cycles since last tick
+// *
+// * private function, must hold xtime_lock lock when being
+// * called. Returns the number of cycles on the current
+// * clocksource since the last tick (since the last call to
+// * update_wall_time).
+// *
+// */
+//static inline ffcounter ffclock_read_counter_delta(struct clocksource *cs)
+//{
+//	return((cs->read(cs) - cs->ffcount_source_record) & cs->mask);
+//}
+
+
+/**
+ * ffclock_read_counter - Return the value of the ffcount to functions within the kernel.
+ *  Old comment from read_ffcounter_bypass: Direct reads from hardware, required for virtual OS (e.g. Xen)
+ *  So is in fact:  bypass = don't use FFC, use the direct cs    [ a kernel thing, daemon doesn't need to know ]
+ *        passthrough = use rdtsc                                       [ both kernel & daemon need to know ]
+ */
+void ffclock_read_counter(ffcounter *now)
+{
+	struct timekeeper *tk = &tk_core.timekeeper;
+	unsigned seq;
+
+	if (ffcounter_bypass == 1) {
+		now = rdtsc_ordered();
+		return;
+	}
+
+	/* Read the FFC: obtain a consistent view using tk_core.seq to check */
+	do {
+		seq = read_seqcount_begin(&tk_core.seq);
+		*now = (ffcounter) tk_clock_read(&tk->tkr_raw);	// use if don't hold timekeeper_lock
+		*now = tk->tick_ffcount + ((*now - tk->tkr_raw.cycle_last) & tk->tkr_raw.mask);
+	} while (read_seqcount_retry(&tk_core.seq, seq));
+
+	return;
+}
+
+/* This `passthrough version' worked */
+//void ffclock_read_counter(ffcounter *now)
+//{
+//	struct timekeeper *tk = &tk_core.timekeeper;
+//	//unsigned long flags;
+//	unsigned seq;
+//
+//	/* Obtain a consistent view using tk_core.seq to check */
+//	//raw_spin_lock_irqsave(&timekeeper_lock, flags);	// since reading only, this seems overkill
+//	do {
+//		seq = read_seqcount_begin(&tk_core.seq);
+//		*now = (ffcounter) tk_clock_read(&tk->tkr_raw);	// use if don't hold timekeeper_lock
+//		//now = (ffcounter) cs->read(cs);
+//
+//		/* If bypass active we are done, else read the FFC */
+//		if (ffcounter_bypass == 0)
+//			*now = tk->tick_ffcount + ((*now - tk->tkr_raw.cycle_last) & tk->tkr_raw.mask);
+//		//	else
+//		//		now = rdtsc_ordered();
+//	} while (read_seqcount_retry(&tk_core.seq, seq));
+//	// static inline int read_seqcount_retry(const seqcount_t *s, unsigned start)
+//
+//	//raw_spin_unlock_irqrestore(&timekeeper_lock, flags);
+//
+//	return;
+//}
+
+EXPORT_SYMBOL(ffclock_read_counter);
+#endif
+
+
+
+
+
+
 /**
  * tk_setup_internals - Set up internals to use clocksource clock.
  *
@@ -298,14 +375,6 @@ static void tk_setup_internals(struct timekeeper *tk, struct clocksource *clock)
 	tk->tkr_raw.clock = clock;
 	tk->tkr_raw.mask = clock->mask;
 	tk->tkr_raw.cycle_last = tk->tkr_mono.cycle_last;
-
-#ifdef CONFIG_RADCLOCK
-	/* tkr_mono won't be used, but initialize for completeness */
-	tk->tkr_mono.clock->vcounter_record = 0;
-	tk->tkr_mono.clock->vcounter_source_record = 0;
-	tk->tkr_raw.clock->vcounter_record = 0;
-	tk->tkr_raw.clock->vcounter_source_record = (vcounter_t) tk->tkr_raw.cycle_last;
-#endif
 
 	/* Do the ns -> cycle conversion first, using original mult */
 	tmp = NTP_INTERVAL_LENGTH;
@@ -352,6 +421,13 @@ static void tk_setup_internals(struct timekeeper *tk, struct clocksource *clock)
 	tk->tkr_raw.mult = clock->mult;
 	tk->ntp_err_mult = 0;
 	tk->skip_second_overflow = 0;
+
+#ifdef CONFIG_RADCLOCK
+	if (old_clock)		// to become ffclock_reset
+		tk->tick_ffcount = 0;
+	else	// TODO: need bypass branch to set origin correctly for TSC
+		tk->tick_ffcount = (ffcounter) tk->tkr_raw.cycle_last; 	// adopt cs origin
+#endif
 }
 
 /* Timekeeper helper functions. */
@@ -1392,6 +1468,12 @@ static int change_clocksource(void *data)
 	write_seqcount_end(&tk_core.seq);
 	raw_spin_unlock_irqrestore(&timekeeper_lock, flags);
 
+#ifdef CONFIG_RADCLOCK
+	// bypass-aware origin setting code needed here. Similar to BSD ffclock_change_tc?  achieved
+	// within the to-be-written  ffclock_reset?  either called here or already called within tk_setup_internals?
+	// Relationship to  timekeeping_init  which has no RAD stuff yet ?
+#endif
+
 	return 0;
 }
 
@@ -2064,10 +2146,6 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	int shift = 0, maxshift;
 	unsigned int clock_set = 0;
 	unsigned long flags;
-#ifdef CONFIG_RADCLOCK
-	vcounter_t vcounter_delta;
-	struct clocksource *clock;
-#endif
 
 	raw_spin_lock_irqsave(&timekeeper_lock, flags);
 
@@ -2081,6 +2159,7 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	if (mode != TK_ADV_TICK)
 		goto out;
 #else
+	// fn prepares tk to replace real_tk at end. At entry, they are equal
 	offset = clocksource_delta(tk_clock_read(&tk->tkr_mono),
 				   tk->tkr_mono.cycle_last, tk->tkr_mono.mask);
 
@@ -2090,13 +2169,10 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 #endif
 
 #ifdef CONFIG_RADCLOCK
-//	vcounter_t vcounter_delta;
-//	struct clocksource *clock;
-	clock = real_tk->tkr_raw.clock;	// mono clock not used by RADCLOCK
-
-	vcounter_delta = (clock->read(clock) - clock->vcounter_source_record) & clock->mask;
-	clock->vcounter_record += vcounter_delta;
-	clock->vcounter_source_record += vcounter_delta;
+	// to become  ffclock_update()    or   ffclock_windup()
+	// FIXME: Careful, need to advance by the same amount tk code does, need to exclude remainder
+	// Simple copy and subtract would work now, but once we update FFclocks, may need to exploit the log accum loop
+	tk->tick_ffcount += offset;		// updating the shadow in preparation
 #endif
 
 	/* Do some additional sanity checking */
@@ -2116,8 +2192,7 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	maxshift = (64 - (ilog2(ntp_tick_length())+1)) - 1;
 	shift = min(shift, maxshift);
 	while (offset >= tk->cycle_interval) {
-		offset = logarithmic_accumulation(tk, offset, shift,
-							&clock_set);
+		offset = logarithmic_accumulation(tk, offset, shift, &clock_set);
 		if (offset < tk->cycle_interval<<shift)
 			shift--;
 	}
@@ -2142,8 +2217,11 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	 * memcpy under the tk_core.seq against one before we start
 	 * updating.
 	 */
-	timekeeping_update(tk, clock_set);
-	memcpy(real_tk, tk, sizeof(*tk));
+	/* BUG: weirdness, this fn updates the passed tk (which is shadow_tk), but at the end,
+	 * overwrites shadow_tk directly with real_tk , thereby throwing away all updates
+	 * Then when we come here, they are already the same, and so the entire fn fails to update */
+	timekeeping_update(tk, clock_set);	// this fn does tk <-- real_tk
+	memcpy(real_tk, tk, sizeof(*tk));	// already the same, does nth ??
 	/* The memcpy must come last. Do not put anything here! */
 	write_seqcount_end(&tk_core.seq);
 out:

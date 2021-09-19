@@ -144,7 +144,7 @@
 #include <net/busy_poll.h>
 
 #ifdef CONFIG_RADCLOCK
-extern int sysfs_ffclock_tsmode;
+#include <linux/radclock.h>		// for ffclock_tsmode
 #endif
 
 static DEFINE_MUTEX(proto_list_mutex);
@@ -2837,9 +2837,8 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 
 	sk->sk_stamp = SK_DEFAULT_STAMP;
 #ifdef CONFIG_RADCLOCK
-	sk->sk_vcount_stamp = 0;
-	sk->sk_stamp_fair = ktime_set(-1L, -1L);
-	sk->sk_radclock_tsmode = sysfs_ffclock_tsmode;
+	sk->sk_ffcount_stamp = 0;
+	sk->sk_radclock_tsmode = ffclock_tsmode;
 #endif
 
 #if BITS_PER_LONG==32

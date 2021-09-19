@@ -147,9 +147,6 @@
 #include <net/udp_tunnel.h>
 #include <linux/net_namespace.h>
 
-#ifdef CONFIG_RADCLOCK
-#include <linux/clocksource.h>
-#endif
 #include "net-sysfs.h"
 
 #define MAX_GRO_SKBS 8
@@ -2003,29 +2000,8 @@ void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 	struct list_head *ptype_list = &ptype_all;
 
 #ifdef CONFIG_RADCLOCK
-	ktime_t tv_fair;
-	vcounter_t vcount;
-#endif
-
-#ifdef CONFIG_RADCLOCK
-// FIXME: this code used to be where the timestamp is effectively created.
-// Things have changed, and net_timestamp_set only reads the H/W counter if the
-// timestamp is needed but potentially for each rcu?
-// TODO confirm the behaviour and see if this code has to go into the
-// list_for_each_entry_rcu loop
-	/* At this point, we have no way of knowing if we tap the packets
-	 * in RADCLOCK_TSMODE_FAIRCOMPARE mode or not. So we take another
-	 * timestamp we ensure to be 'fair'.
-	 */
-	// 3.2.2 had: rdtsc_barrier(); /* Make sure GCC doesn't mess up the compare */
-	tv_fair = ktime_get_real();
-	vcount = read_vcounter();
-	// 3.2.2 had: rdtsc_barrier(); /* Make sure GCC doesn't mess up the compare */
-
-	/* Copy the two specific RADclock timestamps to the skbuff */
-	skb->vcount_stamp = vcount;
-	printk("======>RAD dev_queue_XMIT_nit: filling skb->vcount_stamp with vcount = %llu\n", skb->vcount_stamp);
-	skb->tstamp_fair = tv_fair;
+	ffclock_read_counter(&skb->ffcount_stamp);
+	printk("======>RAD dev_queue_XMIT_nit: filling skb->ffcount_stamp with vcount = %llu\n", skb->ffcount_stamp);
 #endif
 
 	rcu_read_lock();
@@ -4492,25 +4468,12 @@ static int netif_rx_internal(struct sk_buff *skb)
 {
 	int ret;
 
-#ifdef CONFIG_RADCLOCK
-	/* At this point, we have no way of knowing if we tap the packets
-	 * in RADCLOCK_TSMODE_FAIRCOMPARE mode or not. So we take another
-	 * timestamp we ensure to be 'fair'.
-	 */
-	ktime_t tv_fair;
-	vcounter_t vcount;
-
-	vcount = read_vcounter();	// see dev_queue_xmit_nit for comments re. port from 3.2.2
-	tv_fair = ktime_get_real();
-#endif
-
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
 #ifdef CONFIG_RADCLOCK
-	/* Copy the two specific RADclock timestamps to the skbuff */
-	skb->vcount_stamp = vcount;
-	printk("=>>RAD netif_RX_internal:   vcount = %llu\n", skb->vcount_stamp);
-	skb->tstamp_fair  = tv_fair;
+	/* Copy the RADclock timestamps to the skbuff */
+	ffclock_read_counter(&skb->ffcount_stamp);
+	printk("=>>RAD netif_RX_internal:   vcount = %llu\n", skb->ffcount_stamp);
 #endif
 
 	trace_netif_rx(skb);
@@ -5183,25 +5146,12 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 {
 	int ret;
 
-#ifdef CONFIG_RADCLOCK
-	/* At this point, we have no way of knowing if we tap the packets
-	 * in RADCLOCK_TSMODE_FAIRCOMPARE mode or not. So we take another
-	 * timestamp we ensure to be 'fair'.
-	 */
-	ktime_t tv_fair;
-	vcounter_t vcount;
-
-	vcount = read_vcounter();		// see dev_queue_xmit_nit for comments re. port from 3.2.2
-	tv_fair = ktime_get_real();
-#endif
-
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
 #ifdef CONFIG_RADCLOCK
-	/* Copy the two specific RADclock timestamps to the skbuff */
-	skb->vcount_stamp = vcount;
-	printk("==<RAD netif_RECEIVE_skb_:    filling skb->vcount_stamp with vcount = %llu\n", skb->vcount_stamp);
-	skb->tstamp_fair  = tv_fair;
+	/* Copy the RADclock timestamps to the skbuff */
+	ffclock_read_counter(&skb->ffcount_stamp);
+	printk("==<RAD netif_RECEIVE_skb_:    filling skb->ffcount_stamp with vcount = %llu\n", skb->ffcount_stamp);
 #endif
 
 	if (skb_defer_rx_timestamp(skb))

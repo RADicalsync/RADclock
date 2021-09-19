@@ -31,7 +31,7 @@
 
 #include <asm/types.h>
 #include <sys/ioctl.h>
-#include <sys/sysctl.h>
+//#include <sys/sysctl.h>
 #include <sys/socket.h>
 
 #include <netinet/in.h>
@@ -73,7 +73,7 @@ enum {
 
 static struct nla_policy radclock_attr_policy[RADCLOCK_ATTR_MAX+1] = {
 	[RADCLOCK_ATTR_DUMMY]      = { .type = NLA_U16 },
-	[RADCLOCK_ATTR_DATA]       = { .minlen = sizeof(struct radclock_data) },
+	[RADCLOCK_ATTR_DATA]       = { .minlen = sizeof(struct ffclock_estimate) },
 	[RADCLOCK_ATTR_FIXEDPOINT] = { .minlen = sizeof(struct radclock_fixedpoint) },
 };
 
@@ -103,7 +103,6 @@ init_kernel_clock(struct radclock *clock)
 
 	logger(RADLOG_NOTICE, "RADclock netlink is up, with genl ID = %d", id);
 	PRIV_DATA(clock)->radclock_gnl_id = id;
-	logger(RADLOG_NOTICE, "Feed-Forward Kernel initialised");
 
 	return (0);
 }
@@ -159,7 +158,7 @@ radclock_gnl_receive(int id, struct nlmsghdr *h, int attrib_id, void *into)
 		void *attr_payload = nla_data(attrs[RADCLOCK_ATTR_DATA]);
 		if (attr_payload) {
 			//logger(RADLOG_NOTICE, "found desired raddata attribute");
-			memcpy(into, attr_payload, sizeof(struct radclock_data));
+			memcpy(into, attr_payload, sizeof(struct ffclock_estimate));
 			//nl_data_free(attr_payload);  // entire buf gets freed in radclock_gnl_get_attr
 			return (0);
 		} else
@@ -212,7 +211,7 @@ static int radclock_gnl_get_attr(int radclock_gnl_id, int attrib_id, void *into)
 	/* Create and bind socket for the request, complete and send the message */
 	sk = nl_socket_alloc();
 	if (!sk) {
-		logger(RADLOG_ERR, "Error allocating socket");
+		logger(RADLOG_ERR, "Error allocating netlink socket");
 		goto msg_errout;
 	}
 	if (nl_connect(sk, NETLINK_GENERIC) < 0) {	//  equivalent to genl_connect(sk);
@@ -283,7 +282,7 @@ radclock_gnl_set_attr(int radclock_gnl_id, int attrib_id, void *data)
 	/* Create and bind socket for the request */
 	sk = nl_socket_alloc();
 	if (!sk) {
-		logger(RADLOG_ERR, "Error allocating handle");
+		logger(RADLOG_ERR, "Error allocating netlink socket");
 		goto msg_errout;
 	}
 	if (nl_connect(sk, NETLINK_GENERIC) < 0) {
@@ -293,7 +292,7 @@ radclock_gnl_set_attr(int radclock_gnl_id, int attrib_id, void *data)
 
 	/* Append desired attribute payload in message */
 	if (attrib_id == RADCLOCK_ATTR_DATA) {
-		if (nla_put(msg, RADCLOCK_ATTR_DATA, sizeof(struct radclock_data), data)) {
+		if (nla_put(msg, RADCLOCK_ATTR_DATA, sizeof(struct ffclock_estimate), data)) {
 			logger(RADLOG_ERR, "Couldn't set attr");
 			goto close_errout;
 		}
@@ -312,8 +311,6 @@ radclock_gnl_set_attr(int radclock_gnl_id, int attrib_id, void *data)
 	nl_wait_for_ack(sk);
 	ret = 0;		// success
 
-	logger(RADLOG_NOTICE, "Exiting radclock_gnl_set_attr");
-
 
 close_errout:
 	nl_close(sk);
@@ -326,23 +323,55 @@ errout:
 }
 
 
-// TODO the set_kernel_ffclock should be in the library too?
+/* Get the current FFdata from the kernel via netlink */
 int
 get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 {
-	logger(RADLOG_ERR, "Not yet getting ffclock data in the kernel");
+	int err;
+
 	if (clock->kernel_version < 2) {
-		logger(RADLOG_ERR, "  get_kernel_ffclock with unfit kernel!");
+		logger(RADLOG_ERR, "calling get_kernel_ffclock with unfit kernel!");
 		return (1);
+	}
+
+	err = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, cest);
+	if (err < 0) {
+		logger(RADLOG_ERR, "Failed to recover FFdata from kernel");
+		return (-1);
 	}
 
 	return (0);
 }
 
 
+/* Send the passed value of FFdata to the kernel via netlink */
 int
 set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 {
+	int err;
+
+	switch (clock->kernel_version) {
+	case 0:
+	case 1:
+		return (0);		// do nothing, fixedpt thread does this job
+	case 2:
+		err = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, cest);
+		break;
+	default:
+		logger(RADLOG_ERR, "Unknown kernel version");
+		return (1);
+	}
+
+	if (err < 0) {
+		logger(RADLOG_ERR, "error when setting FFdata in kernel");
+		return (1);
+	}
+
+	return (0);
+}
+
+/* Early version of code for filling that was in  set_kernel_ffclock (both fill and set) */
+
 //	JDEBUG
 //	int err;
 //	struct ffclock_data fdata;
@@ -352,12 +381,6 @@ set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 //	uint64_t period_shortterm;
 //	uint64_t frac;
 //
-	logger(RADLOG_ERR, "Not yet setting ffclock data in the kernel");
-	if (clock->kernel_version < 2) {
-		logger(RADLOG_ERR, "set_kernel_ffclock with unfit kernel!");
-		return (1);
-	}
-
 //	/*
 //	 * Build the data structure to pass to the kernel
 //	 */
@@ -387,7 +410,7 @@ set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 //	fdata.status = RAD_DATA(clock)->status;
 //	fdata.error_bound_avg = (uint32_t) RAD_ERROR(clock)->error_bound_avg * 1e9;
 //
-//	
+//
 //	/* Push */
 //	err = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &fdata);
 //	if ( err < 0 ) {
@@ -395,50 +418,69 @@ set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 //		return (1);
 //	}
 
-	return (0);
-}
 
 
-//extern struct radclock_handle *clock_handle;
 
-/*
- * XXX Deprecated
- * Old way of pushing clock updates to the kernel.
- * TODO: remove when backward compatibility for kernel versions < 2 is dropped.
+
+
+
+
+
+
+
+
+
+
+/* Pushes old fixedpoint format which is updated by fixedpoint thread.
+ * Only relevant for KV<2 kernels
  */
 inline int
-set_kernel_fixedpoint(struct radclock *handle, struct radclock_fixedpoint *fpdata)
+set_kernel_fixedpoint(struct radclock *clock, struct radclock_fixedpoint *fpdata)
 {
 	int err, err_get;
 	struct radclock_fixedpoint kernfpdata;
+
 //	struct radclock_data kernraddata;
-////	struct radclock_data *raddata = &(clock_handle->rad_data[0]);
+//struct ffclock_estimate cest, kernraddata;
+//cest.status = 2;
+//cest.period = 123456789;
+
+////	struct radclock_data *raddata = &(clock_clock->rad_data[0]);
 //	struct radclock_data rd;
 //
 //	rd.status = 1;
 //	rd.phat = 1e-9;
 
-	switch (handle->kernel_version)
+	switch (clock->kernel_version)
 	{
 	case 0:
 	case 1:
-		err     = radclock_gnl_set_attr(PRIV_DATA(handle)->radclock_gnl_id, RADCLOCK_ATTR_FIXEDPOINT, fpdata);
-	 	err_get = radclock_gnl_get_attr(PRIV_DATA(handle)->radclock_gnl_id, RADCLOCK_ATTR_FIXEDPOINT, &kernfpdata);
+	case 2:
+		err     = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_FIXEDPOINT, fpdata);
+	 	err_get = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_FIXEDPOINT, &kernfpdata);
 		if ( memcmp(fpdata,  &kernfpdata,sizeof(struct radclock_fixedpoint)) != 0 )
 			logger(RADLOG_ERR, "netlink inversion test for fp data failed, err_get = %d", err_get);
 
-//		err     = radclock_gnl_set_attr(PRIV_DATA(handle)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &rd);
-//		err_get = radclock_gnl_get_attr(PRIV_DATA(handle)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &kernraddata);
+//		err     = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &cest);
+//		err_get = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &kernraddata);
+//		if ( memcmp(&cest,&kernraddata,sizeof(struct ffclock_estimate)) != 0 ) {
+//			logger(RADLOG_ERR, "netlink inversion test for raddata failed, err_get = %d", err_get);
+//			logger(RADLOG_NOTICE, "rd:      status = %d,  period = %llu", cest.status, cest.period);
+//			logger(RADLOG_NOTICE, "kernrd:  status = %d,  period = %llu", kernraddata.status, kernraddata.period);
+//		}
+
+//		err     = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &rd);
+//		err_get = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &kernraddata);
 //		if ( memcmp(&rd,&kernraddata,sizeof(struct radclock_data)) != 0 ) {
 //			logger(RADLOG_ERR, "netlink inversion test for raddata failed, err_get = %d", err_get);
 //			logger(RADLOG_NOTICE, "rd:      status = %d,  phat = %.10lg", rd.status, rd.phat);
-//			logger(RADLOG_NOTICE, "kernrd:  status = %d,  phat = %.10lg", kernraddata.leapsec_total, kernraddata.phat);
+//			logger(RADLOG_NOTICE, "kernrd:  status = %d,  phat = %.10lg", kernraddata.status, kernraddata.phat);
 //		}
 		break;
 
-	case 2:	
-		logger(RADLOG_ERR, "set_kernel_fixedpoint but kernel version 2!!");
-		return (1);
+//	case 2:
+//		logger(RADLOG_ERR, "set_kernel_fixedpoint but kernel version 2!!");
+//		return (1);
 
 	default:
 		logger(RADLOG_ERR, "Unknown kernel version");

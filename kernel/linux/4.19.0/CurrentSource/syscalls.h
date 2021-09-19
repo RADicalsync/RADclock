@@ -84,7 +84,7 @@ union bpf_attr;
 #include <linux/personality.h>
 #include <trace/syscall.h>
 #ifdef CONFIG_RADCLOCK
-#include <linux/clocksource.h>
+#include <linux/radclock.h>
 #endif
 
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
@@ -686,8 +686,8 @@ asmlinkage long sys_adjtimex(struct timex __user *txc_p);
 /* arch/x86/entry/vdso/vclock_gettime.c syscall fallbacks
  * Entries in this file should match those in uapi/asm-generic/unistd.h, not true here, so put elsewhere? */
 #ifdef CONFIG_RADCLOCK
-asmlinkage long sys_get_vcounter(vcounter_t __user *vcounter);
-asmlinkage long sys_get_vcounter_latency(vcounter_t __user *vcounter, u64 __user *vcount_lat, u64 __user *tsc_lat);
+asmlinkage long sys_get_ffcounter(ffcounter __user *ffcount);
+asmlinkage long sys_get_ffcounter_latency(ffcounter __user *ffcount, u64 __user *vcount_lat, u64 __user *tsc_lat);
 #endif
 
 /* kernel/timer.c */

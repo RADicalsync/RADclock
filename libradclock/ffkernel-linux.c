@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2013-2021, Darryl Veitch <darryl.veitch@uts.edu.au>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -30,7 +31,7 @@
 
 #include <asm/types.h>
 #include <sys/ioctl.h>
-#include <sys/sysctl.h>
+//#include <sys/sysctl.h>
 #include <sys/socket.h>
 
 #include <stdio.h>
@@ -42,6 +43,7 @@
 
 #include "radclock.h"
 #include "radclock-private.h"
+#include "kclock.h"			// not needed yet, but may end up including an equivalant to timeffc.h
 #include "logger.h"
 
 
@@ -49,14 +51,12 @@
  * TODO LINUX:
  *  Consider moving the vcount stamp to ancilary data
  *  - Would mean moving away from standard pcap (maybe to libtrace, which
- *  already supports ancillary data for the sw stamp, or patching pcap to use
- *  it
+ *  already supports ancillary data for the sw stamp, or patching pcap to use it
  *  - This would avoid 2 syscalls (one of sw stamp, one for vcount stamp)
  *  - UPDATE: new packet MMAP support should solve all of this
  *
  *  Consider moving the mode to a sockopt
- *  - This would just be cleaner and the right thing to do, no performance
- *    benefit
+ *  - This would just be cleaner and the right thing to do, no performance benefit
  */
 
 int
@@ -69,35 +69,31 @@ found_ffwd_kernel_version (void)
 	if (fd) {
 		fscanf(fd, "%d", &version);
 		fclose(fd);
-		logger(RADLOG_NOTICE, "Feed-Forward kernel support detected "
-				"(version: %d)", version);
-	}
-	else {
+	} else {
 		/* This is the old way we used before explicit versioning */
 		fd = fopen ("/proc/sys/net/core/radclock_default_tsmode", "r");
 		if (fd) {
 			fclose(fd);
-			logger(RADLOG_NOTICE, "Feed-Forward kernel support detected (version 0)");
 			version = 0;
-		}
-		else
+		} else	// no kernel support
 			version = -1;
 	}
 
+	if (version > -1)
+		logger(RADLOG_NOTICE, "Feed-Forward kernel detected (version: %d)", version);
+
 	/* A quick reminder for the administrator. */
 	switch (version) {
-	case 1:
-		break;
-
 	case 0:
-		logger(RADLOG_WARNING, "The Feed-Forward kernel support is a bit old. "
-				"You should update your kernel.");
+	case 1:
+		logger(RADLOG_WARNING, "The Feed-Forward kernel support is very old, update! ");
 		break;
-
+	case 2:
+		break;
 	case -1:
 	default:
-		logger(RADLOG_NOTICE, "No Feed-Forward kernel support detected");
-	break;
+		logger(RADLOG_NOTICE, "Feed-Forward kernel support not recognized");
+		break;
 	}
 	return (version);
 }
@@ -112,40 +108,34 @@ has_vm_vcounter(struct radclock *clock)
 	int bypass_active = 0;
 	char clocksource[32];
 	FILE *fd = NULL;
-
 	char *pass;
 
-	pass = "/sys/devices/system/clocksource/clocksource0/passthrough_clocksource";
+	pass = "/sys/devices/system/ffclock/ffclock0/bypass_ffclock";
 
 	fd = fopen (pass, "r");
 	if (!fd) {
-		logger(RADLOG_ERR, "Cannot open passthrough_clocksource from sysfs");
+		logger(RADLOG_ERR, "Cannot open bypass_ffclock from sysfs");
 		return (0);
 	}
 	fscanf(fd, "%d", &bypass_active);
 	fclose(fd);
 
 	if (bypass_active == 0) {
-		logger(RADLOG_ERR, "Clocksource not in pass-through mode. Cannot init "
-				"virtual machine mode");
+		logger(RADLOG_ERR, "ffclock not in bypass mode. Cannot init virtual machine mode");
 		return (0);
 	}
-	logger(RADLOG_NOTICE, "Found clocksource in pass-through mode");
+	logger(RADLOG_NOTICE, "Found ffclock in bypass mode");
 
-
-	fd = fopen ("/sys/devices/system/clocksource/clocksource0/"
-			"current_clocksource", "r");
-	if (!fd)
-	{
-		logger(RADLOG_WARNING, "Cannot open current_clocksource from sysfs");
+	fd = fopen ("/sys/devices/system/ffclock/ffclock0/bypass_ffclock", "r");
+	if (!fd) {
+		logger(RADLOG_WARNING, "Cannot open bypass_ffclock from sysfs");
 		return (1);
 	}
 	fscanf(fd, "%s", &clocksource[0]);
 	fclose(fd);
 
 	if ( (strcmp(clocksource, "tsc") != 0) && (strcmp(clocksource, "xen") != 0) )
-		logger(RADLOG_WARNING, "Clocksource is neither tsc nor xen. "
-				"There must be something wrong!!");
+		logger(RADLOG_WARNING, "Clocksource is neither tsc nor xen. There must be something wrong!!");
 	else
 		logger(RADLOG_WARNING, "Clocksource is %s", clocksource);
 
@@ -153,35 +143,56 @@ has_vm_vcounter(struct radclock *clock)
 }
 
 
-#if HAVE_RDTSCLL_ASM
-# include <asm/msr.h>
-#elif HAVE_RDTSCLL_ASM_X86
-# include <asm-x86/msr.h>
-#elif HAVE_RDTSCLL_ASM_X86_64
-# include <asm-x86_64/msr.h>
+/* Ensure rdtscll(ull) is defined */
+//#if HAVE_RDTSC_ASM
+//# include <asm/msr.h>			// file is there, but rdtsc, rdtsc_ordered, rdtscll not there
+//#else
+//# ifdef __x86_64__
+//#define  RDTSCTEST1 1
+//#  define rdtscll(val) do { \
+//		unsigned int __a,__d; \
+//		asm volatile("rdtsc" : "=a" (__a), "=d" (__d)); \
+//		(val) = ((unsigned long)__a) | (((unsigned long)__d)<<32); \
+//	} while(0)
+//# endif
+//# ifdef __i386__
+//	#define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
+//# endif
+//#endif
+//inline vcounter_t
+//radclock_readtsc(void)
+//{
+//	vcounter_t val;
+//	rdtscll(val);
+//	return (val);
+//}
+
+
+/* Ensure rdtsc() is defined
+ * If we can't find it, we define here (same as the macros and defn
+ * in  arch/x86/include/asm/msr.h , except for the cast)
+ */
+#define DefinedLocalRDTSC 0
+#ifdef HAVE_RDTSC_ASM
+#	include <asm/msr.h>			// file is there, but no functions are in it
 #else
-/* rdtscll not defined ... turn to black magic */
-# ifdef __x86_64__
-#  define rdtscll(val) do { \
-		unsigned int __a,__d; \
-		asm volatile("rdtsc" : "=a" (__a), "=d" (__d)); \
-		(val) = ((unsigned long)__a) | (((unsigned long)__d)<<32); \
-	} while(0)
-# endif
-# ifdef __i386__
-	#define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
-# endif
+#	define DefinedLocalRDTSC 1
+	static inline uint64_t	// same definition as in FreeBSD
+	rdtsc(void)
+	{
+		 u_int32_t low, high;
+		 __asm __volatile("rdtsc" : "=a" (low), "=d" (high));
+		 return (low | ((u_int64_t)high << 32));
+	}
 #endif
 
 inline vcounter_t
 radclock_readtsc(void)
 {
-	vcounter_t val;
-	rdtscll(val);
-	return (val);
+	return (vcounter_t) rdtsc();
 }
 
-// TODO We could afford some cleaning in here
+/* First argument not used, needed to match template for clock->get_vcounter */
 inline int
 radclock_get_vcounter_rdtsc(struct radclock *clock, vcounter_t *vcount)
 {
@@ -196,14 +207,13 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 	switch (clock->kernel_version) {
 	case 0:
 	case 1:
-		/* From config.h */
-		clock->syscall_get_vcounter = LINUX_SYSCALL_GET_VCOUNTER;
+	case 2:
+		clock->syscall_get_vcounter = LINUX_SYSCALL_GET_VCOUNTER; // From config.h
 		logger(RADLOG_NOTICE, "registered get_vcounter syscall at %d",
 				clock->syscall_get_vcounter);
 		break;
 	default:
-		logger(RADLOG_ERR, "Unknown kernel version, cannot register "
-				"get_ffcounter syscall");
+		logger(RADLOG_ERR, "ffclock_getcounter syscall unavailable");
 		return (1);
 	}
 
@@ -219,12 +229,13 @@ radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
 	if (vcount == NULL)
 		return (-1);
 
-	ret = syscall(clock->syscall_get_vcounter, vcount);	// direct call
-	// glibc provided wrapper autogend?
-	//  listed already in syscall_64.tbl as a syscall
+	//ret = get_vcounter(vcount);		// userspace fn name fails for some reason..
+	// glibc provided wrapper autogenerated?
+	//  this name is listed in syscall_64.tbl
 	//  listed as a weak alias to  vdso call  vclockgettime.c
-	//ret = get_vcounter(vcount);
-	
+
+	ret = syscall(clock->syscall_get_vcounter, vcount);	// direct call
+
 	if (ret < 0) {
 		logger(RADLOG_ERR, "error on syscall get_vcounter: %s", strerror(errno));
 		return (-1);
@@ -232,31 +243,71 @@ radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
 	return (0);
 }
 
+/* Get the current hardware counter used by the kernel.
+ * If it has changed, record the new one and flag this.
+ * Return codes:  {-1,0,1} = {couldn't access, no change or initialized, changed}
+ * Assumes KV>0 .
+ */
+int get_currentcounter(struct radclock *clock)
+{
+	char hw_counter[32];
+	FILE *fd = NULL;
 
-/*
+	/* Get name of current counter */
+	fd = fopen ("/sys/devices/system/clocksource/clocksource0/current_clocksource", "r");
+	if (!fd) {
+		logger(RADLOG_ERR, "Cannot open current_clocksource from sysfs");
+		return (-1);
+	}
+	fscanf(fd, "%s", &hw_counter[0]);
+	fclose(fd);
+
+	/* If different from registered value, register the new one */
+	if (strcmp(clock->hw_counter, hw_counter) != 0) {
+		if ( clock->hw_counter[0] == '\0' ) {
+			logger(RADLOG_NOTICE, "Hardware counter used is %s", hw_counter);
+			strcpy(clock->hw_counter, hw_counter);
+		}	else {
+			logger(RADLOG_WARNING, "Hardware counter has changed : (%s -> %s)",
+									clock->hw_counter, hw_counter);
+			strcpy(clock->hw_counter, hw_counter);
+			return (1);
+		}
+	}
+
+	return (0);
+}
+
+
+/* Check the available counter and set it up.
  * Check to see if we can use fast rdtsc() timestamping from userland.
  * Otherwise fall back to syscalls
  */
 int
 radclock_init_vcounter(struct radclock *clock)
 {
-	char clocksource[32];
 	int bypass_active;
 	FILE *fd = NULL;
 
-	/* Retrieve name of hardware counter used by the kernel clocksource */
-	fd = fopen ("/sys/devices/system/clocksource/clocksource0/current_clocksource", "r");
-	if (!fd) {
-		logger(RADLOG_ERR, "Cannot open current_clocksource from sysfs");
+	/* Retrieve available and current sysclock.
+	 * Not the job of this function, but a reasonable place to do this.
+	 * ** SYSclock choice concept not yet implemented for Linux **
+	 */
+	logger(RADLOG_NOTICE, "Available sysclocks: traditional (sysclock not implemented)");
+
+
+	/* Retrieve and register name of counter used by the kernel timecounter */
+	if ( get_currentcounter(clock) == -1 )
 		return (-1);
-	}
-	fscanf(fd, "%s", &clocksource[0]);
-	fclose(fd);
-	logger(RADLOG_NOTICE, "Clocksource used is %s", clocksource);
 
-	/* Retrieve available and current sysclock */
-	// SYSclock choice concept not yet implemented for Linux
-
+//	fd = fopen ("/sys/devices/system/clocksource/clocksource0/current_clocksource", "r");
+//	if (!fd) {
+//		logger(RADLOG_ERR, "Cannot open current_clocksource from sysfs");
+//		return (-1);
+//	}
+//	fscanf(fd, "%s", &clock->hw_counter[0]);
+//	fclose(fd);
+//	logger(RADLOG_NOTICE, "Hardware counter used is %s", clock->hw_counter);
 
 
 	/* Retrieve value of kernel PT mode */
@@ -267,9 +318,10 @@ radclock_init_vcounter(struct radclock *clock)
 		break;
 
 	case 1:
-		fd = fopen ("/sys/devices/system/clocksource/clocksource0/passthrough_clocksource", "r");
+	case 2:
+		fd = fopen ("/sys/devices/system/ffclock/ffclock0/bypass_ffclock", "r");
 		if (!fd) {
-			logger(RADLOG_ERR, "Cannot open passthrough_clocksource from sysfs");
+			logger(RADLOG_ERR, "Cannot open bypass_ffclock from sysfs");
 			return (-1);
 		}
 		fscanf(fd, "%d", &bypass_active);
@@ -280,35 +332,41 @@ radclock_init_vcounter(struct radclock *clock)
 
 
 	/* Make decision on mode and assign corresponding get_vcounter function.
-	 *  Here activatePT authorizes deamons to activate the kernal PT option if
+	 *  Here activateBP authorizes deamons to activate the kernal bypass option if
 	 *  appropriate, but not to deactivate it.
-	 *  Sufficient for now to keep activatePT an internal parameter (see algo Doc)
+	 *  Sufficient for now to keep activateBP an internal parameter (see algo Doc)
 	 *  If want to make a config parameter later, must read it in clock_init_live
 	 *  where handle->conf is available and pass here as 2nd argument.
 	 */
-	int activatePT = 0;		// user's intention regarding passthrough=bypass
+	int activateBP = 0;	// user's bypass intention, may set the kernal option!
 
-	// TODO:  Update this to match FreeBSD
-	if (bypass_active == 0 && activatePT == 0) {
+	if ( DefinedLocalRDTSC )
+		logger(RADLOG_NOTICE, "rdtsc() not found, have defined locally in daemon");
+	else
+		logger(RADLOG_NOTICE, "system rdtsc() found");
+
+	if ( (bypass_active == 0 && activateBP == 0) || clock->kernel_version < 2) {
 		clock->get_vcounter = &radclock_get_vcounter_syscall;
-		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter with syscall.");
+		logger(RADLOG_NOTICE, "Initialising get_vcounter with syscall.");
 		return (0);
 	}
 
-	if (strcmp(clocksource, "tsc") == 0) {
-		clock->get_vcounter = &radclock_get_vcounter_rdtsc;
-		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using rdtsc(). "
-						"* Make sure TSC is reliable *");
-	} else {
+	/* Activate if not already, provided it passes basic tests [ needs KV>1 ]*/
+	if ( strcmp(clock->hw_counter, "tsc") != 0 ) {		// could be TSC on some systems?
+		logger(RADLOG_NOTICE, "Bypass active/requested but counter seems wrong.");
 		clock->get_vcounter = &radclock_get_vcounter_syscall;
 		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using syscall.");
-	}
-
-	/* Last, a warning */
-	if (bypass_active == 1) {
-		if ((strcmp(clocksource, "tsc") != 0) && (strcmp(clocksource, "xen") != 0))
-			logger(RADLOG_ERR, "Passthrough mode in ON but the clocksource does "
-					"not support it!!");
+	} else {
+		logger(RADLOG_NOTICE, "Counter seems to be a TSC (assumed reliable)");
+		if (bypass_active == 0) {
+			logger(RADLOG_NOTICE, "Activating kernel bypass mode as requested");
+			bypass_active = 1;
+			fd = fopen ("/sys/devices/system/ffclock/ffclock0/bypass_ffclock", "w");
+			fprintf(fd, "%d", bypass_active);	// conveniently overwrites existing single char!
+			fclose(fd);
+		}
+		clock->get_vcounter = &radclock_get_vcounter_rdtsc;
+		logger(RADLOG_NOTICE, "Initialising get_vcounter using rdtsc()");
 	}
 
 	return (0);

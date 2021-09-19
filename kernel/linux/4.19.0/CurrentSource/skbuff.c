@@ -226,8 +226,7 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	skb->data = data;
 	skb_reset_tail_pointer(skb);
 #ifdef CONFIG_RADCLOCK
-	skb->vcount_stamp = 0;
-	skb->tstamp_fair = ktime_set(-1L, -1L);
+	skb->ffcount_stamp = 0;
 #endif
 	skb->end = skb->tail + size;
 	skb->mac_header = (typeof(skb->mac_header))~0U;
@@ -810,8 +809,7 @@ static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 {
 	new->tstamp		= old->tstamp;
 	#ifdef CONFIG_RADCLOCK
-	new->vcount_stamp = old->vcount_stamp;
-	new->tstamp_fair 	= old->tstamp_fair;
+	new->ffcount_stamp = old->ffcount_stamp;
 	#endif
 	/* We do not copy old->sk */
 	new->dev		= old->dev;

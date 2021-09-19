@@ -1,0 +1,423 @@
+/*
+ * Copyright (C) 2021, Darryl Veitch <darryl.veitch@uts.edu.au>
+ *
+ * This file is part of the radclock program.
+ */
+
+FFclock Linux V4 documentation.
+Written by Darryl Veitch
+================================
+
+Convention to point within code:
+	/dir/dir/file : functionorstructureinfile
+
+Glossary:
+ KV = Kernel Version  ( of the RADclock/FFclock modified kernel )
+ IPC = Inter-Process Communication
+ OS = Operating System
+ SMS = SHared Memory
+ FF = FeedForward
+ FB = FeedBack
+ FFcounter = a FF compatible counter
+ algo = algorithm, the RADclock clock synchronization algorithm
+ tc = "timecounter"
+		or the current timecounter structure variable
+      or the current counter available in the current tc variable
+ Ca = Absolute FF clock
+ Cd = Difference FF clock
+
+
+
+Works in Progress:
+  - leapsecond
+  - correct reaction to a tc change
+
+==============================================================
+Summary
+=======
+
+This documents the FFclock Linux kernel code, focussing on kernel version 2
+and above.  The code includes the synthesis of a FF compatible counter, support
+for a full featured FF system clock interfacing with a FF clock daemon,
+in-kernel FF packet timestamping support with multiple variants (including one
+which functions as a difference clock), and the provision of a universal FF/FB
+system clock interface.
+The main source files are in RADclockrepo/kernel/linux/4.19.0/CurrentSource
+...
+The main associated header files are
+...
+
+On the radclock library side, the main files in RADclockrepo/radclock/libradclock/ are
+	radapi-base.c
+	radapi-pcap.c
+	{kclock,ffkernel,pcap}-fbsd.c
+The main associated header files are
+	kclock.h
+	radclock.h							// external processes include this to use RADclock
+
+In addition there is related code in RADclockrepo/radclock/radclock/ in
+	radclock_main.c
+	sync_bidir.c
+with
+	sync_algo.h
+
+This Document does not reproduce background material provided in FFclockDoc_FreeBSD.txt .
+Instead it focusses on giving a compact overview of the current Linux code.
+
+==============================================================
+Introduction
+============
+
+The kernel versioning parameter lives in the pure FF file kern_ffclock.c
+	static int ffclock_version = 3;     // declare value of KV, the kernel version of the FF code
+and is accessible by a daemon via the FF-expanded sysctl tree.
+
+
+
+==============================================================
+FFCLOCK symbol and File Breakdown
+======================================
+
+
+
+==============================================================
+Timecounter (tc) Mechanism: Overview
+======================================
+
+
+
+
+==============================================================
+FF algo data kernel <--> daemon translation
+======================================
+
+
+==============================================================
+Setting of FFclock data
+======================================
+
+
+
+
+==============================================================
+Global Variables
+======================================
+
+
+==============================================================
+Timecounter structure and hardware counters
+======================================
+This section describes the existing mechanism: no changes were made.
+
+
+
+==============================================================
+Timecounter (tc) Mechanism:  Changing Timecounters
+======================================
+
+
+
+
+==============================================================
+FFcounter timestamping bypass mode
+======================================
+
+
+==============================================================
+FF clock status setting
+======================================
+
+
+==============================================================
+FF and system clock reading
+======================================
+
+
+/* Difference clock */
+
+
+/* Absolute FF clock */
+
+
+/* UTC clocks versus Uptime clocks */
+
+			  
+/* Uptime clock versus FF difference clock */
+
+
+/* System Clock */
+
+
+
+==============================================================
+IOCTL:    for KV>1
+======================================
+
+The only use of ioctl is via the packet capture access mediated through pcap.
+The related functions are in pcap-linux.c :
+
+#define SIOCSRADCLOCKTSMODE 	0x8908		// defined in uapi/asm-generic/sockios.h
+#define SIOCGRADCLOCKTSMODE 	0x8909		// defined in uapi/asm-generic/sockios.h
+#define SIOCGRADCLOCKSTAMP 	0x89b2		// defined in uapi/linux/sockios.h
+
+Getting and setting the tsmode		[ note these can also be get/set using sysfs, see below ]
+ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_int custom)
+ 		if (ioctl(pcap_fileno(p_handle), SIOCSRADCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
+ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
+		if (ioctl(pcap_fileno(p_handle), SIOCGRADCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
+
+Obtaining the packet data:
+ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
+		if (ioctl(pcap_fileno(p_handle), SIOCGRADCLOCKSTAMP, (caddr_t)vcount) == -1) {
+
+
+
+==============================================================
+Syscalls:    for KV>1
+======================================
+
+The regular FFcode <--> userland interactions are achieved by syscalls for KV≥2,
+when faster alternatives are not available.
+
+Unlike in FreeBSD, syscalls are not used for the get/set of FFdata in the kernel,
+instead lower latency netlink facility is used. On the other hand a new syscall,
+sys_get_vcounter_latency, is added. This is a diagnostic tool for syscall latency
+benchmarking, not currently used.
+
+There are two syscalls. The relationship to functions mediating their use in
+the daemon are summarized in RADclockDoc_library, repeated here:
+
+syscall (kernel: time.c) 	userspace calling method					 			OS-dep wrapper kclock-linux.c
+---------------------------------------------------------------------------------------------------
+sys_get_vcounter  			syscall(LINUX_SYSCALL_GET_VCOUNTER,vc)  			radclock_get_vcounter_syscall(clock,vc)
+sys_get_vcounter_latency	syscall(LINUX_SYSCALL_GET_VCOUNTER_LATENCY,vc)  N/A (not used)
+
+File involved files and their roles are as follows :
+time.c		//  SYSCALL_DEFINEx macros are in syscalls.h ;  they add a sys_ prefixed to syscall name
+  SYSCALL_DEFINE1(get_vcounter, vcounter_t __user *, vcounter)
+  SYSCALL_DEFINE3(get_vcounter_latency, vcounter_t __user *, vcounter, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
+
+For amd64 architectures, the files  asm/unistd_{32,64}.h  are auto-generated from the specification in:
+syscall_64.tbl    [ syscall number defined and ABI family ]
+	335	64	get_vcounter				__x64_sys_get_vcounter
+	336	64	get_vcounter_latency		__x64_sys_get_vcounter_latency
+syscall_32.tbl    [ syscall number defined and ABI family specified for i386 support on amd64 arch? ]
+	i386	get_vcounter			sys_get_vcounter				sys_get_vcounter
+	i386	get_vcounter_latency	sys_get_vcounter_latency	sys_get_vcounter_latency
+
+syscalls.h		[ placed under entry for kernel/time.c where the fns are defined ]
+  asmlinkage long sys_get_vcounter(vcounter_t __user *vcounter);
+  asmlinkage long sys_get_vcounter_latency(vcounter_t __user *vcounter, u64 __user *vcount_lat, u64 __user *tsc_lat);
+
+
+
+
+==============================================================
+SYSFS:
+======================================
+
+The SYSFS device tree associated with FF components is defined in clocksource.{h,c}  and radclock.{h,c}
+The provided controls are cs level controls that can impact the FF clock and the FF daemon,
+such as a change of cs.
+
+Note that the declaration:   // see include/linux/sysfs.h
+static DEVICE_ATTR_{RO,WO,RW}(name)  (make once only) means it ie expecting callback functions named as :
+ name_store()  fn to handle W
+ name_show()   fn to handle R  as needed
+
+An existing "clocksource" sysfs device defined in  clocksource.c  has relevant attributes, including
+the current and available underlying clocksources.
+A new "ffclock" sysfs device is also defined in  radclock.c  with three attributes:
+
+device_ffclock with a registered ffclock_subsys, with attributes (listed in  static struct attribute *ffclock_attrs[])
+	-> version_ffclock_ [attribute]		[RO]
+	-> tsmode_ffclock_  [attribute]		[RW]
+	-> bypass_ffclock_  [attribute]		[RW]
+
+The related variables are :
+ radclock.h
+	#define FFCLOCK_VERSION 2			// TODO: Rename as for bsd, or change BSD to be a macro like here?
+	extern uint8_t ffcounter_bypass;
+	#define RADCLOCK_TSMODE_SYSCLOCK	1		// leave normal pcap ts field, hide vcount in padded hdr
+	#define RADCLOCK_TSMODE_RADCLOCK	2		// fill ts with RADclock Abs clock, hide vcount in hdr
+	#define RADCLOCK_TSMODE_FAIRCOMPARE	3	// as _SYSCLOCK, but ts and raw timestamps back-to-back
+	void ffclock_read_counter(ffcounter *ffcount);
+ radclock.c
+  int sysfs_ffclock_version = FFCLOCK_VERSION;		// TODO: move to .h to mirror bsd?
+  int sysfs_ffclock_tsmode  = RADCLOCK_TSMODE_SYSCLOCK;
+  static char override_bypass[8];
+  uint8_t ffcounter_bypass;
+
+The callback procedures are
+  static ssize_t version_ffclock_show(struct device *dev, struct device_attribute *attr, char *buf)
+  	- get sysfs_ffclock_version
+  static ssize_t tsmode_ffclock_show(struct device *dev, struct device_attribute *attr, char *buf)
+  	- get sysfs_ffclock_tsmode
+  static ssize_t tsmode_ffclock_store(struct device *dev, struct device_attribute *attr, char *buf, size_t count)
+  	- set sysfs_ffclock_tsmode
+  static ssize_t bypass_ffclock_show(struct device *dev, struct device_attribute *attr, char *buf)
+	- get the ffcounter reading mode (value of ffcounter_bypass)
+  static ssize_t bypass_ffclock_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+	- set the ffcounter reading mode (value of ffcounter_bypass)
+
+
+From the commandline sysfs variables can be inspected via looking at associated files:
+	cat /sys/devices/system/clocksource/clocksource0/{current,available}_clocksource
+	cat /sys/devices/system/ffclock/ffclock0/{version_ffclock,tsmode_ffclock,bypass_ffclock}
+
+and written to by simply overwritting the associated file:
+	echo tsc | sudo tee /sys/devices/system/clocksource/clocksource0/current_clocksource > /dev/null  # change cs to tsc
+	echo 1   | sudo tee /sys/devices/system/ffclock/ffclock0/bypass_ffclock              > /dev/null  # activate bypass
+
+
+
+//In KV1 an existing "clocksource" sysfs device defined in  clocksource.c  had a new ffclock attribute added:
+//
+//device_clocksource with a registered clocksource_subsys
+//	-> passthrough_ [attribute]		[RW]		// added to  static struct attribute *clocksource_attrs[]
+//
+//The related variables are :
+// clocksource.h
+//	struct clocksource {
+//		#define VCOUNTER_PT_NO		0
+//		#define VCOUNTER_PT_YES		1
+//		uint8_t vcounter_passthrough;			// an integer representation of the string used to pass the mode
+//		..
+//	}
+// clocksource.c
+//	static char override_passthrough[8];	// holds the current passthrough mode value, = {"0","1"}  TODO: dumb name
+//
+//The callback procedures are
+//  static ssize_t passthrough_clocksource_show(struct device *dev, struct device_attribute *attr, char *buf)
+//	- get the vcounter reading mode (value of  curr_clocksource->vcounter_passthrough)
+//  static ssize_t passthrough_clocksource_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+//	- set the override_passthrough, and then translate corresponding values to curr_clocksource->vcounter_passthrough
+
+
+
+
+=========================================== BSD ================================
+
+The related variables are :
+ timeffc.h
+	 #define	SYSCLOCK_FB	0
+	 #define	SYSCLOCK_FF	1
+	 extern int sysclock_active;
+ kern_ffclock
+	 static int ffclock_version = 3;     							// hardwired KV choice, here KV=3
+	 static char *sysclocks[] = {"FBclock", "FFclock"};		// strings associated to FB/FF class
+	 #define	MAX_SYSCLOCK_NAME_LEN 16
+	 #define	NUM_SYSCLOCKS (sizeof(sysclocks) / sizeof(*sysclocks)) // currently = 2
+	 static int sysctl_kern_ffclock_ffcounter_bypass = 0;    	// default no counter bypass
+ kern_tc.c
+	 int sysclock_active;												// paradigm of active system clock
+
+
+
+
+
+int sysctlbyname(const char *sname,  void * oldp, size_t *oldlenp,   // current value and size
+										 const void * newp, size_t newlen);		// new value and size
+
+
+Those sysctl calls used by the daemon are accessed via sysctlbyname() and are
+summarised in a section of RADclockDoc_library.  Only three calls are normally used:
+sysctlbyname("kern.sysclock.ffclock.version",&version,&size_ctl,NULL,0)) // detect,store, report KV
+sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)            // on EACH stamp: see if tc there or changed
+sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&bypass_active,..) // get/set kernel bypass reading mode for TSC
+
+Additional calls are made at startup within clock_init_live() and radclock_init_vcounter as a test of the
+sysctl settings
+
+
+
+
+==============================================================
+Universal (FF/FB) System Clock Support
+======================================
+
+
+
+
+==============================================================
+bpf and pcap
+======================================
+
+
+
+The key one here is bd_stamp, which specifies the timestamping type requested
+on the given descriptor, using the _T_ timestamp type flags :
+
+/* Time stamping flags */
+// FORMAT flags 	[ mutually exclusive, not to be ORed ]
+#define	BPF_T_MICROTIME	0x0000
+#define	BPF_T_NANOTIME		0x0001
+#define	BPF_T_BINTIME		0x0002
+#define	BPF_T_NONE			0x0003	// relates to ts only, FFRAW independent
+#define	BPF_T_FORMAT_MASK	0x0003
+// FFRAW flag
+#define	BPF_T_NOFFC			0x0000   // no FFcount
+#define	BPF_T_FFC			0x0010   // want FFcount
+#define	BPF_T_FFRAW_MASK	0x0010
+// FLAG flags   [ can view bits as ORable flags ]
+#define	BPF_T_NORMAL		0x0000	// UTC, !FAST
+#define	BPF_T_FAST			0x0100   // UTC,  FAST
+#define	BPF_T_MONOTONIC	0x0200	// UPTIME, !FAST
+#define	BPF_T_MONOTONIC_FAST	0x0300// UPTIME,  FAST
+#define	BPF_T_FLAG_MASK	0x0300
+// CLOCK flags   [ mutually exclusive, not to be ORed ]
+#define	BPF_T_SYSCLOCK		0x0000	// read current sysclock
+#define	BPF_T_FBCLOCK		0x1000   // read FB
+#define	BPF_T_FFCLOCK		0x2000   // read mono FF (standard reads are mono)
+#define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
+#define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
+#define	BPF_T_CLOCK_MASK	0x7000
+
+// Extract FORMAT, FFRAW, FLAG, CLOCK  bits
+#define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
+#define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
+#define	BPF_T_FLAG(t	)	((t) & BPF_T_FLAG_MASK)
+#define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
+
+// Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl
+// In KV3, all components are independent, and either always meaningful, or
+// not acted on if not meaningful (eg if !FFCLOCK, or value of CLOCK if requesting
+// BPF_T_NONE   Hence checks reduce to ensuring no bits in undefined positions,
+// and not ask for a FF clock that doesnt exist.
+#ifdef FFCLOCK
+#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
+											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
+									&& BPF_T_CLOCK(t)<=BPF_T_FFDIFFCLOCK )
+#else
+#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
+											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
+									&& BPF_T_CLOCK(t)<=BPF_T_FBCLOCK )
+#endif
+
+In KV=3 the four dimensions of the flags: FORMAT, FFRAW, FLAG, CLOCK  are completely
+independent. There are two central innovations compared to the pre-FF kernel:
+	i)  two kinds of timestamps: in seconds (ts) and in raw counter units (raw ts), that are simultaneously available
+	ii) for ts, multiple clocks can be selected from, including the specialist FF clocks
+For each dimension, the choices are:
+ FORMAT:  (ts only)		specifies the standard resolution type, or to take no timestamp (NONE)
+ FFAW:    (raw ts only) specifies if want it or not
+ FLAG:  (ts only)		covers standard options of UTC versus UPTIME (time since boot), and
+        FAST (use current tick-start time, dont bother taking a delta and interpolating intra-tick)
+ CLOCK:	 (ts only)		select FB, or the type of FF desired, or adopt whatever the current
+		  system clock is  (could be FBCLOCK or FFCLOCK)
+
+
+
+==============================================================
+Device drivers
+======================================
+
+
+==============================================================
+Leapsecond system  [ kernel, and kernel<-->daemon ]
+======================================
+
+
+==============================================================
+PPS stuff:
+======================================

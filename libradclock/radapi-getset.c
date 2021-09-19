@@ -390,7 +390,7 @@ printout_raddata(struct radclock_data *rad_data)
 	long double UTCtime_l, UTCtime_n;
 
 	logger(RADLOG_NOTICE, "Pretty printing rad_data");
-	logger(RADLOG_NOTICE, "\t phat: %10.11le\t phat_local: %l0.10e\t (diff: %8.2le)",
+	logger(RADLOG_NOTICE, "\t phat: %10.11e\t phat_local: %10.11e\t (diff: %8.2e)",
 		rad_data->phat, rad_data->phat_local, rad_data->phat - rad_data->phat_local);
 	logger(RADLOG_NOTICE, "\t ca: %10.10Lf\t ca_err: %10.3le,\t\t status: 0x%04X",
 		rad_data->ca, rad_data->ca_err, rad_data->status);

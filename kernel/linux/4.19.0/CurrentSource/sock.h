@@ -75,7 +75,7 @@
 #include <net/l3mdev.h>
 
 #ifdef CONFIG_RADCLOCK
-#include <linux/clocksource.h>
+#include <linux/radclock.h>
 #endif
 
 /*
@@ -480,8 +480,7 @@ struct sock {
 	long			sk_rcvtimeo;
 	ktime_t			sk_stamp;
 #ifdef CONFIG_RADCLOCK
-	vcounter_t		sk_vcount_stamp;
-	ktime_t			sk_stamp_fair; 	/* Receives the fair tv from skbuff, ns resolution */
+	ffcounter		sk_ffcount_stamp;
 	int			sk_radclock_tsmode;
 #endif
 #if BITS_PER_LONG==32

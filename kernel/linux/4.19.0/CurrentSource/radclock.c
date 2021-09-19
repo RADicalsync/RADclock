@@ -42,9 +42,7 @@
 #include <net/sock.h>
 
 
-
-
-static struct radclock_data radclock_data;
+static struct ffclock_estimate cest;
 static struct radclock_fixedpoint radclock_fp;
 
 static DECLARE_RWSEM(radclock_data_mtx);
@@ -73,7 +71,7 @@ static int radclock_fill_skb(struct genl_info *info, u32 flags, struct sk_buff *
 	/* Fill message with each available attribute */
 	//printk(KERN_INFO " ** getting RAD attr data \n");
 	down_read(&radclock_data_mtx);
-	puterr = nla_put(skb, RADCLOCK_ATTR_DATA, sizeof(radclock_data), &radclock_data);
+	puterr = nla_put(skb, RADCLOCK_ATTR_DATA, sizeof(cest), &cest);
 	up_read(&radclock_data_mtx);
 	if (puterr<0)
 		goto nla_put_failure;
@@ -129,7 +127,7 @@ static int radclock_getattr(struct sk_buff *skb, struct genl_info *info)
 }
 
 static struct nla_policy radclock_policy[RADCLOCK_ATTR_MAX +1] __read_mostly = {
-	[RADCLOCK_ATTR_DATA] 		= {  .len = sizeof(struct radclock_data) },
+	[RADCLOCK_ATTR_DATA] 		= {  .len = sizeof(struct ffclock_estimate) },
 	[RADCLOCK_ATTR_FIXEDPOINT] = {  .len = sizeof(struct radclock_fixedpoint) },
 };
 
@@ -152,13 +150,13 @@ static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
 	if (info->attrs[RADCLOCK_ATTR_DATA] != NULL)
 	{
 		//printk(KERN_INFO " ** setting RAD attr data \n");
-		struct radclock_data *value;
-		if (nla_len(info->attrs[RADCLOCK_ATTR_DATA]) != sizeof(radclock_data))
+		struct ffclock_estimate *value;
+		if (nla_len(info->attrs[RADCLOCK_ATTR_DATA]) != sizeof(cest))
 			return -EINVAL;
 
 		value = nla_data(info->attrs[RADCLOCK_ATTR_DATA]);
 		down_write(&radclock_data_mtx);
-		memcpy(&radclock_data, value, sizeof(radclock_data));
+		memcpy(&cest, value, sizeof(cest));
 		up_write(&radclock_data_mtx);
 	}
 
@@ -194,9 +192,9 @@ static struct  genl_ops radclock_ops[] = {
 
 
 /* Read radclock at the passed raw timestamp using the radclock_fp parameters */
-void radclock_fill_ktime(vcounter_t vcounter, ktime_t *ktime)
+void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime)
 {
-	vcounter_t countdiff;
+	ffcounter countdiff;
 	struct timespec tspec;
 	u64 time_f;
 	u64 frac;
@@ -208,10 +206,10 @@ void radclock_fill_ktime(vcounter_t vcounter, ktime_t *ktime)
 	 */
 	down_read(&radclock_fixedpoint_mtx);
 
-	countdiff = vcounter - radclock_fp.vcount;
+	countdiff = ffcount - radclock_fp.vcount;
 //	if (countdiff & ~((1ll << (radclock_fp.countdiff_maxbits +1)) -1))
 //		printk(KERN_WARNING "RADclock: warning stamp may overflow timeval at %llu!\n",
-//				(long long unsigned) vcounter);
+//				(long long unsigned) ffcount);
 
 	/* Add the counter delta in second to the recorded fixed point time */
 	time_f = radclock_fp.time_int
@@ -235,22 +233,17 @@ EXPORT_SYMBOL_GPL(radclock_fill_ktime);
 
 
 
-/*
- * Sysfs entries
- */
+/* Sysfs entries */
 
 static DEFINE_SPINLOCK(ffclock_lock);
-static char sysfs_user_input[32];
+static char user_input[32];
 
-/*
- * Feed-forward clock support version
- */
-int sysfs_ffclock_version = FFCLOCK_VERSION;
+static int ffclock_version = 2;
 
 /**
  * version_ffclock_show -  interface to get ffclock version
  * @dev:	unused
- * @buf:	char buffer to be filled with passthrough mode
+ * @buf:	char buffer to be filled with bypass mode
  *
  * Provides sysfs interface to get ffclock version
  */
@@ -262,28 +255,24 @@ static ssize_t version_ffclock_show(struct device *dev,
 
 	spin_lock_irq(&ffclock_lock);
 	count = snprintf(buf,
-			 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
-			"%d", sysfs_ffclock_version);
-
+			 max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "%d", ffclock_version);
 	spin_unlock_irq(&ffclock_lock);
 
 	count += snprintf(buf + count,
-			  max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
+			max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
 
 	return count;
 }
 static DEVICE_ATTR_RO(version_ffclock);
 
 
-/*
- * Feed-forward clock timestamping mode
- */
-int sysfs_ffclock_tsmode = RADCLOCK_TSMODE_SYSCLOCK;
+/* FFC tsmode system */
+int ffclock_tsmode = RADCLOCK_TSMODE_SYSCLOCK;
 
 /**
  * tsmode_ffclock_show -  interface to get ffclock timestamping mode
  * @dev:	unused
- * @buf:	char buffer to be filled with passthrough mode
+ * @buf:	char buffer to be filled with bypass mode
  *
  * Provides sysfs interface to get ffclock timestamping mode
  */
@@ -296,7 +285,7 @@ static ssize_t tsmode_ffclock_show(struct device *dev,
 	spin_lock_irq(&ffclock_lock);
 	count = snprintf(buf,
 			 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
-			"%d", sysfs_ffclock_tsmode);
+			"%d", ffclock_tsmode);
 
 	spin_unlock_irq(&ffclock_lock);
 
@@ -310,7 +299,7 @@ static ssize_t tsmode_ffclock_show(struct device *dev,
 /**
  * tsmode_ffclock_store - interface for manually changing the default timestamping mode
  * @dev:	unused
- * @buf:	new value of passthrough mode (0 or 1)
+ * @buf:	new value of bypass mode (0 or 1)
  * @count:	length of buffer
  *
  * Takes input from sysfs interface for manually changing the default
@@ -324,7 +313,7 @@ static ssize_t tsmode_ffclock_store(struct device *dev,
 	size_t ret = count;
 
 	/* strings from sysfs write are not 0 terminated! */
-	if (count >= sizeof(sysfs_user_input))
+	if (count >= sizeof(user_input))
 		return -EINVAL;
 
 	/* strip off \n: */
@@ -334,21 +323,17 @@ static ssize_t tsmode_ffclock_store(struct device *dev,
 	spin_lock_irq(&ffclock_lock);
 
 	if (count > 0)
-		memcpy(sysfs_user_input, buf, count);
-	sysfs_user_input[count] = 0;
+		memcpy(user_input, buf, count);
+	user_input[count] = 0;
 
-	val = simple_strtol(sysfs_user_input, NULL, 10);
+	val = simple_strtol(user_input, NULL, 10);
 
-	switch (val)
-	{
+	switch (val) {
 		case RADCLOCK_TSMODE_SYSCLOCK:
-			sysfs_ffclock_tsmode = RADCLOCK_TSMODE_SYSCLOCK;
+			ffclock_tsmode = RADCLOCK_TSMODE_SYSCLOCK;
 			break;
 		case RADCLOCK_TSMODE_RADCLOCK:
-			sysfs_ffclock_tsmode = RADCLOCK_TSMODE_RADCLOCK;
-			break;
-		case RADCLOCK_TSMODE_FAIRCOMPARE:
-			sysfs_ffclock_tsmode = RADCLOCK_TSMODE_FAIRCOMPARE;
+			ffclock_tsmode = RADCLOCK_TSMODE_RADCLOCK;
 			break;
 		default:
 			break;
@@ -361,10 +346,85 @@ static DEVICE_ATTR_RW(tsmode_ffclock);
 
 
 
+/* FFC Bypass system */
+static char override_bypass[8];
+uint8_t ffcounter_bypass;
+
+/**
+ * bypass_ffclock_show - sysfs interface for showing ffcount reading mode
+ * @dev:	unused
+ * @buf:	char buffer to be filled with bypass mode
+ *
+ * Provides sysfs interface for showing ffcount reading mode
+ */
+static ssize_t bypass_ffclock_show(struct device *dev,
+				  struct device_attribute *attr,
+				  char *buf)
+{
+	ssize_t count = 0;
+
+	spin_lock_irq(&ffclock_lock);
+	if (ffcounter_bypass == 1)		// activate bypass
+		count = snprintf(buf,
+				 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
+				"1");
+	else
+		count = snprintf(buf,
+				 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
+				"0");
+
+	spin_unlock_irq(&ffclock_lock);
+
+	count += snprintf(buf + count,
+			  max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
+
+	return count;
+}
+
+/**
+ * bypass_ffclock_store - interface for manually overriding the ffcount bypass mode
+ * @dev:	unused
+ * @buf:	new value of bypass mode (0 or 1)
+ * @count:	length of buffer
+ *
+ * Takes input from sysfs interface for manually overriding the ffcount bypass mode.
+ */
+static ssize_t bypass_ffclock_store(struct device *dev,
+					  struct device_attribute *attr,
+					  const char *buf, size_t count)
+{
+	size_t ret = count;
+
+	/* strings from sysfs write are not 0 terminated! */
+	if (count >= sizeof(override_bypass))
+		return -EINVAL;
+
+	/* strip off \n: */
+	if (buf[count-1] == '\n')
+		count--;
+
+	spin_lock_irq(&ffclock_lock);
+
+	if (count > 0)
+		memcpy(override_bypass, buf, count);
+	override_bypass[count] = 0;
+
+	if ( !strcmp(override_bypass, "0"))
+		ffcounter_bypass = 0;
+	if ( !strcmp(override_bypass, "1"))
+		ffcounter_bypass = 1;
+
+	spin_unlock_irq(&ffclock_lock);
+
+	return ret;
+}
+static DEVICE_ATTR_RW(bypass_ffclock);
+
 
 static struct attribute *ffclock_attrs[] = {
 	&dev_attr_version_ffclock.attr,
 	&dev_attr_tsmode_ffclock.attr,
+	&dev_attr_bypass_ffclock.attr,
 	NULL
 };
 ATTRIBUTE_GROUPS(ffclock);
@@ -412,8 +472,8 @@ static int __init radclock_register(void)
 		goto errout_unregister;
 	printk(KERN_INFO "Feed-Forward Clock sysfs initialized\n");
 
-	/* Initialize global data [so far raddata only] */
-	memset(&radclock_data, 0, sizeof(radclock_data));
+	/* Initialize global data [ both KV1 and KV2 ] */
+	memset(&cest, 0, sizeof(cest));
 	memset(&radclock_fp, 0, sizeof(radclock_fp));
 
 	return 0;

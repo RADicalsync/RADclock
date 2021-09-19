@@ -157,36 +157,16 @@ case $target_os in
 					   ])
 		;;
 
-dnl 3 headers to test in Linux, but seems it is not available anymore anyway
+dnl 3 WIP:  it finds asm/msr.h, but has got what we need
 	linux*)
 		AC_CHECK_HEADER([asm/msr.h])
 		if test "$ac_cv_header_asm_msr_h" = "yes"; then
 			AC_CHECK_DECL([rdtsc],
-						  [AC_DEFINE([HAVE_RDTSCLL_ASM],
+						  [AC_DEFINE([HAVE_RDTSC_ASM],
 									 [1],
 									 [Define to 1 if rdtsc() in asm/msr.h])],
 						  [],
 						  [#include <asm/msr.h>])
-		fi
-
-		AC_CHECK_HEADER([asm-x86/msr.h])
-		if test "$ac_cv_header_asm_x86_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtsc],
-						  [AC_DEFINE([HAVE_RDTSCLL_ASM_X86],
-									 [1],
-									 [Define to 1 if rdtsc() in asm-x86/msr.h])],
-						  [],
-						  [#include <asm-x86/msr.h>])
-		fi
-
-		AC_CHECK_HEADER([asm-x86_64/msr.h])
-		if test "$ac_cv_header_asm_x86_64_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtsc],
-						  [AC_DEFINE([HAVE_RDTSCLL_ASM_X86_64],
-									 [1],
-									 [Define to 1 if rdtsc() in asm-x86_64/msr.h])],
-						  [],
-						  [#include <asm-x86_64/msr.h>])
 		fi
 		;;
 

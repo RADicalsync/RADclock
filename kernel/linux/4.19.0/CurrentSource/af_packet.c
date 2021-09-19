@@ -2229,7 +2229,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
  * timestamp. Due to the 16bit alignment, in most cases we should not
  * use more memory.
  */
-		macoff = netoff = TPACKET_ALIGN(po->tp_hdrlen + 16 + sizeof(vcounter_t)) +
+		macoff = netoff = TPACKET_ALIGN(po->tp_hdrlen + 16 + sizeof(ffcounter)) +
 				po->tp_reserve;
 #else
 		macoff = netoff = TPACKET_ALIGN(po->tp_hdrlen) + 16 +
@@ -2239,7 +2239,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 		unsigned maclen = skb_network_offset(skb);
 #ifdef CONFIG_RADCLOCK
 		netoff = TPACKET_ALIGN(po->tp_hdrlen +
-				       (maclen < 16 ? 16 : maclen) + sizeof(vcounter_t)) +
+				       (maclen < 16 ? 16 : maclen) + sizeof(ffcounter)) +
 						 po->tp_reserve;
 #else
 		netoff = TPACKET_ALIGN(po->tp_hdrlen +
@@ -2342,14 +2342,10 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	//printk("processing sk_radclock_tsmode (%s:%d)\n", __FILE__, __LINE__);
 	switch ( sk->sk_radclock_tsmode ) {
 	case RADCLOCK_TSMODE_RADCLOCK:
-		printk("RAD tpacket_rcv: radclock_fill_ktime using skb->vcount_stamp = %llu\n", skb->vcount_stamp);
-		sk->sk_vcount_stamp = skb->vcount_stamp;		//  should do in all modes
-		radclock_fill_ktime(skb->vcount_stamp, &rad_ktime);
+		printk("RAD tpacket_rcv: radclock_fill_ktime using skb->ffcount_stamp = %llu\n", skb->ffcount_stamp);
+		sk->sk_ffcount_stamp = skb->ffcount_stamp;		//  should do in all modes
+		radclock_fill_ktime(skb->ffcount_stamp, &rad_ktime);
 		skb->tstamp = rad_ktime;
-		break;
-
-	case RADCLOCK_TSMODE_FAIRCOMPARE:
-		skb->tstamp = skb->tstamp_fair;
 		break;
 	}
 #endif
@@ -2449,8 +2445,8 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	}
 
 	/* Copy the vcount stamp just before where the mac/sll header wil be */
-	vcountoff -= sizeof(vcounter_t);
-	memcpy(h.raw + vcountoff, &(skb->vcount_stamp), sizeof(vcounter_t));
+	vcountoff -= sizeof(ffcounter);
+	memcpy(h.raw + vcountoff, &(skb->ffcount_stamp), sizeof(ffcounter));
 #endif
 
 	smp_mb();
@@ -3483,12 +3479,11 @@ static int packet_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 
 #ifdef CONFIG_RADCLOCK
 	/* Pass the two extra raw timestamps specific to the RADCLOCK to the socket:
-	 * the raw vcounter and the timeval stamps used in the RADCLOCK_TSMODE_FAIRCOMPARE mode.
+	 * the raw ffcount and the timeval stamps used in the RADCLOCK_TSMODE_FAIRCOMPARE mode.
 	 */
-	printk("*** RAD packet_recvmsg: passing skb->vcount_stamp (%llu) to overwrite sk_vcount_stamp (%llu)\n",
-				skb->vcount_stamp, sk->sk_vcount_stamp);
-	sk->sk_vcount_stamp = skb->vcount_stamp;
-	sk->sk_stamp_fair   = skb->tstamp_fair;
+	printk("*** RAD packet_recvmsg: passing skb->ffcount_stamp (%llu) to overwrite sk_ffcount_stamp (%llu)\n",
+				skb->ffcount_stamp, sk->sk_ffcount_stamp);
+	sk->sk_ffcount_stamp = skb->ffcount_stamp;
 #endif
 
 	sock_recv_ts_and_drops(msg, sk, skb);
@@ -4225,12 +4220,9 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 		printk("processing SIOC Get STAMP (%s:%d)\n", __FILE__, __LINE__);
 		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
 		{ /* Provide timeval stamp based on RADclock */
-			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_vcount_stamp = %llu\n", sk->sk_vcount_stamp);
+			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_ffcount_stamp = %llu\n", sk->sk_ffcount_stamp);
 			// why calculate, isnt it already there?
-			radclock_fill_ktime(sk->sk_vcount_stamp, &(sk->sk_stamp));
-		} else if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_FAIRCOMPARE)
-		{ /* Overwrite timestamp that is returned right below */
-			sk->sk_stamp = sk->sk_stamp_fair;
+			radclock_fill_ktime(sk->sk_ffcount_stamp, &(sk->sk_stamp));
 		}
 #endif
 		return sock_get_timestamp(sk, (struct timeval __user *)arg);
@@ -4241,11 +4233,8 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 		printk("processing SIOC Get STAMPNS (%s:%d)\n", __FILE__, __LINE__);
 		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
 		{ /* Provide timeval stamp based on RADclock */
-			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_vcount_stamp = %llu\n", sk->sk_vcount_stamp);
-			radclock_fill_ktime(sk->sk_vcount_stamp, &(sk->sk_stamp));
-		} else if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_FAIRCOMPARE)
-		{ /* Overwrite timestamp that is returned right below */
-			sk->sk_stamp = sk->sk_stamp_fair;
+			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_ffcount_stamp = %llu\n", sk->sk_ffcount_stamp);
+			radclock_fill_ktime(sk->sk_ffcount_stamp, &(sk->sk_stamp));
 		}
 #endif
 		return sock_get_timestampns(sk, (struct timespec __user *)arg);
@@ -4259,7 +4248,6 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 		get_user(mode, (long __user *)arg);
 		switch (mode)
 		{
-			case RADCLOCK_TSMODE_FAIRCOMPARE:
 			case RADCLOCK_TSMODE_SYSCLOCK:
 			case RADCLOCK_TSMODE_RADCLOCK:
 				sk->sk_radclock_tsmode = mode;
@@ -4281,8 +4269,8 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 	}
 	case SIOCGRADCLOCKSTAMP:
 	{
-		printk("RAD vcount via Get RADCLOCKSTAMP IOCTL:  sk_vcount_stamp = %llu \n", sk->sk_vcount_stamp);
-		return put_user(sk->sk_vcount_stamp, (vcounter_t __user *)arg);
+		printk("RAD ffcount via Get RADCLOCKSTAMP IOCTL:  sk_ffcount_stamp = %llu \n", sk->sk_ffcount_stamp);
+		return put_user(sk->sk_ffcount_stamp, (ffcounter __user *)arg);
 	}
 #endif
 

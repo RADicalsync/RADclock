@@ -32,7 +32,7 @@
 
 #include <asm/types.h>
 #include <sys/ioctl.h>
-#include <sys/sysctl.h>
+//#include <sys/sysctl.h>
 #include <sys/socket.h>
 
 #include <stdio.h>
@@ -99,6 +99,26 @@ decode_ffclock_tsflags_KV1(long bd_tstamp)
 		}
 }
 
+static void
+decode_ffclock_tsflags_KV2(long bd_tstamp)
+{
+		logger(RADLOG_NOTICE, "Decoding af_packet ffclock timestamp mode (bd_tstamp = 0x%04x)",
+				 bd_tstamp);
+
+		switch (bd_tstamp) {
+		case RADCLOCK_TSMODE_SYSCLOCK:
+			logger(RADLOG_NOTICE, "     tsmode = RADCLOCK_TSMODE_SYSCLOCK");
+			break;
+		case RADCLOCK_TSMODE_RADCLOCK:
+			logger(RADLOG_NOTICE, "     tsmode = RADCLOCK_TSMODE_RADCLOCK");
+			break;
+		default:
+			logger(RADLOG_NOTICE, "     tsmode = %ld (unrecognised)", bd_tstamp);
+			break;
+		}
+}
+
+
 
 int
 descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_int custom)
@@ -114,8 +134,8 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 
 	switch (handle->kernel_version) {
 	case 0:
-
 	case 1:
+	case 2:
 		/* Initial test of value of tsmode */
 //		logger(RADLOG_NOTICE, "Checking current tsmode before setting it :");
 //		if (ioctl(pcap_fileno(p_handle), SIOCGRADCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1)
@@ -191,6 +211,29 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 		}
 		break;
 
+	case 2:
+		if (ioctl(pcap_fileno(p_handle), SIOCGRADCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
+			logger(RADLOG_ERR, "Getting timestamping mode failed: %s", strerror(errno));
+			return (1);
+		}
+		//logger(RADLOG_NOTICE, "Decoding returned Linux RADCLOCKTSMODE mode (mode = 0x%04x)", bd_tstamp);
+		decode_ffclock_tsflags_KV2(bd_tstamp);
+
+		/* Map back to tsmode intent */
+		switch (bd_tstamp) {
+		case RADCLOCK_TSMODE_SYSCLOCK:
+			*mode = PKTCAP_TSMODE_SYSCLOCK;
+			break;
+		case RADCLOCK_TSMODE_RADCLOCK:
+			*mode = PKTCAP_TSMODE_FFNATIVECLOCK;
+			break;
+		default:
+			*mode = PKTCAP_TSMODE_NOMODE;
+			break;
+		}
+		break;
+
+
 	default:
 		logger(RADLOG_ERR, "Unknown kernel version");
 		return (1);
@@ -255,23 +298,31 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 	switch (clock->kernel_version) {
 	case 0:
 	case 1: {
-//#if defined(TPACKET_HDRLEN) && defined (HAVE_PCAP_ACTIVATE)  // effectively choose IOCTL
-#if defined (HAVE_PCAP_ACTIVATE)	// check PCAP supports memory mapping, assume kernel does  // choose MMAP
+#if defined(TPACKET_HDRLEN) && defined (HAVE_PCAP_ACTIVATE)  // effectively choose IOCTL
+//#if defined (HAVE_PCAP_ACTIVATE)	// check PCAP supports memory mapping, assume kernel does  // choose MMAP
 		//logger(RADLOG_NOTICE, "using memory mapping, not IOCTL");
  	 	char *bp;
 		bp = (char*)packet - sizeof(vcounter_t);	// assume just before frame data
 		memcpy(vcount, bp, sizeof(vcounter_t));
 
 #else
-		logger(RADLOG_NOTICE, "using IOCTL");
+		//logger(RADLOG_NOTICE, "using IOCTL");
 		if (ioctl(pcap_fileno(p_handle), SIOCGRADCLOCKSTAMP, (caddr_t)vcount) == -1) {
 			perror("ioctl");
 			logger(RADLOG_ERR, "IOCTL failed to get vcount");
 			err = 1;
 		}
 #endif
-	}
+		}
 		break;
+
+	case 2: {
+ 	 	char *bp;
+		bp = (char*)packet - sizeof(vcounter_t);	// assume just before frame data
+		memcpy(vcount, bp, sizeof(vcounter_t));
+		}
+		break;
+
 	default:
 		err = 1;
 	}

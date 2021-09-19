@@ -1465,6 +1465,9 @@ Dont forget that the syscall code runs in kernel context, and so has access to a
 defined there.
 
 
+
+
+
 ==============================================================
 SYSCTL:
 ======================================
@@ -1573,6 +1576,24 @@ is used to define a read-only sysctl
 	_kern_features_ffclock [INT]	"Feed-forward clock support"
 enabling FFCLOCK option availability to be tested:
 	> sysctl kern.features.ffclock		# (returns 1 if available)
+
+
+From the commandline sysctl variables can be inspected using:
+	sysctl -a | grep kern.sysclock    		// catches all the new sysctl tree entries, can see KV !
+	sysctl -n kern.sysclock.active
+	sysctl -a | grep time
+	sysctl -a | grep timecounter.choice		// catches all counters on system and their quality ratings
+	sysctl -a | grep timecounter.tc			// gets {quality,frequency,counter,mask} parameters
+	sysctl -a | grep timecounter.tc.TSC |grep frequency		//  get the freqency !
+	sysctl -a | grep net					// catches all bpf ioctls
+
+and written to by:
+	sysctl -a kern.timecounter.hardware='HPET'	// change tc to HPET  "HPET" also works! but can't have spaces
+	sysctl kern.sysclock.active='feed-forward'	// changes to FF
+	sysctl kern.sysclock.active='feedback'			// giving it the same value works
+	sysctl kern.sysclock.ffclock.ffcounter_bypass=7	// alter bypass
+
+
 
 
 Here we comment out some details of an experimental feature under KV=2 that is no longer supported.
