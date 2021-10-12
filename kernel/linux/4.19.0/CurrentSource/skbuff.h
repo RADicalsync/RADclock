@@ -41,8 +41,8 @@
 #include <linux/if_packet.h>
 #include <net/flow.h>
 
-#ifdef CONFIG_RADCLOCK
-#include <linux/radclock.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
 #endif
 
 /* The interface for checksum offload between the stack and networking drivers
@@ -696,7 +696,7 @@ struct sk_buff {
 		u64		skb_mstamp;
 	};
 
-#ifdef CONFIG_RADCLOCK   // does skb_mstamp act as a raw already?
+#ifdef CONFIG_FFCLOCK   // does skb_mstamp act as a raw already?
 	ffcounter		ffcount_stamp;
 #endif
 

@@ -225,7 +225,7 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	skb->head = data;
 	skb->data = data;
 	skb_reset_tail_pointer(skb);
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	skb->ffcount_stamp = 0;
 #endif
 	skb->end = skb->tail + size;
@@ -808,7 +808,7 @@ EXPORT_SYMBOL(napi_consume_skb);
 static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 {
 	new->tstamp		= old->tstamp;
-	#ifdef CONFIG_RADCLOCK
+	#ifdef CONFIG_FFCLOCK
 	new->ffcount_stamp = old->ffcount_stamp;
 	#endif
 	/* We do not copy old->sk */

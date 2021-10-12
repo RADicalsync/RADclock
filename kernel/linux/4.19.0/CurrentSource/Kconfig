@@ -1,19 +1,19 @@
 #
-# RADclock device driver configuration
+# FFclock device driver configuration
 #
 
-menu "RADclock Driver"
+menu "FFclock Driver"
 
 #
 # Would be nice to go back to having this as a module
 #
-config RADCLOCK
-	bool "Kernel support for the RADclock"
+config FFCLOCK
+	bool "Kernel support for the FFclock"
 #	depends on EXPERIMENTAL && GENERIC_TIME
 	default y
 	help
 	  Defines support and access to a consistent virtual counter, the basis
-	  of the RADclock (a feed-forward synchronization algorithm) and corresponding
+	  of the FFclock (a feed-forward synchronization algorithm) and corresponding
 	  applications.
 
 endmenu

@@ -510,7 +510,7 @@ case "$target_os" in
 				esac
 			;;	
 			4.19.*)
-				# Set the SYSCALL numbers
+				# SYSCALLS now named ffclock_getcounter_ but keep old names here
 				case "$target_cpu" in
 					i386 | i486 | i586 | i686)
 						syscall_get_vcounter_number=387
@@ -526,6 +526,7 @@ case "$target_os" in
 				syscall_get_vcounter_latency_number=0
 			;;
 		esac
+		# These are internal names, not necc. the actual syscall names
 		AC_DEFINE_UNQUOTED([LINUX_SYSCALL_GET_VCOUNTER],
 						   [$syscall_get_vcounter_number],
 						   [Define get_vcounter_syscall number (Linux specific)])

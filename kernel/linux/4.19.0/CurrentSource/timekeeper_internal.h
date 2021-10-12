@@ -11,9 +11,9 @@
 #include <linux/jiffies.h>
 #include <linux/time.h>
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 // convenient to put here, as timekeeper_internal.h  is in all the places we need, I think
-#include <linux/radclock.h>	// overkill, define  _ffcounter.h  to hold ffcounter ?
+#include <linux/ffclock.h>
 #endif
 
 
@@ -137,9 +137,6 @@ struct timekeeper {
 	 */
 	int			underflow_seen;
 	int			overflow_seen;
-#endif
-#ifdef CONFIG_RADCLOCK
-	ffcounter	tick_ffcount;		// FFC, based on tkr_raw
 #endif
 };
 

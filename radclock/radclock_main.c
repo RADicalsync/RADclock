@@ -866,12 +866,9 @@ start_live(struct radclock_handle *handle)
 	/*
 	 * To be able to provide the RADCLOCK timestamping mode, we need to refresh
 	 * the fixed point data in the kernel.  That's this guy's job.
-	 * XXX Update: with kernel version 2, the overflow problem is taking care of
-	 * by the kernel. The fixedpoint thread is deprecated and should be removed
-	 * in the future
 	 */
 	if ((handle->run_mode == RADCLOCK_SYNC_LIVE) &&
-			(handle->clock->kernel_version < 3)) {
+			(handle->clock->kernel_version < 2)) {
 		err = start_thread_FIXEDPOINT(handle);
 		if (err < 0)
 			return (1);

@@ -852,6 +852,7 @@ process_stamp(struct radclock_handle *handle)
 		 * Soft detection based on the resetting of secs_to_nextupdate by FFclock RTC processing code,
 		 * which only works if the daemon's preferred clock has first set it the first time itself.
 		 * Hence a reset is missed if it occurs before this.
+		 * TODO: currently not OS-dependent neutral. Need to define these signals to daemon universally
 		 */
 		if ( get_kernel_ffclock(handle->clock, &cest) == 0) {
 			if ((cest.update_time.sec == 0) || (cest.period == 0)) {

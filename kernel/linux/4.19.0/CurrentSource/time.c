@@ -266,20 +266,20 @@ COMPAT_SYSCALL_DEFINE2(settimeofday, struct compat_timeval __user *, tv,
 }
 #endif
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 /* Add two syscall callback functions */
-SYSCALL_DEFINE1(get_ffcounter, ffcounter __user *, ffcount)
+SYSCALL_DEFINE1(ffclock_getcounter, ffcounter __user *, ffcount)
 {
 	ffcounter now;
 	ffclock_read_counter(&now);
-	//printk("sys_get_ffcounter : is called.\n");
+	//printk("sys_ffclock_getcounter : is called.\n");
 
 	if (copy_to_user(ffcount, &now, sizeof(ffcounter)))
 		return -EFAULT;
 	return 0;
 }
 
-SYSCALL_DEFINE3(get_ffcounter_latency, ffcounter __user *, ffcount, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
+SYSCALL_DEFINE3(ffclock_getcounter_latency, ffcounter __user *, ffcount, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
 {
 	ffcounter now;
 	u64 tsc1, tsc2, tsc3;

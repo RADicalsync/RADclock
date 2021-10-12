@@ -2775,7 +2775,7 @@ static int do_siocgstampns(struct net *net, struct socket *sock,
 	return err;
 }
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 static int do_siocgradclockstamp(struct net *net, struct socket *sock,
 			 unsigned int cmd, unsigned long long __user *up)
 {
@@ -3202,7 +3202,7 @@ static int compat_sock_ioctl_trans(struct file *file, struct socket *sock,
 	case SIOCSHWTSTAMP:
 	case SIOCGHWTSTAMP:
 		return compat_ifr_data_ioctl(net, cmd, argp);
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	case SIOCGRADCLOCKSTAMP:
 		printk("found SIOC Get RADCLOCKSTAMP (%s:%d)\n", __FILE__, __LINE__);
 		return do_siocgradclockstamp(net, sock, cmd, argp);

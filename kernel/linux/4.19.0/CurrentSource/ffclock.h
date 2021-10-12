@@ -7,7 +7,7 @@
 typedef u64 ffcounter;	// perhaps put in a _ffcounter.h
 
 
-/* Copied from RADclock source file: libradclock/kclock.h
+/* Copied from FFclock source file: libradclock/kclock.h
  * Structure representing the ffclock parameters
  */
 struct bintime {
@@ -15,6 +15,12 @@ struct bintime {
 	__u64 frac;
 };
 
+/*
+ * Feed-forward clock estimate
+ * Holds time mark as a ffcounter and conversion to bintime based on current
+ * timecounter period and offset estimate passed by the synchronization daemon.
+ * Provides time of last daemon update, clock status and bound on error.
+ */
 struct ffclock_estimate {
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
 	ffcounter	update_ffcount;	/* Counter value at last update */
@@ -41,35 +47,27 @@ struct ffclock_estimate {
 extern uint8_t ffcounter_bypass;
 
 
-/* Defines timestamping modes for the RADclock
+/* Defines timestamping modes for the FFclock
  * Deprecated... work with for now
  */
 #define RADCLOCK_TSMODE_SYSCLOCK	1		// leave normal pcap ts field, hide vcount in padded hdr
-#define RADCLOCK_TSMODE_RADCLOCK	2		// fill ts with RADclock Abs clock, hide vcount in hdr
+#define RADCLOCK_TSMODE_RADCLOCK	2		// fill ts with FFclock Abs clock, hide vcount in hdr
 #define RADCLOCK_TSMODE_FAIRCOMPARE	3	// as _SYSCLOCK, but ts and raw timestamps back-to-back
 extern int ffclock_tsmode;		// needed in sock.c
 
 /* Return the current value of the feed-forward clock counter. */
 void ffclock_read_counter(ffcounter *ffcount);
 
+/*
+ * Parameters of counter characterisation required by feed-forward algorithms.
+ */
+#define	FFCLOCK_SKM_SCALE	1024
 
-
-
-struct radclock_fixedpoint
-{
-	/* phat as an int shifted phat_shift to the left */
-	__u64 phat_int;
-	/* Record of last time update from synchronization algorithm as an int */
-	__u64 time_int;
-	/* The counter value to convert in seconds */
-	ffcounter vcount;
-	/* the shift amount for phat_int */
-	__u8 phat_shift;
-	/* the shift amount for time_int */
-	__u8 time_shift;
-	/* Warn if stamp is over this many bits */
-	__u8 countdiff_maxbits;
-};
+/*
+ * Feed-forward clock status
+ */
+#define	FFCLOCK_STA_UNSYNC	1
+#define	FFCLOCK_STA_WARMUP	2
 
 
 /* Netlink related */
@@ -78,7 +76,6 @@ struct radclock_fixedpoint
 enum {
 	RADCLOCK_ATTR_DUMMY,
 	RADCLOCK_ATTR_DATA,
-	RADCLOCK_ATTR_FIXEDPOINT,
 	__RADCLOCK_ATTR_MAX,
 };
 #define RADCLOCK_ATTR_MAX (__RADCLOCK_ATTR_MAX - 1)
@@ -92,5 +89,62 @@ enum {
 #define RADCLOCK_CMD_MAX (__RADCLOCK_CMD_MAX - 1)
 
 void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime);
+
+
+
+/* bintime related */
+static __inline void
+bintime_addx(struct bintime *_bt, uint64_t _x)
+{
+        uint64_t _u;
+
+        _u = _bt->frac;
+        _bt->frac += _x;
+        if (_u > _bt->frac)
+                _bt->sec++;
+}
+
+static __inline void
+bintime_add(struct bintime *_bt, const struct bintime *_bt2)
+{
+        uint64_t _u;
+
+        _u = _bt->frac;
+        _bt->frac += _bt2->frac;
+        if (_u > _bt->frac)
+                _bt->sec++;
+        _bt->sec += _bt2->sec;
+}
+
+static __inline void
+bintime_sub(struct bintime *_bt, const struct bintime *_bt2)
+{
+        uint64_t _u;
+
+        _u = _bt->frac;
+        _bt->frac -= _bt2->frac;
+        if (_u < _bt->frac)
+                _bt->sec--;
+        _bt->sec -= _bt2->sec;
+}
+
+static __inline void
+bintime_mul(struct bintime *_bt, u_int _x)
+{
+        uint64_t _p1, _p2;
+
+        _p1 = (_bt->frac & 0xffffffffull) * _x;
+        _p2 = (_bt->frac >> 32) * _x + (_p1 >> 32);
+        _bt->sec *= _x;
+        _bt->sec += (_p2 >> 32);
+        _bt->frac = (_p2 << 32) | (_p1 & 0xffffffffull);
+}
+
+#define bintime_clear(a)        ((a)->sec = (a)->frac = 0)
+#define bintime_isset(a)        ((a)->sec || (a)->frac)
+#define bintime_cmp(a, b, cmp)                                          \
+        (((a)->sec == (b)->sec) ?                                       \
+            ((a)->frac cmp (b)->frac) :                                 \
+            ((a)->sec cmp (b)->sec))
 
 #endif

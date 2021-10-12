@@ -11,7 +11,7 @@
 #define SIOCGSTAMP	0x8906		/* Get stamp (timeval) */
 #define SIOCGSTAMPNS	0x8907		/* Get stamp (timespec) */
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 #define SIOCSRADCLOCKTSMODE	0x8908
 #define SIOCGRADCLOCKTSMODE	0x8909
 #endif

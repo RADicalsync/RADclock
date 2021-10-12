@@ -1,21 +1,21 @@
 /*
- * RADclock data
+ * FFclock data
  *
  * Written by Thomas Young <tfyoung@orcon.net.nz>
  * Modified by Julien Ridoux <julien@synclab.org>
  *
- * Store RADclock data in the kernel for the purpose of absolute time
+ * Store FFclock data in the kernel for the purpose of absolute time
  * timestamping in timeval format. Requires updated synchronization data
  * and "fixed point" data to compute  (vcount * phat + Ca).
  *
  * Use a generic netlink socket to allow user space and kernel to access it.
  * In future other access methods could also be made available such as procfs
  *
- * RADclock data is protected by the radclock_data_mtx rw mutex. If global
+ * FFclock data is protected by the ffclock_mtx rw mutex. If global
  * data ever needs to be read from the interupt context, then this will have
  * to change.
  *
- * RADclock fixedpoint data is protected by the radclock_fixedpoint_mtx rw
+ * FFclock fixedpoint data is protected by the radclock_fixedpoint_mtx rw
  * mutex.
  *
  * Since using an old version isn't a complete disaster, it wouldn't be a bad
@@ -32,7 +32,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/poll.h>
-#include <linux/radclock.h>
+#include <linux/ffclock.h>
 #include <linux/random.h>
 #include <linux/rwsem.h>
 #include <linux/device.h>
@@ -42,12 +42,14 @@
 #include <net/sock.h>
 
 
-static struct ffclock_estimate cest;
-static struct radclock_fixedpoint radclock_fp;
+extern struct ffclock_estimate ffclock_estimate;
+extern struct bintime ffclock_boottime;
+extern int8_t ffclock_updated;
+extern struct rw_semaphore ffclock_mtx;
 
-static DECLARE_RWSEM(radclock_data_mtx);
-static DECLARE_RWSEM(radclock_fixedpoint_mtx);
 
+//static struct radclock_fixedpoint radclock_fp;
+//static DECLARE_RWSEM(radclock_fixedpoint_mtx);
 
 static struct genl_family radclock_genl = {
 	.name = RADCLOCK_NAME,
@@ -70,18 +72,18 @@ static int radclock_fill_skb(struct genl_info *info, u32 flags, struct sk_buff *
 
 	/* Fill message with each available attribute */
 	//printk(KERN_INFO " ** getting RAD attr data \n");
-	down_read(&radclock_data_mtx);
-	puterr = nla_put(skb, RADCLOCK_ATTR_DATA, sizeof(cest), &cest);
-	up_read(&radclock_data_mtx);
+	down_read(&ffclock_mtx);
+	puterr = nla_put(skb, RADCLOCK_ATTR_DATA, sizeof(ffclock_estimate), &ffclock_estimate);
+	up_read(&ffclock_mtx);
 	if (puterr<0)
 		goto nla_put_failure;
 
-	down_read(&radclock_fixedpoint_mtx);
-	//printk(KERN_INFO " ** getting RAD attr fp \n");
-	puterr = nla_put(skb, RADCLOCK_ATTR_FIXEDPOINT, sizeof(radclock_fp), &radclock_fp);
-	up_read(&radclock_fixedpoint_mtx);
-	if (puterr<0)
-		goto nla_put_failure;
+//	down_read(&radclock_fixedpoint_mtx);
+//	//printk(KERN_INFO " ** getting RAD attr fp \n");
+//	puterr = nla_put(skb, RADCLOCK_ATTR_FIXEDPOINT, sizeof(radclock_fp), &radclock_fp);
+//	up_read(&radclock_fixedpoint_mtx);
+//	if (puterr<0)
+//		goto nla_put_failure;
 
 	genlmsg_end(skb, hdr);
 	return 0;
@@ -128,7 +130,7 @@ static int radclock_getattr(struct sk_buff *skb, struct genl_info *info)
 
 static struct nla_policy radclock_policy[RADCLOCK_ATTR_MAX +1] __read_mostly = {
 	[RADCLOCK_ATTR_DATA] 		= {  .len = sizeof(struct ffclock_estimate) },
-	[RADCLOCK_ATTR_FIXEDPOINT] = {  .len = sizeof(struct radclock_fixedpoint) },
+//	[RADCLOCK_ATTR_FIXEDPOINT] = {  .len = sizeof(struct radclock_fixedpoint) },
 };
 
 /**
@@ -144,34 +146,35 @@ static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
 	if (!info->attrs)
 		BUG();
 
-	//printk(KERN_INFO " ** RADclock_setattr entered \n");
+	//printk(KERN_INFO " ** FFclock_setattr entered \n");
 
 	/* `Loop' over all possible attribute types */
 	if (info->attrs[RADCLOCK_ATTR_DATA] != NULL)
 	{
 		//printk(KERN_INFO " ** setting RAD attr data \n");
 		struct ffclock_estimate *value;
-		if (nla_len(info->attrs[RADCLOCK_ATTR_DATA]) != sizeof(cest))
+		if (nla_len(info->attrs[RADCLOCK_ATTR_DATA]) != sizeof(ffclock_estimate))
 			return -EINVAL;
 
 		value = nla_data(info->attrs[RADCLOCK_ATTR_DATA]);
-		down_write(&radclock_data_mtx);
-		memcpy(&cest, value, sizeof(cest));
-		up_write(&radclock_data_mtx);
+		down_write(&ffclock_mtx);
+		memcpy(&ffclock_estimate, value, sizeof(ffclock_estimate));
+		ffclock_updated = 1; 		// signal that the FFdata is updated
+		up_write(&ffclock_mtx);
 	}
 
-	if (info->attrs[RADCLOCK_ATTR_FIXEDPOINT] != NULL)
-	{
-		//printk(KERN_INFO " ** setting RAD attr fp \n");
-		struct radclock_fixedpoint *valuefp;
-		if (nla_len(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]) != sizeof(radclock_fp))
-			return -EINVAL;
-
-		valuefp = nla_data(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]);
-		down_write(&radclock_fixedpoint_mtx);
-		memcpy(&radclock_fp, valuefp, sizeof(radclock_fp));
-		up_write(&radclock_fixedpoint_mtx);
-	}
+//	if (info->attrs[RADCLOCK_ATTR_FIXEDPOINT] != NULL)
+//	{
+//		//printk(KERN_INFO " ** setting RAD attr fp \n");
+//		struct radclock_fixedpoint *valuefp;
+//		if (nla_len(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]) != sizeof(radclock_fp))
+//			return -EINVAL;
+//
+//		valuefp = nla_data(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]);
+//		down_write(&radclock_fixedpoint_mtx);
+//		memcpy(&radclock_fp, valuefp, sizeof(radclock_fp));
+//		up_write(&radclock_fixedpoint_mtx);
+//	}
 
 	return 0;
 }
@@ -191,45 +194,46 @@ static struct  genl_ops radclock_ops[] = {
 };
 
 
-/* Read radclock at the passed raw timestamp using the radclock_fp parameters */
-void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime)
-{
-	ffcounter countdiff;
-	struct timespec tspec;
-	u64 time_f;
-	u64 frac;
 
-	/* Synchronization algorithm (userland) should update the fixed point data
-	 * often enough to make sure the timeval does not overflow. If no sync algo
-	 * updates the data, we loose precision, but in that case, nobody is tracking
-	 * the clock drift anyway ... so send warning and stop worrying.
-	 */
-	down_read(&radclock_fixedpoint_mtx);
+///* Read radclock at the passed raw timestamp using the radclock_fp parameters */
+//void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime)
+//{
+//	ffcounter countdiff;
+//	struct timespec tspec;
+//	u64 time_f;
+//	u64 frac;
+//
+//	/* Synchronization algorithm (userland) should update the fixed point data
+//	 * often enough to make sure the timeval does not overflow. If no sync algo
+//	 * updates the data, we loose precision, but in that case, nobody is tracking
+//	 * the clock drift anyway ... so send warning and stop worrying.
+//	 */
+//	down_read(&radclock_fixedpoint_mtx);
+//
+//	countdiff = ffcount - radclock_fp.vcount;
+////	if (countdiff & ~((1ll << (radclock_fp.countdiff_maxbits +1)) -1))
+////		printk(KERN_WARNING "FFclock: warning stamp may overflow timeval at %llu!\n",
+////				(long long unsigned) ffcount);
+//
+//	/* Add the counter delta in second to the recorded fixed point time */
+//	time_f = radclock_fp.time_int
+//		  + ((radclock_fp.phat_int * countdiff) >> (radclock_fp.phat_shift - radclock_fp.time_shift)) ;
+//
+//	tspec.tv_sec = time_f >> radclock_fp.time_shift;
+//
+//	frac = (time_f - ((u64)tspec.tv_sec << radclock_fp.time_shift));
+//	tspec.tv_nsec = (frac * 1000000000LL)  >> radclock_fp.time_shift;
+//	/* tv.nsec truncates at the nano-second digit, so check for next digit rounding */
+//	if ( ((frac * 10000000000LL) >> radclock_fp.time_shift) >= (tspec.tv_nsec * 10LL + 5) )
+//		tspec.tv_nsec++;
+//
+//	/* Push the timespec into the ktime, Ok for 32 and 64 bit arch (see ktime.h) */
+//	*ktime = timespec_to_ktime(tspec);
+//
+//	up_read(&radclock_fixedpoint_mtx);
+//}
 
-	countdiff = ffcount - radclock_fp.vcount;
-//	if (countdiff & ~((1ll << (radclock_fp.countdiff_maxbits +1)) -1))
-//		printk(KERN_WARNING "RADclock: warning stamp may overflow timeval at %llu!\n",
-//				(long long unsigned) ffcount);
-
-	/* Add the counter delta in second to the recorded fixed point time */
-	time_f = radclock_fp.time_int
-		  + ((radclock_fp.phat_int * countdiff) >> (radclock_fp.phat_shift - radclock_fp.time_shift)) ;
-
-	tspec.tv_sec = time_f >> radclock_fp.time_shift;
-
-	frac = (time_f - ((u64)tspec.tv_sec << radclock_fp.time_shift));
-	tspec.tv_nsec = (frac * 1000000000LL)  >> radclock_fp.time_shift;
-	/* tv.nsec truncates at the nano-second digit, so check for next digit rounding */
-	if ( ((frac * 10000000000LL) >> radclock_fp.time_shift) >= (tspec.tv_nsec * 10LL + 5) )
-		tspec.tv_nsec++;
-
-	/* Push the timespec into the ktime, Ok for 32 and 64 bit arch (see ktime.h) */
-	*ktime = timespec_to_ktime(tspec);
-
-	up_read(&radclock_fixedpoint_mtx);
-}
-
-EXPORT_SYMBOL_GPL(radclock_fill_ktime);
+//EXPORT_SYMBOL_GPL(radclock_fill_ktime);
 
 
 
@@ -452,16 +456,16 @@ static int __init init_ffclock_sysfs(void)
 }
 
 
-/* RADclock module definition */
+/* FFclock module definition */
 
-/* Register radclock with netlink and sysfs, and initialize. */
+/* Register radclock with netlink and sysfs */
 static int __init radclock_register(void)
 {
 	/* Register family and operations with netlink */
 	radclock_genl.ops = radclock_ops;
 	radclock_genl.n_ops = 2;
 	if (genl_register_family(&radclock_genl)) {
-		printk(KERN_WARNING "RADclock netlink socket could not be created, exiting\n");
+		printk(KERN_WARNING "FFclock netlink socket could not be created, exiting\n");
 		goto errout;
 	} else
 		printk(KERN_INFO "%s netlink family registered with id %d\n",
@@ -471,10 +475,6 @@ static int __init radclock_register(void)
 	if ( init_ffclock_sysfs() )
 		goto errout_unregister;
 	printk(KERN_INFO "Feed-Forward Clock sysfs initialized\n");
-
-	/* Initialize global data [ both KV1 and KV2 ] */
-	memset(&cest, 0, sizeof(cest));
-	memset(&radclock_fp, 0, sizeof(radclock_fp));
 
 	return 0;
 
@@ -486,7 +486,7 @@ errout:
 
 static void __exit radclock_unregister(void)
 {
-	printk(KERN_INFO "RADclock netlink family unregistered\n");
+	printk(KERN_INFO "FFclock netlink family unregistered\n");
 	genl_unregister_family(&radclock_genl);
 }
 
@@ -497,4 +497,4 @@ module_exit(radclock_unregister);
 
 MODULE_AUTHOR("Thomas Young, Julien Ridoux, Darryl Veitch");
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("RADclock driver support");
+MODULE_DESCRIPTION("FFclock driver support");

@@ -95,8 +95,8 @@
 #include <linux/bpf.h>
 #include <net/compat.h>
 
-#ifdef CONFIG_RADCLOCK
-#include <linux/radclock.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
 #endif
 
 #include "internal.h"
@@ -2170,7 +2170,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	unsigned int netoff;
 	struct sk_buff *copy_skb = NULL;
 	struct timespec ts;
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	unsigned short vcountoff;
 	ktime_t rad_ktime;
 #endif
@@ -2221,7 +2221,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 		snaplen = res;
 
 	if (sk->sk_type == SOCK_DGRAM) {
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 /* We would prefer to push the timestamp in the tpacket header instead of
  * hiding it into the gap between the sockaddr_ll and the mac/net header.
  * But this needs a new libpcap, so simply ensure we make enough space
@@ -2237,7 +2237,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 #endif
 	} else {
 		unsigned maclen = skb_network_offset(skb);
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 		netoff = TPACKET_ALIGN(po->tp_hdrlen +
 				       (maclen < 16 ? 16 : maclen) + sizeof(ffcounter)) +
 						 po->tp_reserve;
@@ -2334,8 +2334,8 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	skb_copy_bits(skb, 0, h.raw + macoff, snaplen);
 
-#ifdef CONFIG_RADCLOCK
-	/* Provide a timeval stamp build based on the RADclock or a timestamp for
+#ifdef CONFIG_FFCLOCK
+	/* Provide a timeval stamp build based on the FFclock or a timestamp for
 	 * fair comparison. Replace existing timestamp in the skbuff if in the right
 	 * mode. Default is to return normal stamp.
 	 */
@@ -2412,7 +2412,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	else
 		sll->sll_ifindex = dev->ifindex;
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	/* Insert vcount timestamp in here. It has to be inserted in front of the
 	 * pointer libpcap passes to the user callback. Because libpcap does write
 	 * in the gap between the SLL header and tp_mac, things are a bit messy.
@@ -3477,7 +3477,7 @@ static int packet_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		sll->sll_protocol = skb->protocol;
 	}
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	/* Pass the two extra raw timestamps specific to the RADCLOCK to the socket:
 	 * the raw ffcount and the timeval stamps used in the RADCLOCK_TSMODE_FAIRCOMPARE mode.
 	 */
@@ -4216,10 +4216,10 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 	}
 	case SIOCGSTAMP:
 	{
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 		printk("processing SIOC Get STAMP (%s:%d)\n", __FILE__, __LINE__);
 		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
-		{ /* Provide timeval stamp based on RADclock */
+		{ /* Provide timeval stamp based on FFclock */
 			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_ffcount_stamp = %llu\n", sk->sk_ffcount_stamp);
 			// why calculate, isnt it already there?
 			radclock_fill_ktime(sk->sk_ffcount_stamp, &(sk->sk_stamp));
@@ -4229,17 +4229,17 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 	}
 	case SIOCGSTAMPNS:
 	{
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 		printk("processing SIOC Get STAMPNS (%s:%d)\n", __FILE__, __LINE__);
 		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
-		{ /* Provide timeval stamp based on RADclock */
+		{ /* Provide timeval stamp based on FFclock */
 			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_ffcount_stamp = %llu\n", sk->sk_ffcount_stamp);
 			radclock_fill_ktime(sk->sk_ffcount_stamp, &(sk->sk_stamp));
 		}
 #endif
 		return sock_get_timestampns(sk, (struct timespec __user *)arg);
 	}
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	case SIOCSRADCLOCKTSMODE:
 	{
 		long mode;
@@ -4256,7 +4256,7 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 				return -EINVAL;
 		}
 		//printk("  - sk_radclock_tsmode after setting = %d \n", sk->sk_radclock_tsmode);
-		printk(KERN_DEBUG "RADclock: Setting PACKET socket to mode %d\n", sk->sk_radclock_tsmode );
+		printk(KERN_DEBUG "FFclock: Setting PACKET socket to mode %d\n", sk->sk_radclock_tsmode );
 //		*((long *)arg) = mode;		// provides `get after set', so caller can check it worked
 
 		return (0);

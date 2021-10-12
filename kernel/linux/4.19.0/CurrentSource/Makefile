@@ -1,4 +1,4 @@
 #
-# Makefile for the support of the RADclock in linux kernel.
+# Makefile for the support of the FFclock in linux kernel.
 #
-obj-$(CONFIG_RADCLOCK) += radclock.o
+obj-$(CONFIG_FFCLOCK) += ffclock.o

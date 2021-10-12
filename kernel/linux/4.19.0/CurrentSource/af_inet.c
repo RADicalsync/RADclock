@@ -911,7 +911,7 @@ int inet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 	struct rtentry rt;
 
 	switch (cmd) {
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 		case SIOCGRADCLOCKTSMODE:
 			printk("processing SIOC Get RADCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
 			break;

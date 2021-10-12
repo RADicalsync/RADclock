@@ -12,24 +12,24 @@
  */
 
 #include <uapi/linux/time.h>
-#include <asm/vgtod.h>
+#include <asm/vgtod.h>		// includes ffclock.h defining  struct ffcounter
 #include <asm/vvar.h>
-#include <asm/unistd.h>
+#include <asm/unistd.h>		// has auto-generated defns of __NR_* syscall numbers
 #include <asm/msr.h>
 #include <asm/pvclock.h>
 #include <asm/mshyperv.h>
 #include <linux/math64.h>
 #include <linux/time.h>
 #include <linux/kernel.h>
-
-//#ifdef CONFIG_RADCLOCK
-//#include <linux/radclock.h>		// needed for defn of ffcounter
-///* Add because of implicit declarations of sys_  fns in asm("syscall" .. ) lines */
-//extern  int __vdso_get_ffcounter(ffcounter *ffcount);
-//extern  long __vdso_get_ffcounter_latency(ffcounter *ffcount, u64 *vcount_lat, u64 *tsc_lat);
-//#endif
+#include <asm/unistd_64.h>
 
 #define gtod (&VVAR(vsyscall_gtod_data))
+
+//#ifdef __NR_ffclock_getcounter
+//printk("** FFC naked printk:  __NR_ffclock_getcounter = %d", (__NR_ffclock_getcounter));
+//#else
+//printk("** FFC naked printk:  __NR_ffclock_getcounter not defined");
+//#endif
 
 extern int __vdso_clock_gettime(clockid_t clock, struct timespec *ts);
 extern int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz);
@@ -349,80 +349,79 @@ time_t time(time_t *t)
 
 
 
-//#ifdef CONFIG_RADCLOCK
-///* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
-///* Only called while seq lock is held */
-//// Note vread_tsc accesses the TSC via rdtsc_ordered()
-//notrace static inline ffcounter vread_ffcounter_delta(void)
-//{
-//	if (gtod->vclock_mode == VCLOCK_TSC)
-//		return ((vread_tsc() - gtod->ffcount_source_record) & gtod->mask);
-//	else
-//		return 0;
-//}
-//
-///* Copy of the version in kernel/time/timekeeping.c which we cannot directly access */
-//notrace static inline ffcounter vread_ffcounter(void)
-//{
-//	unsigned long seq;
-//	ffcounter vcount;
-//
-//	do {
-//		seq = gtod_read_begin(gtod);
-//		vcount = gtod->tick_ffcount + vread_ffcounter_delta();
-//	} while (unlikely(gtod_read_retry(gtod, seq)));
-//
-//	return vcount;
-//}
-//
-//notrace static long vdso_fallback_get_ffcounter(ffcounter *ffcount)
-//{
-//	long ret;
-//	asm("syscall" : "=a" (ret) :
-//	    "0" (__NR_get_ffcounter), "D" (ffcount) : "memory");
-//	return ret;
-//}
-//
-//notrace int __vdso_get_ffcounter(ffcounter *ffcount)
-//{
-//	ffcounter vcount;
-//
-//	if (likely(gtod->vclock_mode != VCLOCK_NONE)) {
-//		vcount = vread_ffcounter();
-//		*ffcount = vcount;
-//		return 0;
-//	}
-//	return vdso_fallback_get_ffcounter(ffcount);
-//}
-//int get_ffcounter(ffcounter *)		// alias for userland
-//	__attribute__((weak, alias("__vdso_get_ffcounter")));
-//
-//notrace long __vdso_get_ffcounter_latency(ffcounter *ffcount, u64 *vcount_lat, u64 *tsc_lat)
-//{
-//	ffcounter vcount;
-//	u64 tsc1, tsc2, tsc3;
-//
-//	long ret;
-//
-//	if (likely(gtod->vclock_mode != VCLOCK_NONE)) {
-//		/* One for fun and warmup */
-//		tsc1 = rdtsc_ordered();
-//		tsc1 = rdtsc_ordered();
-//		tsc2 = rdtsc_ordered();
-//		vcount = vread_ffcounter();
-//		tsc3 = rdtsc_ordered();
-//
-//		*ffcount = vcount;
-//		*vcount_lat = tsc3 - tsc2;		// latency of FFcounter read
-//		*tsc_lat = tsc2 - tsc1;			// latency of rdtsc back to back
-//
-//		return 0;
-//	}
-//	asm("syscall" : "=a" (ret) :
-//	    "0" (__NR_get_ffcounter_latency), "D" (ffcount), "S" (vcount_lat), "q" (tsc_lat)  : "memory");
-//	return ret;
-//}
-//long get_ffcounter_latency(ffcounter *, u64 *, u64 *)
-//	__attribute__((weak, alias("__vdso_get_ffcounter_latency")));
-//
-//#endif  /* CONFIG_RADCLOCK */
+#ifdef CONFIG_FFCLOCK
+
+// Hack since they are not being picked up from unistd.h
+#define __NR_ffclock_getcounter 335
+#define __NR_ffclock_getcounter_latency 336
+/* Equivalent to ffclock_read_counter in timekeeping.c */
+notrace static inline ffcounter vread_ffcounter(void)
+{
+	unsigned long seq;
+	ffcounter vcount;
+
+	do {
+		seq = gtod_read_begin(gtod);
+		vcount = gtod->tick_ffcount;
+		/* If needed, add in a delta to the base read */
+		if (gtod->vclock_mode == VCLOCK_TSC)
+			 vcount += ((vread_tsc() - gtod->cycle_last) & gtod->mask);
+	} while (unlikely(gtod_read_retry(gtod, seq)));
+
+	return vcount;
+}
+
+notrace int __vdso_ffclock_getcounter(ffcounter *ffcount)
+{
+	ffcounter vcount;
+	long ret;
+
+	/* printk not working here, accessing via pr_notice doesn't either */
+//	pr_notice("FFC __vdso_ffclock_getcounter: called with ffcount = %llu\n", *ffcount);
+//	prinkk("\t FFC __NR_ffclock_getcounter = %d", (__NR_ffclock_getcounter));
+
+	if (likely(gtod->vclock_mode != VCLOCK_NONE)) {
+		vcount = vread_ffcounter();
+		*ffcount = vcount;
+		return 0;
+	}
+
+	/* Fallback to syscall */
+//	pr_notice("\t FFC falling back to syscall (using __NR_ffclock_getcounter = %d)", (__NR_ffclock_getcounter));
+	asm("syscall" : "=a" (ret) :
+	    "0" (__NR_ffclock_getcounter), "D" (ffcount) : "memory");
+	return ((int) ret);
+}
+int ffclock_getcounter(ffcounter *)		// alias for userland
+	__attribute__((weak, alias("__vdso_ffclock_getcounter")));
+
+notrace int __vdso_ffclock_getcounter_latency(ffcounter *ffcount, u64 *vcount_lat, u64 *tsc_lat)
+{
+	ffcounter vcount;
+	u64 tsc1, tsc2, tsc3;
+	long ret;
+
+	if (likely(gtod->vclock_mode != VCLOCK_NONE)) {
+		/* One for fun and warmup */
+		tsc1 = rdtsc_ordered();
+		tsc1 = rdtsc_ordered();
+		tsc2 = rdtsc_ordered();
+		vcount = vread_ffcounter();
+		tsc3 = rdtsc_ordered();
+
+		*ffcount = vcount;
+		*vcount_lat = tsc3 - tsc2;		// latency of FFcounter read
+		*tsc_lat = tsc2 - tsc1;			// latency of rdtsc back to back
+
+		return 0;
+	}
+
+	/* Fallback to syscall */
+	asm("syscall" : "=a" (ret) :
+	    "0" (__NR_ffclock_getcounter_latency), "D" (ffcount), "S" (vcount_lat), "q" (tsc_lat)  : "memory");
+	return ret;
+}
+int ffclock_getcounter_latency(ffcounter *, u64 *, u64 *)
+	__attribute__((weak, alias("__vdso_ffclock_getcounter_latency")));
+
+#endif  /* CONFIG_FFCLOCK */

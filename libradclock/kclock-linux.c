@@ -455,7 +455,6 @@ set_kernel_fixedpoint(struct radclock *clock, struct radclock_fixedpoint *fpdata
 	{
 	case 0:
 	case 1:
-	case 2:
 		err     = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_FIXEDPOINT, fpdata);
 	 	err_get = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_FIXEDPOINT, &kernfpdata);
 		if ( memcmp(fpdata,  &kernfpdata,sizeof(struct radclock_fixedpoint)) != 0 )
@@ -478,9 +477,9 @@ set_kernel_fixedpoint(struct radclock *clock, struct radclock_fixedpoint *fpdata
 //		}
 		break;
 
-//	case 2:
-//		logger(RADLOG_ERR, "set_kernel_fixedpoint but kernel version 2!!");
-//		return (1);
+	case 2:
+		logger(RADLOG_ERR, "set_kernel_fixedpoint but kernel version 2!!");
+		return (1);
 
 	default:
 		logger(RADLOG_ERR, "Unknown kernel version");

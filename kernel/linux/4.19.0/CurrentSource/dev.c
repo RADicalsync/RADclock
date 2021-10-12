@@ -1999,7 +1999,7 @@ void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 	struct packet_type *pt_prev = NULL;
 	struct list_head *ptype_list = &ptype_all;
 
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	ffclock_read_counter(&skb->ffcount_stamp);
 	printk("======>RAD dev_queue_XMIT_nit: filling skb->ffcount_stamp with vcount = %llu\n", skb->ffcount_stamp);
 #endif
@@ -4470,8 +4470,8 @@ static int netif_rx_internal(struct sk_buff *skb)
 
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
-#ifdef CONFIG_RADCLOCK
-	/* Copy the RADclock timestamps to the skbuff */
+#ifdef CONFIG_FFCLOCK
+	/* Copy the FFclock timestamps to the skbuff */
 	ffclock_read_counter(&skb->ffcount_stamp);
 	printk("=>>RAD netif_RX_internal:   vcount = %llu\n", skb->ffcount_stamp);
 #endif
@@ -5148,8 +5148,8 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
-#ifdef CONFIG_RADCLOCK
-	/* Copy the RADclock timestamps to the skbuff */
+#ifdef CONFIG_FFCLOCK
+	/* Copy the FFclock timestamps to the skbuff */
 	ffclock_read_counter(&skb->ffcount_stamp);
 	printk("==<RAD netif_RECEIVE_skb_:    filling skb->ffcount_stamp with vcount = %llu\n", skb->ffcount_stamp);
 #endif

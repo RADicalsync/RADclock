@@ -74,8 +74,8 @@
 #include <net/smc.h>
 #include <net/l3mdev.h>
 
-#ifdef CONFIG_RADCLOCK
-#include <linux/radclock.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
 #endif
 
 /*
@@ -479,7 +479,7 @@ struct sock {
 	const struct cred	*sk_peer_cred;
 	long			sk_rcvtimeo;
 	ktime_t			sk_stamp;
-#ifdef CONFIG_RADCLOCK
+#ifdef CONFIG_FFCLOCK
 	ffcounter		sk_ffcount_stamp;
 	int			sk_radclock_tsmode;
 #endif
