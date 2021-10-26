@@ -2,9 +2,9 @@ name: GitHub Actions CI
 
 on:
   push:
-    branches: [ main ]
+    branches: [ RADdev ]
   pull_request:
-    branches: [ main ]
+    branches: [ RADdev ]
 
 jobs:
   tests:
