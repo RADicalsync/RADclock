@@ -1,4 +1,4 @@
-name: GitHub Actions CI
+name: RADclock build system
 
 on:
   push:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   tests:
-    name: example earthly test
+    name: Build kernel packages
     runs-on: ubuntu-latest
     steps:
       - uses: earthly/actions/setup-earthly@v1
@@ -18,4 +18,4 @@ jobs:
       - name: what version is installed?
         run: earthly --version
       - name: run the earthly hello world
-        run: earthly github.com/earthly/hello-world:main+hello
+        run: earthly +kernel-build-patched
