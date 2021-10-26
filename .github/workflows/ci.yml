@@ -15,7 +15,5 @@ jobs:
         with:
           version: v0.5.24
       - uses: actions/checkout@v2
-      - name: what version is installed?
-        run: earthly --version
-      - name: run the earthly hello world
+      - name: Build Debian AMD64 kernel packages
         run: earthly +kernel-build-patched
