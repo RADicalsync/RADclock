@@ -1,0 +1,5 @@
+# Ignore Eartrhly artifacts directory
+artifacts/
+
+# Temp build files
+version.m4
