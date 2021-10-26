@@ -17,3 +17,7 @@ jobs:
       - uses: actions/checkout@v2
       - name: Build Debian AMD64 kernel packages
         run: earthly +kernel-build-patched
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Upload packages
+          path: artifacts/
