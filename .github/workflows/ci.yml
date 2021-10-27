@@ -22,13 +22,12 @@ jobs:
     name: Build ARM64 kernel packages
     runs-on: ubuntu-latest
     steps:
-      -
-      name: Setup QEMU
-      id: qemu
-      uses: docker/setup-qemu-action@v1
-      with:
-        image: tonistiigi/binfmt:latest
-        platforms: all
+      - name: Setup QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v1
+        with:
+          image: tonistiigi/binfmt:latest
+          platforms: all
       - uses: earthly/actions/setup-earthly@v1
         with:
           version: v0.5.24
