@@ -139,7 +139,11 @@ static notrace u64 vread_pvclock(int *mode)
 			return 0;
 		}
 
+#ifdef __x86_64__
 		ret = __pvclock_read_cycles(pvti, rdtsc_ordered());
+#else
+		ret = __pvclock_read_cycles(pvti, 0);
+#endif
 	} while (pvclock_read_retry(pvti, version));
 
 	/* refer to vread_tsc() comment for rationale */
@@ -168,6 +172,7 @@ static notrace u64 vread_hvclock(int *mode)
 
 notrace static u64 vread_tsc(void)
 {
+#ifdef __x86_64__
 	u64 ret = (u64)rdtsc_ordered();
 	u64 last = gtod->cycle_last;
 
@@ -184,6 +189,9 @@ notrace static u64 vread_tsc(void)
 	 */
 	asm volatile ("");
 	return last;
+#else
+	return 0;
+#endif
 }
 
 notrace static inline u64 vgetsns(int *mode)
@@ -392,11 +400,12 @@ int ffclock_getcounter(ffcounter *)		// alias for userland
 
 notrace int __vdso_ffclock_getcounter_latency(ffcounter *ffcount, u64 *vcount_lat, u64 *tsc_lat)
 {
-	ffcounter vcount;
-	u64 tsc1, tsc2, tsc3;
-	long ret;
+	ffcounter vcount = 0;
+	u64 tsc1, tsc2, tsc3 = 0;
+	long ret = 0;
 
 	if (likely(gtod->vclock_mode != VCLOCK_NONE)) {
+#ifdef __x86_64__
 		/* One for fun and warmup */
 		tsc1 = rdtsc_ordered();
 		tsc1 = rdtsc_ordered();
@@ -407,7 +416,7 @@ notrace int __vdso_ffclock_getcounter_latency(ffcounter *ffcount, u64 *vcount_la
 		*ffcount = vcount;
 		*vcount_lat = tsc3 - tsc2;		// latency of FFcounter read
 		*tsc_lat = tsc2 - tsc1;			// latency of rdtsc back to back
-
+#endif
 		return 0;
 	}
 
