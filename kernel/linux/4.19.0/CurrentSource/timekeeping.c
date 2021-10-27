@@ -371,7 +371,11 @@ void ffclock_read_counter(ffcounter *ffcount)
 	u64 delta;
 
 	if (ffcounter_bypass == 1 && strcmp(tk->tkr_raw.clock->name, "tsc") == 0) {
+#ifdef __x86_64__
 		*ffcount = rdtsc_ordered();
+#else
+		*ffcount = 0;
+#endif
 		return;
 	}
 

@@ -281,8 +281,10 @@ SYSCALL_DEFINE1(ffclock_getcounter, ffcounter __user *, ffcount)
 
 SYSCALL_DEFINE3(ffclock_getcounter_latency, ffcounter __user *, ffcount, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
 {
-	ffcounter now;
-	u64 tsc1, tsc2, tsc3;
+	ffcounter now = {0};
+	u64 tsc1, tsc2, tsc3 = 0;
+
+#ifdef __x86_64__
 
 	/* One for fun and warmup */
 	tsc1 = rdtsc_ordered();
@@ -294,6 +296,7 @@ SYSCALL_DEFINE3(ffclock_getcounter_latency, ffcounter __user *, ffcount, u64 __u
 	tsc1 = tsc2 - tsc1;		// latency of rdtsc back to back
 	tsc2 = tsc3 - tsc2;		// latency of FFcounter read
 
+#endif
 	if (copy_to_user(ffcount, &now, sizeof(ffcounter)))
 		return -EFAULT;
 	if (copy_to_user(vcount_lat, &tsc2, sizeof(u64)))
