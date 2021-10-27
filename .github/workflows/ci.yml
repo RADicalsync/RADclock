@@ -7,17 +7,38 @@ on:
     branches: [ RADdev ]
 
 jobs:
-  tests:
-    name: Build kernel packages
+  tests-amd64:
+    name: Build AMD64 kernel packages
     runs-on: ubuntu-latest
     steps:
-      - uses: earthly/actions/setup-earthly@v1
-        with:
-          version: v0.5.24
       - uses: actions/checkout@v2
       - name: Build Debian AMD64 kernel packages
         run: earthly +kernel-build-patched
       - uses: actions/upload-artifact@v2
         with:
-          name: Upload packages
-          path: artifacts/
+          name: Debian kernel AMD64 packages
+          path: artifacts/kernel-patched/*amd64.deb
+  tests-arm64:
+    name: Build ARM64 kernel packages
+    runs-on: ubuntu-latest
+    steps:
+      -
+      name: Setup QEMU
+      id: qemu
+      uses: docker/setup-qemu-action@v1
+      with:
+        image: tonistiigi/binfmt:latest
+        platforms: all
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.5.24
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.5.24
+      - uses: actions/checkout@v2
+      - name: Build Debian ARM64 kernel packages
+        run: earthly --platform=linux/arm64 +kernel-build-patched
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Debian kernel ARM64 packages
+          path: artifacts/kernel-patched/*arm64.deb
