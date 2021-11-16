@@ -1,4 +1,4 @@
-# Ignore Eartrhly artifacts directory
+# Ignore Earthly artifacts directory
 artifacts/
 
 # Temp build files
