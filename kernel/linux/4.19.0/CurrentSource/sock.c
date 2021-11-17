@@ -2837,8 +2837,8 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 
 	sk->sk_stamp = SK_DEFAULT_STAMP;
 #ifdef CONFIG_FFCLOCK
-	sk->sk_ffcount_stamp = 0;
-	sk->sk_radclock_tsmode = ffclock_tsmode;
+	sk->sk_ffclock_ffc = 0;
+	sk->sk_ffclock_tsmode = ffclock_tsmode;
 #endif
 
 #if BITS_PER_LONG==32

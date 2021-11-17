@@ -69,7 +69,7 @@ if ( ts < data->last_changed || ts - data->last_changed * data->phat > 10000 )
 int
 raddata_quality(vcounter_t now, vcounter_t last, vcounter_t valid, double phat)
 {
-	/* 
+	/*
 	 * Something really bad is happening:
 	 * - counter is going backward (should never happen)
 	 * - virtual machine read H/W counter then migrated, things are out of whack
@@ -93,7 +93,7 @@ raddata_quality(vcounter_t now, vcounter_t last, vcounter_t valid, double phat)
 	if (now > valid) {
 		//fprintf(stdout,"raddata_quality:  inside now>valid \n");
 		if (phat * (now - valid) > OUT_SKM) {
-		   //fprintf(stdout,"raddata_quality:  rtn3\n");
+		   fprintf(stdout,"raddata_quality:  rtn3\n");
 			return 3;
 		}
 		//fprintf(stdout,"raddata_quality:  rtn2\n");
@@ -155,7 +155,6 @@ ffcounter_to_abstime_kernel(struct radclock *clock, vcounter_t vcount,
 	if (get_kernel_ffclock(clock, &cest))
 		return (1);
 	fill_radclock_data(&cest, &rad_data);
-
 	read_RADabs_UTC(&rad_data, &vcount, time, 0);	// no point trying plocal
 
 	return raddata_quality(vcount, rad_data.last_changed, rad_data.next_expected,
@@ -286,7 +285,7 @@ radclock_vcount_to_abstime(struct radclock *clock, const vcounter_t *vcount,
 		logger(RADLOG_WARNING, "Using kernel data instead of sms, expected?");
 		quality = ffcounter_to_abstime_kernel(clock, *vcount, abstime);
 	}
-		
+
 	return (quality);
 }
 

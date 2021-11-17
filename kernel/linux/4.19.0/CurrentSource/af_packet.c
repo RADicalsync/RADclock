@@ -2171,8 +2171,7 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	struct sk_buff *copy_skb = NULL;
 	struct timespec ts;
 #ifdef CONFIG_FFCLOCK
-	unsigned short vcountoff;
-	ktime_t rad_ktime;
+	unsigned short ffc_off;
 #endif
 	__u32 ts_status;
 	bool is_drop_n_account = false;
@@ -2335,19 +2334,15 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	skb_copy_bits(skb, 0, h.raw + macoff, snaplen);
 
 #ifdef CONFIG_FFCLOCK
-	/* Provide a timeval stamp build based on the FFclock or a timestamp for
-	 * fair comparison. Replace existing timestamp in the skbuff if in the right
-	 * mode. Default is to return normal stamp.
-	 */
-	//printk("processing sk_radclock_tsmode (%s:%d)\n", __FILE__, __LINE__);
-	switch ( sk->sk_radclock_tsmode ) {
-	case RADCLOCK_TSMODE_RADCLOCK:
-		printk("RAD tpacket_rcv: radclock_fill_ktime using skb->ffcount_stamp = %llu\n", skb->ffcount_stamp);
-		sk->sk_ffcount_stamp = skb->ffcount_stamp;		//  should do in all modes
-		radclock_fill_ktime(skb->ffcount_stamp, &rad_ktime);
-		skb->tstamp = rad_ktime;
-		break;
-	}
+	/* If requested by tsmode, pass the raw skb timestamp to sk, and convert the
+	 * raw to a normal timestamp to populate/overwrite that in skb. */
+//	printk("FFC tpacket_rcv:  skb->ffclock_ffc = %llu\n", skb->ffclock_ffc);
+//	printk("FFC tpacket_rcv: BEFORE skb->tstamp = %lld,  &sk->..._ffc = %llu \n",
+//			skb->tstamp, sk->sk_ffclock_ffc);
+	ffclock_fill_timestamps(skb->ffclock_ffc, sk->sk_ffclock_tsmode,
+					&sk->sk_ffclock_ffc, &skb->tstamp);
+//	printk("FFC tpacket_rcv: AFTER  skb->tstamp = %lld,  &sk->..._ffc = %llu \n",
+//			skb->tstamp, sk->sk_ffclock_ffc);
 #endif
 
 	if (!(ts_status = tpacket_get_timestamp(skb, &ts, po->tp_tstamp)))
@@ -2420,13 +2415,13 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	 * Clearly this code depends on libpcap design, a poor feature, but no
 	 * other choice so far.
 	 */
-	vcountoff = macoff;
+	ffc_off = macoff;
 
 	/* If the socket has been open in mode DGRAM, libpcap will add a
 	 * sll_header (16bytes) (cooked interface)
 	 */
 	if (sk->sk_type == SOCK_DGRAM)
-		vcountoff -= 16;
+		ffc_off -= 16;
 
 	/* If packet of type 2 or 3, and vlan and enough data, libpcap will rebuild
 	 * the vlan tag in the header
@@ -2434,19 +2429,19 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	if ( po->tp_version == TPACKET_V2 &&
 		h.h2->tp_vlan_tci && h.h2->tp_snaplen >= 2 * 6 /* ETH_ALEN=6 */)
 	{
-		vcountoff -= 4 /* VLAN_TAG_LEN=4 */;
+		ffc_off -= 4 /* VLAN_TAG_LEN=4 */;
 		printk("adjusting VLAN offset for TPACKET_V2 (%s:%d)\n", __FILE__, __LINE__);
 	}
 	if (po->tp_version == TPACKET_V3 &&
 		h.h3->hv1.tp_vlan_tci && h.h3->tp_snaplen >= 2 * 6 /* ETH_ALEN=6 */)
 	{
-		vcountoff -= 4 /* VLAN_TAG_LEN=4 */;
+		ffc_off -= 4 /* VLAN_TAG_LEN=4 */;
 		printk("adjusting VLAN offset for TPACKET_V3 (%s:%d)\n", __FILE__, __LINE__);
 	}
 
 	/* Copy the vcount stamp just before where the mac/sll header wil be */
-	vcountoff -= sizeof(ffcounter);
-	memcpy(h.raw + vcountoff, &(skb->ffcount_stamp), sizeof(ffcounter));
+	ffc_off -= sizeof(ffcounter);
+	memcpy(h.raw + ffc_off, &(skb->ffclock_ffc), sizeof(ffcounter));
 #endif
 
 	smp_mb();
@@ -3031,6 +3026,13 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
 	if (err)
 		goto out_free;
 
+#ifdef CONFIG_FFCLOCK
+	/* Update the raw FFC timestamp held on sk with that from the latest skb */
+	printk("*** FFC packet_snd: passing skb->ffclock_ffc (%llu) to overwrite sk_ffclock_ffc (%llu)\n",
+				skb->ffclock_ffc, sk->sk_ffclock_ffc);
+	sk->sk_ffclock_ffc = skb->ffclock_ffc;
+#endif
+
 	if (sock->type == SOCK_RAW &&
 	    !dev_validate_header(dev, skb->data, len)) {
 		err = -EINVAL;
@@ -3478,12 +3480,10 @@ static int packet_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 	}
 
 #ifdef CONFIG_FFCLOCK
-	/* Pass the two extra raw timestamps specific to the RADCLOCK to the socket:
-	 * the raw ffcount and the timeval stamps used in the RADCLOCK_TSMODE_FAIRCOMPARE mode.
-	 */
-	printk("*** RAD packet_recvmsg: passing skb->ffcount_stamp (%llu) to overwrite sk_ffcount_stamp (%llu)\n",
-				skb->ffcount_stamp, sk->sk_ffcount_stamp);
-	sk->sk_ffcount_stamp = skb->ffcount_stamp;
+	/* Update the raw FFC timestamp held on sk with that from the latest skb */
+	printk("*** FFC packet_recvmsg: passing skb->ffclock_ffc (%llu) to overwrite sk_ffclock_ffc (%llu)\n",
+				skb->ffclock_ffc, sk->sk_ffclock_ffc);
+	sk->sk_ffclock_ffc = skb->ffclock_ffc;
 #endif
 
 	sock_recv_ts_and_drops(msg, sk, skb);
@@ -4217,60 +4217,43 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 	case SIOCGSTAMP:
 	{
 #ifdef CONFIG_FFCLOCK
-		printk("processing SIOC Get STAMP (%s:%d)\n", __FILE__, __LINE__);
-		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
-		{ /* Provide timeval stamp based on FFclock */
-			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_ffcount_stamp = %llu\n", sk->sk_ffcount_stamp);
-			// why calculate, isnt it already there?
-			radclock_fill_ktime(sk->sk_ffcount_stamp, &(sk->sk_stamp));
-		}
+		printk("FFC: processing SIOC Get STAMP (%s:%d)\n", __FILE__, __LINE__);
+		ffclock_fill_timestamps(sk->sk_ffclock_ffc,
+			(sk->sk_ffclock_tsmode & ~BPF_T_FFC), NULL, // cancel any raw request
+			&sk->sk_stamp);
 #endif
 		return sock_get_timestamp(sk, (struct timeval __user *)arg);
 	}
 	case SIOCGSTAMPNS:
 	{
 #ifdef CONFIG_FFCLOCK
-		printk("processing SIOC Get STAMPNS (%s:%d)\n", __FILE__, __LINE__);
-		if (sk->sk_radclock_tsmode == RADCLOCK_TSMODE_RADCLOCK)
-		{ /* Provide timeval stamp based on FFclock */
-			printk("  RAD packet_ioctl: radclock_fill_ktime using sk->sk_ffcount_stamp = %llu\n", sk->sk_ffcount_stamp);
-			radclock_fill_ktime(sk->sk_ffcount_stamp, &(sk->sk_stamp));
-		}
+		printk("FFC: processing SIOC Get STAMPNS (%s:%d)\n", __FILE__, __LINE__);
+		ffclock_fill_timestamps(sk->sk_ffclock_ffc,
+			(sk->sk_ffclock_tsmode & ~BPF_T_FFC), NULL, // cancel any raw request
+			&sk->sk_stamp);
 #endif
 		return sock_get_timestampns(sk, (struct timespec __user *)arg);
 	}
 #ifdef CONFIG_FFCLOCK
-	case SIOCSRADCLOCKTSMODE:
+	case SIOCSFFCLOCKTSMODE:
 	{
 		long mode;
-		printk("#### processing SIOC Set RADCLOCKTSMODE (%s:%d) ####\n", __FILE__, __LINE__);
-		printk("  - sk_radclock_tsmode = %d \n", sk->sk_radclock_tsmode);
+		printk("FFC: #### processing SIOC Set FFCLOCKTSMODE, initially = 0x%04lx ####\n", sk->sk_ffclock_tsmode);
 		get_user(mode, (long __user *)arg);
-		switch (mode)
-		{
-			case RADCLOCK_TSMODE_SYSCLOCK:
-			case RADCLOCK_TSMODE_RADCLOCK:
-				sk->sk_radclock_tsmode = mode;
-				break;
-			default:
-				return -EINVAL;
-		}
-		//printk("  - sk_radclock_tsmode after setting = %d \n", sk->sk_radclock_tsmode);
-		printk(KERN_DEBUG "FFclock: Setting PACKET socket to mode %d\n", sk->sk_radclock_tsmode );
+		sk->sk_ffclock_tsmode = mode;
+		printk("FFC  Setting to mode 0x%04lx\n", (unsigned)sk->sk_ffclock_tsmode );
 //		*((long *)arg) = mode;		// provides `get after set', so caller can check it worked
-
 		return (0);
 	}
-	case SIOCGRADCLOCKTSMODE:
+	case SIOCGFFCLOCKTSMODE:
 	{
-//		printk("processing SIOC Get RADCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
-//		printk("  - sk_radclock_tsmode = %d , arg = %lu \n", sk->sk_radclock_tsmode, arg);
-		return put_user(sk->sk_radclock_tsmode, (long __user *)arg);
+		printk("FFC: #### processing SIOC Get FFCLOCKTSMODE, tsmode = 0x%04lx ####\n", sk->sk_ffclock_tsmode);
+		return put_user(sk->sk_ffclock_tsmode, (long __user *)arg);
 	}
-	case SIOCGRADCLOCKSTAMP:
+	case SIOCGFFCLOCKSTAMP:
 	{
-		printk("RAD ffcount via Get RADCLOCKSTAMP IOCTL:  sk_ffcount_stamp = %llu \n", sk->sk_ffcount_stamp);
-		return put_user(sk->sk_ffcount_stamp, (ffcounter __user *)arg);
+		printk("FFC via Get FFCLOCKSTAMP IOCTL:  sk_ffclock_ffc = %llu \n", sk->sk_ffclock_ffc);
+		return put_user(sk->sk_ffclock_ffc, (ffcounter __user *)arg);
 	}
 #endif
 

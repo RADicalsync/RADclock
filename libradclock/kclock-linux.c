@@ -52,8 +52,11 @@
 #include "logger.h"
 
 
-/* Definitions also given in kernel file radclock.h */
-#define RADCLOCK_NAME "radclock"		// kernel side define in radclock.h
+/* Definitions also given in kernel file ffclock.h, where enum variables
+ * have an FFCLOCK prefix. Here RADCLOCK is used for backward compatibility.
+ * TODO: move to FFCLOCK when drop fixedpoint definitively, KV1 expects "radclock"
+ * genl name anyway and will break. */
+#define FFCLOCK_NAME "ffclock"
 
 enum {
 	RADCLOCK_ATTR_DUMMY,
@@ -78,7 +81,7 @@ static struct nla_policy radclock_attr_policy[RADCLOCK_ATTR_MAX+1] = {
 };
 
 
-/* Obtain and record the genl ID of the RADclock protocol family */
+/* Obtain and record the genl ID of the FFclock protocol family */
 int
 init_kernel_clock(struct radclock *clock)
 {
@@ -89,7 +92,7 @@ init_kernel_clock(struct radclock *clock)
 	sk = nl_socket_alloc();		// allocate a new netlink socket for the request
 	if (sk) {
 		genl_connect(sk);			// just calls:  nl_connect(sk, NETLINK_GENERIC);
-		id = genl_ctrl_resolve(sk, RADCLOCK_NAME);
+		id = genl_ctrl_resolve(sk, FFCLOCK_NAME);
 		nl_socket_free(sk);		// this also closes the socket
 	} else {
 		logger(RADLOG_ERR, "Cannot allocate netlink socket\n");
@@ -97,11 +100,11 @@ init_kernel_clock(struct radclock *clock)
 	}
 
 	if (id < 0) {
-		logger(RADLOG_ERR, "Couldn't get the radclock netlink ID:  %s", nl_geterror(id));
+		logger(RADLOG_ERR, "Couldn't get the FFclock netlink ID:  %s", nl_geterror(id));
 		return (1);
 	}
 
-	logger(RADLOG_NOTICE, "RADclock netlink is up, with genl ID = %d", id);
+	logger(RADLOG_NOTICE, "FFclock netlink is up, with genl ID = %d", id);
 	PRIV_DATA(clock)->radclock_gnl_id = id;
 
 	return (0);
@@ -123,7 +126,7 @@ radclock_gnl_receive(int id, struct nlmsghdr *h, int attrib_id, void *into)
 	int err;
 
 	if (h->nlmsg_type != id) {
-		logger(RADLOG_ERR, "message id not from the RADclock family");
+		logger(RADLOG_ERR, "message id not from the FFclock family");
 		return (-1);
 	}
 	if (ghdr->cmd != RADCLOCK_CMD_GETATTR) {

@@ -259,6 +259,12 @@ radclock_init(struct radclock *clock)
 	if (err < 0)
 		return (-1);
 
+	/* Establish the link allowing raddata <--> FFdata exchange */
+	err = init_kernel_clock(clock);
+	if (err < 0)
+		return (-1);
+	logger(RADLOG_NOTICE, "Feed-Forward clock support initialised");
+
 	/* SMS on library side */
 	err = sms_init_reader(clock);
 	if (err)

@@ -314,7 +314,7 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 
 		int pcaprtn = 0;
 		if ( (pcaprtn = ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp)) == -1) {
-			logger(RADLOG_ERR, "Setting timestamping mode to bd_tstamp = 0x%04x "
+			logger(RADLOG_ERR, "Setting timestamping mode to bd_tstamp = 0x%04lx "
 					"failed: %s", bd_tstamp, strerror(errno));
 			return (1);
 		}

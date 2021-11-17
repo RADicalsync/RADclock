@@ -25,11 +25,6 @@
 
 #define gtod (&VVAR(vsyscall_gtod_data))
 
-//#ifdef __NR_ffclock_getcounter
-//printk("** FFC naked printk:  __NR_ffclock_getcounter = %d", (__NR_ffclock_getcounter));
-//#else
-//printk("** FFC naked printk:  __NR_ffclock_getcounter not defined");
-//#endif
 
 extern int __vdso_clock_gettime(clockid_t clock, struct timespec *ts);
 extern int __vdso_gettimeofday(struct timeval *tv, struct timezone *tz);
@@ -378,7 +373,7 @@ notrace int __vdso_ffclock_getcounter(ffcounter *ffcount)
 
 	/* printk not working here, accessing via pr_notice doesn't either */
 //	pr_notice("FFC __vdso_ffclock_getcounter: called with ffcount = %llu\n", *ffcount);
-//	prinkk("\t FFC __NR_ffclock_getcounter = %d", (__NR_ffclock_getcounter));
+//	printk("\t FFC __NR_ffclock_getcounter = %d", (__NR_ffclock_getcounter));
 
 	if (likely(gtod->vclock_mode != VCLOCK_NONE)) {
 		vcount = vread_ffcounter();

@@ -2776,14 +2776,14 @@ static int do_siocgstampns(struct net *net, struct socket *sock,
 }
 
 #ifdef CONFIG_FFCLOCK
-static int do_siocgradclockstamp(struct net *net, struct socket *sock,
+static int do_siocgffclockstamp(struct net *net, struct socket *sock,
 			 unsigned int cmd, unsigned long long __user *up)
 {
 	mm_segment_t old_fs = get_fs();
 	__u64 val;
 	int err;
 
-	printk("compat SIOC Get RADCLOCKSTAMP used (%s:%d)\n", __FILE__, __LINE__);
+	printk("compat SIOC Get FFCLOCKSTAMP used (%s:%d)\n", __FILE__, __LINE__);
 	set_fs(KERNEL_DS);
 	err = sock_do_ioctl(net, sock, cmd, (unsigned long)&val);
 	set_fs(old_fs);
@@ -3203,9 +3203,9 @@ static int compat_sock_ioctl_trans(struct file *file, struct socket *sock,
 	case SIOCGHWTSTAMP:
 		return compat_ifr_data_ioctl(net, cmd, argp);
 #ifdef CONFIG_FFCLOCK
-	case SIOCGRADCLOCKSTAMP:
-		printk("found SIOC Get RADCLOCKSTAMP (%s:%d)\n", __FILE__, __LINE__);
-		return do_siocgradclockstamp(net, sock, cmd, argp);
+	case SIOCGFFCLOCKSTAMP:
+		printk("found SIOC Get FFCLOCKSTAMP (%s:%d)\n", __FILE__, __LINE__);
+		return do_siocgffclockstamp(net, sock, cmd, argp);
 #endif
 
 	case FIOSETOWN:

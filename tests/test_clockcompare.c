@@ -235,12 +235,21 @@ main (int argc, char *argv[])
 	 * Alternative values can be set on the command line using -c .
 	 */
 	u_int cus[nc];
+	// FreeBSD choice
 	cus[0] = 0x3012;			// FFnative; UTC !FAST; bintime
 	cus[1] = 0x2012;			// FFmono;   UTC !FAST; bintime
 	cus[2] = 0x0012;			// SYSclock; UTC !FAST; bintime
 	cus[3] = 0x1012;			// FBclock;  UTC !FAST; bintime
 	cus[4] = 0x2212;			// FFmono;   Upt !FAST; bintime
 	cus[5] = 0x1212;			// FBclock;  Upt !FAST; bintime
+	// Linux choice
+	cus[0] = 0x3011;			// FFnative; UTC !FAST; nanotime
+	cus[1] = 0x2011;			// FFmono;   UTC !FAST;    "
+	cus[2] = 0x0011;			// SYSclock; UTC !FAST;    "
+	cus[3] = 0x1011;			// FBclock;  UTC !FAST;    "
+	cus[4] = 0x2211;			// FFmono;   Upt !FAST;    "
+	cus[5] = 0x1211;			// FBclock;  Upt !FAST;    "
+
 
 	printf("------------------- Setting the packet tsmodes ------------------\n");
 	for (i=0; i<nc; i++)	{
@@ -265,7 +274,7 @@ main (int argc, char *argv[])
 		fprintf(output_fd, "%% column 4: diff:  FF - FB \n");
 		fprintf(output_fd, "%% column 5: FF Uptime\n");
 		fprintf(output_fd, "%% column 6: FB Uptime\n");
-		fprintf(output_fd, "%% column 4: diff:  FF - FB \n");
+		fprintf(output_fd, "%% column 7: diff:  FF - FB \n");
 		fflush(output_fd);
 	}
 
@@ -278,7 +287,7 @@ main (int argc, char *argv[])
 
 
 	/* Provide an initial dump to all clocks to provide the origin baseline,
-	 * then compare FF and FB side by side relative to thats origin
+	 * then compare FF and FB side by side relative to adjusted origins given below
 	 */
 	printf("----------- Timestamp read check for baseline ---------\n");
 	for (i=0; i<nc; i++)	{

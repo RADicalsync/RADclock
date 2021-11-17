@@ -328,6 +328,7 @@ radclock_init_vcounter(struct radclock *clock)
 {
 	size_t size_ctl;
 	int bypass_active;
+	int ret;
 
 	/* Retrieve available and current sysclock.
 	 * Not the job of this function, but a reasonable place to do this. */
@@ -345,15 +346,6 @@ radclock_init_vcounter(struct radclock *clock)
 	/* Retrieve and register name of counter used by the kernel timecounter */
 	if ( get_currentcounter(clock) == -1 )
 		return (-1);
-
-	/* Retrieve and record name of counter used by the kernel timecounter */
-	size_ctl = sizeof(clock->hw_counter);
-	ret = sysctlbyname("kern.timecounter.hardware", &clock->hw_counter[0], &size_ctl, NULL, 0);
-	if (ret == -1) {
-		logger(RADLOG_ERR, "Cannot find kern.timecounter.hardware from sysctl");
-		return (-1);
-	}
-	logger(RADLOG_NOTICE, "Hardware counter used is %s", clock->hw_counter);
 
 	/* Retrieve value of kernel PT mode */
 	bypass_active = 0;

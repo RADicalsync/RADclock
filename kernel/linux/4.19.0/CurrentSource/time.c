@@ -41,10 +41,14 @@
 
 #include <linux/uaccess.h>
 #include <linux/compat.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
 #include <asm/unistd.h>
 
 #include <generated/timeconst.h>
 #include "timekeeping.h"
+
 
 /*
  * The timezone where the local system is located.  Used as a default by some

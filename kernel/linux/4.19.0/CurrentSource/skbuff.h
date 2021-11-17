@@ -696,10 +696,6 @@ struct sk_buff {
 		u64		skb_mstamp;
 	};
 
-#ifdef CONFIG_FFCLOCK   // does skb_mstamp act as a raw already?
-	ffcounter		ffcount_stamp;
-#endif
-
 	/*
 	 * This is the control buffer. It is free to use for every
 	 * layer. Please put your private variables there. If you
@@ -865,6 +861,10 @@ struct sk_buff {
 				*data;
 	unsigned int		truesize;
 	refcount_t		users;
+
+#ifdef CONFIG_FFCLOCK
+	ffcounter	ffclock_ffc;
+#endif
 };
 
 #ifdef __KERNEL__

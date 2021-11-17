@@ -479,10 +479,6 @@ struct sock {
 	const struct cred	*sk_peer_cred;
 	long			sk_rcvtimeo;
 	ktime_t			sk_stamp;
-#ifdef CONFIG_FFCLOCK
-	ffcounter		sk_ffcount_stamp;
-	int			sk_radclock_tsmode;
-#endif
 #if BITS_PER_LONG==32
 	seqlock_t		sk_stamp_seq;
 #endif
@@ -517,6 +513,10 @@ struct sock {
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
 	struct rcu_head		sk_rcu;
+#ifdef CONFIG_FFCLOCK
+	ffcounter		sk_ffclock_ffc;
+	long			sk_ffclock_tsmode;
+#endif
 };
 
 enum sk_pacing {

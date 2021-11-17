@@ -43,6 +43,13 @@ newstate=$2
 varoff=$param" = "$currset
 varon=$param" = "$newstate
 if [ $currset != $newstate ]; then
-#echo "$varoff --> $varon"
-	sed -i "" "s/$varoff/$varon/" $conf; echo " --> setting to $newstate"
+	OS=`uname -s`
+	echo "$varoff --> $varon"
+	case $OS in
+		FreeBSD)
+			sed -i "" "s/$varoff/$varon/" $conf;;
+		Linux)
+			sed -i    "s/$varoff/$varon/" $conf;;
+	esac
+	echo " --> setting to $newstate"
 fi

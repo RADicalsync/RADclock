@@ -912,11 +912,11 @@ int inet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 #ifdef CONFIG_FFCLOCK
-		case SIOCGRADCLOCKTSMODE:
-			printk("processing SIOC Get RADCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+		case SIOCGFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Get FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
 			break;
-		case SIOCSRADCLOCKTSMODE:
-			printk("processing SIOC Set RADCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+		case SIOCSFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Set FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
 			break;
 #endif
 	case SIOCGSTAMP:

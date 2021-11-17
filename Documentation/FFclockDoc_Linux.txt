@@ -274,7 +274,7 @@ Notes:
 
 
 ==============================================================
-Timecounter (tc) Mechanism: Overview
+Timekeeper (tk) Mechanism: Overview
 ======================================
 
 In linux ns plays a key role as a kind of equivalent to BSDs bintime: a high resultion format to ease
@@ -746,57 +746,29 @@ and written to by simply overwritting the associated file:
 
 
 
-=========================================== BSD ================================
-
-The related variables are :
- timeffc.h
-	 #define	SYSCLOCK_FB	0
-	 #define	SYSCLOCK_FF	1
-	 extern int sysclock_active;
- kern_ffclock
-	 static int ffclock_version = 3;     							// hardwired KV choice, here KV=3
-	 static char *sysclocks[] = {"FBclock", "FFclock"};		// strings associated to FB/FF class
-	 #define	MAX_SYSCLOCK_NAME_LEN 16
-	 #define	NUM_SYSCLOCKS (sizeof(sysclocks) / sizeof(*sysclocks)) // currently = 2
-	 static int sysctl_kern_ffclock_ffcounter_bypass = 0;    	// default no counter bypass
- kern_tc.c
-	 int sysclock_active;												// paradigm of active system clock
-
-
-
-
-
-int sysctlbyname(const char *sname,  void * oldp, size_t *oldlenp,   // current value and size
-										 const void * newp, size_t newlen);		// new value and size
-
-
-Those sysctl calls used by the daemon are accessed via sysctlbyname() and are
-summarised in a section of RADclockDoc_library.  Only three calls are normally used:
-sysctlbyname("kern.sysclock.ffclock.version",&version,&size_ctl,NULL,0)) // detect,store, report KV
-sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)            // on EACH stamp: see if tc there or changed
-sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&bypass_active,..) // get/set kernel bypass reading mode for TSC
-
-Additional calls are made at startup within clock_init_live() and radclock_init_vcounter as a test of the
-sysctl settings
-
-
-
-
 ==============================================================
 Universal (FF/FB) System Clock Support
 ======================================
 
-
+Not implemented.
 
 
 ==============================================================
 bpf and pcap
 ======================================
 
+The timestamp mode system uses that used in FreeBSD.
 
+It is a simple system with the following components:
 
-The key one here is bd_stamp, which specifies the timestamping type requested
-on the given descriptor, using the _T_ timestamp type flags :
+ffclock.h:  ffclock_fill_timestamps()   declaration  // so visible in af_packet.c for pkt timestamping.
+				BPF_T_ tsmode defines
+				extern int ffclock_tsmode;		// needed in sock.c
+ffclock.c:  int ffclock_tsmode = BPF_T_NANOTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // init
+timekeeping.c
+   ffclock_fill_timestamps(ffcounter ffc, long tsmode, ffcounter *rawts, ktime_t *ts) // definition
+
+The tsmode specifies the timestamping type requested.
 
 /* Time stamping flags */
 // FORMAT flags 	[ mutually exclusive, not to be ORed ]
@@ -829,32 +801,10 @@ on the given descriptor, using the _T_ timestamp type flags :
 #define	BPF_T_FLAG(t	)	((t) & BPF_T_FLAG_MASK)
 #define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
 
-// Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl
-// In KV3, all components are independent, and either always meaningful, or
-// not acted on if not meaningful (eg if !FFCLOCK, or value of CLOCK if requesting
-// BPF_T_NONE   Hence checks reduce to ensuring no bits in undefined positions,
-// and not ask for a FF clock that doesnt exist.
-#ifdef FFCLOCK
-#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
-											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
-									&& BPF_T_CLOCK(t)<=BPF_T_FFDIFFCLOCK )
-#else
-#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
-											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
-									&& BPF_T_CLOCK(t)<=BPF_T_FBCLOCK )
-#endif
-
-In KV=3 the four dimensions of the flags: FORMAT, FFRAW, FLAG, CLOCK  are completely
-independent. There are two central innovations compared to the pre-FF kernel:
-	i)  two kinds of timestamps: in seconds (ts) and in raw counter units (raw ts), that are simultaneously available
-	ii) for ts, multiple clocks can be selected from, including the specialist FF clocks
-For each dimension, the choices are:
- FORMAT:  (ts only)		specifies the standard resolution type, or to take no timestamp (NONE)
- FFAW:    (raw ts only) specifies if want it or not
- FLAG:  (ts only)		covers standard options of UTC versus UPTIME (time since boot), and
-        FAST (use current tick-start time, dont bother taking a delta and interpolating intra-tick)
- CLOCK:	 (ts only)		select FB, or the type of FF desired, or adopt whatever the current
-		  system clock is  (could be FBCLOCK or FFCLOCK)
+In linux, the FORMAT values BPF_T_NONE and BPF_T_NANOTIME only are respected.
+Use of FAST is not recommended, as it behaviour under linux is not as originally intended.
+This is a consequence of creating FFclock timestamps only as needed via
+ffclock_fill_timestamps, rather than more deeply integrated in the pkt timestamping system.
 
 
 

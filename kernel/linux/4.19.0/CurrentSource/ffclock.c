@@ -47,15 +47,11 @@ extern struct bintime ffclock_boottime;
 extern int8_t ffclock_updated;
 extern struct rw_semaphore ffclock_mtx;
 
-
-//static struct radclock_fixedpoint radclock_fp;
-//static DECLARE_RWSEM(radclock_fixedpoint_mtx);
-
 static struct genl_family radclock_genl = {
-	.name = RADCLOCK_NAME,
+	.name = FFCLOCK_NAME,
 	.version = 0x1,
 	.hdrsize = 0,
-	.maxattr = RADCLOCK_ATTR_MAX,
+	.maxattr = FFCLOCK_ATTR_MAX,
 };
 
 /**
@@ -73,14 +69,14 @@ static int radclock_fill_skb(struct genl_info *info, u32 flags, struct sk_buff *
 	/* Fill message with each available attribute */
 	//printk(KERN_INFO " ** getting RAD attr data \n");
 	down_read(&ffclock_mtx);
-	puterr = nla_put(skb, RADCLOCK_ATTR_DATA, sizeof(ffclock_estimate), &ffclock_estimate);
+	puterr = nla_put(skb, FFCLOCK_ATTR_DATA, sizeof(ffclock_estimate), &ffclock_estimate);
 	up_read(&ffclock_mtx);
 	if (puterr<0)
 		goto nla_put_failure;
 
 //	down_read(&radclock_fixedpoint_mtx);
 //	//printk(KERN_INFO " ** getting RAD attr fp \n");
-//	puterr = nla_put(skb, RADCLOCK_ATTR_FIXEDPOINT, sizeof(radclock_fp), &radclock_fp);
+//	puterr = nla_put(skb, FFCLOCK_ATTR_FIXEDPOINT, sizeof(radclock_fp), &radclock_fp);
 //	up_read(&radclock_fixedpoint_mtx);
 //	if (puterr<0)
 //		goto nla_put_failure;
@@ -121,16 +117,15 @@ static int radclock_getattr(struct sk_buff *skb, struct genl_info *info)
 {
 	struct sk_buff *msg;
 
-	msg = radclock_build_msg(info, RADCLOCK_CMD_GETATTR);
+	msg = radclock_build_msg(info, FFCLOCK_CMD_GETATTR);
 	if (IS_ERR(msg))
 		return PTR_ERR(msg);
 
 	return genlmsg_unicast(genl_info_net(info), msg, info->snd_portid);
 }
 
-static struct nla_policy radclock_policy[RADCLOCK_ATTR_MAX +1] __read_mostly = {
-	[RADCLOCK_ATTR_DATA] 		= {  .len = sizeof(struct ffclock_estimate) },
-//	[RADCLOCK_ATTR_FIXEDPOINT] = {  .len = sizeof(struct radclock_fixedpoint) },
+static struct nla_policy radclock_policy[FFCLOCK_ATTR_MAX +1] __read_mostly = {
+	[FFCLOCK_ATTR_DATA] 		= {  .len = sizeof(struct ffclock_estimate) },
 };
 
 /**
@@ -140,41 +135,25 @@ static struct nla_policy radclock_policy[RADCLOCK_ATTR_MAX +1] __read_mostly = {
  */
 static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
 {
-	//TODO check perms
 	if (!info)
 		BUG();
 	if (!info->attrs)
 		BUG();
 
-	//printk(KERN_INFO " ** FFclock_setattr entered \n");
-
 	/* `Loop' over all possible attribute types */
-	if (info->attrs[RADCLOCK_ATTR_DATA] != NULL)
+	if (info->attrs[FFCLOCK_ATTR_DATA] != NULL)
 	{
-		//printk(KERN_INFO " ** setting RAD attr data \n");
+		//printk(KERN_INFO " ** setting FF attr data \n");
 		struct ffclock_estimate *value;
-		if (nla_len(info->attrs[RADCLOCK_ATTR_DATA]) != sizeof(ffclock_estimate))
+		if (nla_len(info->attrs[FFCLOCK_ATTR_DATA]) != sizeof(ffclock_estimate))
 			return -EINVAL;
 
-		value = nla_data(info->attrs[RADCLOCK_ATTR_DATA]);
+		value = nla_data(info->attrs[FFCLOCK_ATTR_DATA]);
 		down_write(&ffclock_mtx);
 		memcpy(&ffclock_estimate, value, sizeof(ffclock_estimate));
 		ffclock_updated = 1; 		// signal that the FFdata is updated
 		up_write(&ffclock_mtx);
 	}
-
-//	if (info->attrs[RADCLOCK_ATTR_FIXEDPOINT] != NULL)
-//	{
-//		//printk(KERN_INFO " ** setting RAD attr fp \n");
-//		struct radclock_fixedpoint *valuefp;
-//		if (nla_len(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]) != sizeof(radclock_fp))
-//			return -EINVAL;
-//
-//		valuefp = nla_data(info->attrs[RADCLOCK_ATTR_FIXEDPOINT]);
-//		down_write(&radclock_fixedpoint_mtx);
-//		memcpy(&radclock_fp, valuefp, sizeof(radclock_fp));
-//		up_write(&radclock_fixedpoint_mtx);
-//	}
 
 	return 0;
 }
@@ -182,58 +161,16 @@ static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
 /* Setup the callbacks */
 static struct  genl_ops radclock_ops[] = {
 	{
-		.cmd = RADCLOCK_CMD_GETATTR,
+		.cmd = FFCLOCK_CMD_GETATTR,
 		.doit = radclock_getattr,
 		.policy = radclock_policy,
 	},
 	{
-		.cmd = RADCLOCK_CMD_SETATTR,
+		.cmd = FFCLOCK_CMD_SETATTR,
 		.doit = radclock_setattr,
 		.policy = radclock_policy,
 	},
 };
-
-
-
-///* Read radclock at the passed raw timestamp using the radclock_fp parameters */
-//void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime)
-//{
-//	ffcounter countdiff;
-//	struct timespec tspec;
-//	u64 time_f;
-//	u64 frac;
-//
-//	/* Synchronization algorithm (userland) should update the fixed point data
-//	 * often enough to make sure the timeval does not overflow. If no sync algo
-//	 * updates the data, we loose precision, but in that case, nobody is tracking
-//	 * the clock drift anyway ... so send warning and stop worrying.
-//	 */
-//	down_read(&radclock_fixedpoint_mtx);
-//
-//	countdiff = ffcount - radclock_fp.vcount;
-////	if (countdiff & ~((1ll << (radclock_fp.countdiff_maxbits +1)) -1))
-////		printk(KERN_WARNING "FFclock: warning stamp may overflow timeval at %llu!\n",
-////				(long long unsigned) ffcount);
-//
-//	/* Add the counter delta in second to the recorded fixed point time */
-//	time_f = radclock_fp.time_int
-//		  + ((radclock_fp.phat_int * countdiff) >> (radclock_fp.phat_shift - radclock_fp.time_shift)) ;
-//
-//	tspec.tv_sec = time_f >> radclock_fp.time_shift;
-//
-//	frac = (time_f - ((u64)tspec.tv_sec << radclock_fp.time_shift));
-//	tspec.tv_nsec = (frac * 1000000000LL)  >> radclock_fp.time_shift;
-//	/* tv.nsec truncates at the nano-second digit, so check for next digit rounding */
-//	if ( ((frac * 10000000000LL) >> radclock_fp.time_shift) >= (tspec.tv_nsec * 10LL + 5) )
-//		tspec.tv_nsec++;
-//
-//	/* Push the timespec into the ktime, Ok for 32 and 64 bit arch (see ktime.h) */
-//	*ktime = timespec_to_ktime(tspec);
-//
-//	up_read(&radclock_fixedpoint_mtx);
-//}
-
-//EXPORT_SYMBOL_GPL(radclock_fill_ktime);
 
 
 
@@ -270,8 +207,8 @@ static ssize_t version_ffclock_show(struct device *dev,
 static DEVICE_ATTR_RO(version_ffclock);
 
 
-/* FFC tsmode system */
-int ffclock_tsmode = RADCLOCK_TSMODE_SYSCLOCK;
+/* Initialize tsmode for FFclock (raw,normal) timestamp specification */
+int ffclock_tsmode = BPF_T_NANOTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;
 
 /**
  * tsmode_ffclock_show -  interface to get ffclock timestamping mode
@@ -331,17 +268,8 @@ static ssize_t tsmode_ffclock_store(struct device *dev,
 	user_input[count] = 0;
 
 	val = simple_strtol(user_input, NULL, 10);
+	ffclock_tsmode = val;
 
-	switch (val) {
-		case RADCLOCK_TSMODE_SYSCLOCK:
-			ffclock_tsmode = RADCLOCK_TSMODE_SYSCLOCK;
-			break;
-		case RADCLOCK_TSMODE_RADCLOCK:
-			ffclock_tsmode = RADCLOCK_TSMODE_RADCLOCK;
-			break;
-		default:
-			break;
-	}
 	spin_unlock_irq(&ffclock_lock);
 
 	return ret;

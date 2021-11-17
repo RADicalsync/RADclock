@@ -81,7 +81,7 @@ pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode
 		case PKTCAP_TSMODE_CUSTOM:
 			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_CUSTOM");
 			break;
-			
+
 	}
 	
 	/* Call to system specific method to set the bpf ts type */

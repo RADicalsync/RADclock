@@ -290,7 +290,7 @@ main (int argc, char *argv[])
 		 * your radclock.
 		 */
 		radclock_vcount_to_abstime(clock, &vcount, &currtime);
-		
+
 		/* Convert tv to double for comparison */
 		ts_format_to_double(&tv, custom, &tvdouble);
 		cdiff = (currtime - tvdouble);

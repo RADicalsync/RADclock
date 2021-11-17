@@ -43,9 +43,17 @@ echo "Current IPC state is $currset, will set to $newstate"
 # Action execution
 varon=$varstr" = on"
 varoff=$varstr" = off"
+OS=`uname -s`
+case $OS in
+	FreeBSD)
+		inplace='-i ""';;
+	Linux)
+		inplace='-i';;
+esac
+
 if [ $currset != $newstate ]; then
 	case $newstate in
-		on)	sed -i "s/$varoff/$varon/" $conf; echo " --> setting to on" ;;
-		off)	sed -i "s/$varon/$varoff/" $conf; echo " --> setting to off" ;;
+		on)	sed $inplace "s/$varoff/$varon/" $conf; echo " --> setting to on" ;;
+		off)	sed $inplace "s/$varon/$varoff/" $conf; echo " --> setting to off" ;;
 	esac
 fi

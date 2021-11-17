@@ -11,12 +11,6 @@
 #include <linux/jiffies.h>
 #include <linux/time.h>
 
-#ifdef CONFIG_FFCLOCK
-// convenient to put here, as timekeeper_internal.h  is in all the places we need, I think
-#include <linux/ffclock.h>
-#endif
-
-
 /**
  * struct tk_read_base - base structure for timekeeping readout
  * @clock:	Current clocksource used for timekeeping.
@@ -47,7 +41,6 @@ struct tk_read_base {
 	ktime_t			base;
 	u64			base_real;
 };
-
 
 /**
  * struct timekeeper - Structure holding internal timekeeping values.

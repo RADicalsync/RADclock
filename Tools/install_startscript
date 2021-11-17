@@ -6,14 +6,37 @@ if [ `id -u` -ne 0 ]; then
 fi
 
 OS=`uname -s`
-rcDir="/etc/rc.d"
-name="daemon_startup_script"
 
-if [ $OS == FreeBSD ]; then
-	echo "Installing startup script for $OS in $rcDir/radclock"
+# OS-agnostic script name, gets renamed when copied to install dir
+Name="daemon_startup_script";
 
-	cp $OS/daemon_startup_script $rcDir/radclock
-	ls -l  $rcDir/radclock
-else
-	echo "This script only supports FreeBSD currently, you are on $OS! sorry."
-fi
+case $OS in
+	FreeBSD)
+		Scriptdir=FreeBSD;
+		rcDir="/etc/rc.d";;
+	Linux)
+		Scriptdir=debian
+		distro=`grep ID /etc/*-release  |tail -1 |cut -d'='  -f2`
+		if [ $distro != "debian" ]; then
+			echo "The startup script is written for debian, your distro is $distro, trying it anyway."
+		fi
+		rcDir="/etc/init.d";;
+	*)
+		echo "This script only supports FreeBSD and Debian Linux currently, you are on $OS! sorry.";
+		exit;;
+esac
+
+echo "Installing $Scriptdir/$Name for $OS as $rcDir/radclock"
+cp $Scriptdir/$Name $rcDir/radclock
+ls -l  $rcDir/radclock
+
+# Prompt the system initialization `service' system to recognise the new script
+case $OS in
+	FreeBSD)
+		;;
+	Linux)
+		systemctl daemon-reload
+		#service --status-all > \dev\null;;
+esac
+
+service radclock status		# test it

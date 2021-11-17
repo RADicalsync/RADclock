@@ -8,7 +8,7 @@
  *
  */
 
-#include <linux/timekeeper_internal.h>		// includes radclock.h
+#include <linux/timekeeper_internal.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/percpu.h>
@@ -30,6 +30,10 @@
 #include "tick-internal.h"
 #include "ntp_internal.h"
 #include "timekeeping_internal.h"
+
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
 
 #define TK_CLEAR_NTP		(1 << 0)
 #define TK_MIRROR		(1 << 1)
@@ -384,6 +388,9 @@ void ffclock_read_counter(ffcounter *ffcount)
 		else {
 			ffth = fftimehands;
 			delta = timekeeping_get_delta(&tk->tkr_raw);		// calls tk_clock_read
+			if (delta == 0)
+				printk("ffclock_read_counter: got delta = %llu with tick_ffcount = %llu \n",
+						delta, ffth->tick_ffcount);
 			*ffcount = ffth->tick_ffcount + delta;
 		}
 	} while (read_seqcount_retry(&tk_core.seq, seq));
@@ -391,34 +398,119 @@ void ffclock_read_counter(ffcounter *ffcount)
 }
 EXPORT_SYMBOL(ffclock_read_counter);
 
+/* Given a raw ffcount timestamp, use it to read the FFclock system, and pass
+ * back timestamp(s) as requested and specified by tsmode.
+ * Apart from BPF_T_NONE, the FORMAT dimension of tsmode is ignored as linux
+ * requires an underlying ktime format.
+ */
+void
+ffclock_fill_timestamps(ffcounter ffc, long tsmode, ffcounter *rawts, ktime_t *ts)
+{
 
+	struct fftimehands *ffth;
+	struct bintime bt2, bt;
+	ffcounter ffdelta;
+	uint64_t period;
+	uint8_t gen;
 
-/* This `passthrough version' worked */
-//void ffclock_read_counter(ffcounter *now)
-//{
-//	struct timekeeper *tk = &tk_core.timekeeper;
-//	//unsigned long flags;
-//	unsigned seq;
-//
-//	/* Obtain a consistent view using tk_core.seq to check */
-//	//raw_spin_lock_irqsave(&timekeeper_lock, flags);	// since reading only, this seems overkill
-//	do {
-//		seq = read_seqcount_begin(&tk_core.seq);
-//		*now = (ffcounter) tk_clock_read(&tk->tkr_raw);	// use if don't hold timekeeper_lock
-//		//now = (ffcounter) cs->read(cs);
-//
-//		/* If bypass active we are done, else read the FFC */
-//		if (ffcounter_bypass == 0)
-//			*now = tk->tick_ffcount + ((*now - tk->tkr_raw.cycle_last) & tk->tkr_raw.mask);
-//		//	else
-//		//		now = rdtsc_ordered();
-//	} while (read_seqcount_retry(&tk_core.seq, seq));
-//	// static inline int read_seqcount_retry(const seqcount_t *s, unsigned start)
-//
-//	//raw_spin_unlock_irqrestore(&timekeeper_lock, flags);
-//
-//	return;
-//}
+//	printk("ffclock_fill_timestamps: ffc = %llu, tsmode = 0x%04lx\n", ffc, (unsigned long)tsmode);
+
+	/* Raw timestamp processing */
+	if (BPF_T_FFRAW(tsmode) == BPF_T_FFC)
+		if (rawts) *rawts = ffc;
+
+	/* Normal timestamp: process FORMAT dimension - as much as possible here */
+	switch (BPF_T_FORMAT(tsmode)) {
+		case BPF_T_NONE:
+			if (ts) *ts = 0;
+			return;
+		case BPF_T_MICROTIME:
+		case BPF_T_BINTIME:
+//			printk(KERN_INFO "ffclock_fill_timestamps: sorry, you are stuck with NANOTIME + pcap.. \n");
+		case BPF_T_NANOTIME:
+		default:
+			break;
+	}
+
+	/* Normal timestamp: ensure consistent data used for remaining dimensions */
+	do {
+		ffth = fftimehands;	// copy the current fftimehands, it may change
+		gen = ffth->gen;
+
+		/* Read the desired clock at tick-start
+		 * If it is not an FFclock, we are done, the existing *ts will stand.
+		 * If it is not an FFclock, wipe *ts to prompt subsequent normal filling by sysclock */
+		switch (BPF_T_CLOCK(tsmode)) {
+			case BPF_T_SYSCLOCK:
+			case BPF_T_FBCLOCK:
+				if (ts) *ts = 0;
+				return;
+			case BPF_T_FFNATIVECLOCK:
+				bt = ffth->tick_time;
+				period = ffth->cest.period;
+				break;
+			case BPF_T_FFDIFFCLOCK:
+				bt = ffth->tick_time_diff;
+				period = ffth->cest.period;
+				break;
+			case BPF_T_FFCLOCK:
+			default:
+				bt = ffth->tick_time_lerp;
+				period = ffth->period_lerp;
+				break;
+		}
+		/* If tick resoln suffices or speed required, just use tick-start values,
+		 * otherwise calculate the delta wrt tick-start and apply to bt.
+		 * Use of FAST not recommended here as the FFC is already read! may
+		 * result in an error much larger than a tick duration.
+		 */
+		if ((BPF_T_FLAG(tsmode) & BPF_T_FAST) != BPF_T_FAST)  {
+			if (ffc > ffth->tick_ffcount)
+				ffdelta = ffc - ffth->tick_ffcount;
+			else
+				ffdelta = ffth->tick_ffcount - ffc;
+
+			ffclock_convert_delta(ffdelta, period, &bt2);
+			if (ffc > ffth->tick_ffcount)
+				bintime_add(&bt, &bt2);
+			else
+				bintime_sub(&bt, &bt2);
+		}
+
+		/* Adjust for leap seconds (if not the FFdiff clock).
+		 * Must add in total leaps seen since daemon start, then include
+		 * the possibility that an upcoming one (predicted for leapsec_expected)
+		 * has just past. Include it based on ffc, even if BPF_T_FAST.
+		 */
+		if (BPF_T_CLOCK(tsmode) < BPF_T_FFDIFFCLOCK) {
+			bt.sec -= ffth->cest.leapsec_total;	// subtract means include leaps
+			if (ffth->cest.leapsec_expected != 0 && ffc > ffth->cest.leapsec_expected)
+				bt.sec -= ffth->cest.leapsec_next;
+		}
+
+		/* Convert to uptime/monotonic form if requested.
+		 * Note: an uptime FFdiff clock is defined here, but is not useful.
+		 */
+		if ((BPF_T_FLAG(tsmode) & BPF_T_MONOTONIC) == BPF_T_MONOTONIC) {
+			if (bintime_cmp(&ffclock_boottime, &bt, >)) {	// would go -ve !
+				printk("** Uptime going -ve !  bt:  %llu.%lu  ffclock_boottime: %llu.%lu\n",
+						(unsigned long long)bt.sec,
+						(long unsigned)(bt.frac / MUS_AS_BINFRAC),
+						(unsigned long long)ffclock_boottime.sec,
+						(long unsigned)(ffclock_boottime.frac / NS_AS_BINFRAC) );
+				bt = ffclock_boottime;			// ensure Uptime >= 0
+			}
+			bintime_sub(&bt, &ffclock_boottime);
+		}
+
+	} while (gen == 0 || gen != ffth->gen);
+
+	/* Convert final result from bintime --> ktime */
+	*ts = NSEC_PER_SEC * bt.sec + (s64)(bt.frac / (uint64_t)NS_AS_BINFRAC);
+
+}
+
+EXPORT_SYMBOL_GPL(ffclock_fill_timestamps);
 
 
 /*
@@ -717,7 +809,8 @@ ffclock_reset(struct timekeeper *tk, u64 ncount, const struct timespec64 *reset_
 			bintime_add(&reset_bin, &fftimehands->tick_time);
 		}
 
-		/* Adjust ffclock_boottime to preserve UPclock continuity */
+		/* Adjust ffclock_boottime to preserve UPclock continuity
+		 * TODO: don't want this is you suspended.. how to tell cause of reset? */
 		ffth->tick_time_lerp = fftimehands->tick_time_lerp;
 		bintime_clear(&gap);
 		if (bintime_cmp(&reset_bin, &ffth->tick_time_lerp, >)) {
@@ -792,48 +885,6 @@ ffclock_reset(struct timekeeper *tk, u64 ncount, const struct timespec64 *reset_
 
 }
 
-
-/* Read radclock at the passed raw timestamp
- * Assumes flavour consistent with old RADCLOCK_TSMODE_RADCLOCK  mode.
- * ie return a FFclock native (UTC), not fast, tval format.
- * Except: obeying ktime return semantics for now.
- * Inspired from  BSD kern_tc.c:ffclock_convert_abs as needs ffth access  */
-void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime)
-{
-	struct fftimehands *ffth;
-	struct bintime bt2, bt;
-	ffcounter ffdelta;
-	uint8_t gen;
-	struct timespec ts;
-
-	/* No locking but check generation has not changed */
-	do {
-		ffth = fftimehands;
-		gen = ffth->gen;
-		if (ffcount > ffth->tick_ffcount)
-			ffdelta = ffcount - ffth->tick_ffcount;
-		else
-			ffdelta = ffth->tick_ffcount - ffcount;
-
-		bt = ffth->tick_time;
-		ffclock_convert_delta(ffdelta, ffth->cest.period, &bt2);
-
-		if (ffcount > ffth->tick_ffcount)
-			bintime_add(&bt, &bt2);
-		else
-			bintime_sub(&bt, &bt2);
-	} while (gen == 0 || gen != ffth->gen);
-
-	/* bintime to timespec */
-	ts.tv_sec  = bt.sec;
-	ts.tv_nsec = bt.frac / (uint64_t)NS_AS_BINFRAC;
-
-	/* Push the timespec into the ktime */
-	*ktime = timespec_to_ktime(ts);
-
-}
-
-EXPORT_SYMBOL_GPL(radclock_fill_ktime);
 
 
 #endif	// CONFIG_FFCLOCK
