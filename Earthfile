@@ -75,8 +75,6 @@ ff-kernel-src:
     COPY $SRC/af_inet.c                         $DEST/net/ipv4/
     COPY $SRC/af_packet.c                       $DEST/net/packet/
     COPY $SRC/asm-generic_sockios.h             $DEST/include/uapi/asm-generic/sockios.h
-    #COPY $SRC/clocksource.c                     $DEST/kernel/time/
-    #COPY $SRC/clocksource.h                     $DEST/include/linux/
     COPY $SRC/dev.c                             $DEST/net/core/
     COPY $SRC/drivers_Kconfig                   $DEST/drivers/Kconfig
     COPY $SRC/drivers_Makefile                  $DEST/drivers/Makefile
@@ -97,7 +95,6 @@ ff-kernel-src:
     COPY $SRC/syscalls.h                        $DEST/include/linux/
     COPY $SRC/time.c                            $DEST/kernel/time/
     COPY $SRC/timekeeping.c                     $DEST/kernel/time/
-    COPY $SRC/timekeeper_internal.h             $DEST/include/linux/
     COPY $SRC/timekeeping.c                     $DEST/kernel/time/
     COPY $SRC/vclock_gettime.c                  $DEST/arch/x86/entry/vdso/
     COPY $SRC/vgtod.h                           $DEST/arch/x86/include/asm/
