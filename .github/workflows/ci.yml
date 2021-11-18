@@ -2,9 +2,9 @@ name: RADclock build system
 
 on:
   push:
-    branches: [ RADdev ]
+    branches: [ RADdev-fixed ]
   pull_request:
-    branches: [ RADdev ]
+    branches: [ RADdev-fixed ]
 
 jobs:
   tests-amd64:
