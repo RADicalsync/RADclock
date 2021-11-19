@@ -1,0 +1,5 @@
+# Ignore Earthly artifacts directory
+artifacts/
+
+# Temp build files
+version.m4
