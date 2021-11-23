@@ -110,7 +110,7 @@ copy-src:
     RUN ./version.sh
 
 
-build:
+build-radclock-no-kernel:
     FROM +copy-src
     RUN autoreconf -i
     # Configure the build
@@ -123,7 +123,7 @@ build:
     SAVE ARTIFACT /radclock-build AS LOCAL ./artifacts/
 
 
-build-radclock:
+build-radclock-with-kernel:
     FROM +copy-src
     # Install the netlink libraries for the RADclock kernel support
     RUN apt-get install -y libnl-3-dev libnl-genl-3-dev
