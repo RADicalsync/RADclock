@@ -978,8 +978,8 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	JDEBUG
 
 	err = 0;
-	attempt_wait = 1000;					/* [mus]  500 suitable for LAN RTT */
-	maxattempts = 20;						// should be even,  VM needs 20
+//	attempt_wait = 1000;					/* [mus]  500 suitable for LAN RTT */
+	maxattempts = 20;
 	q = ((struct bidir_algodata*)handle->algodata)->q;
 	packet = create_radpcap_packet();
 
@@ -1030,17 +1030,15 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	 */
 	case RADCLOCK_SYNC_LIVE:
 	
+		verbose(VERB_DEBUG, " get_network_stamp: wakeup_checkfordata = %d", handle->wakeup_checkfordata);
+		pthread_mutex_lock(&handle->wakeup_mutex);
+		handle->wakeup_checkfordata = 0;
+		pthread_mutex_unlock(&handle->wakeup_mutex);
 		for (attempt=maxattempts; attempt>0; attempt--) {
-			//verbose(VERB_DEBUG, " get_network_stamp: attempt = %d", maxattempts-attempt+1);
 			err = get_packet(handle, userdata, &packet); // 1= no rbd data or error
 			if (err) {
-				if (attempt == 1)
-					verbose(VERB_DEBUG, " get_network_stamp: giving up full stamp "
-						"search after %d attempts of %.3f [ms], no more data",
-						maxattempts, attempt_wait/1000.0);
-				else
-					usleep(attempt_wait);
-
+				verbose(VERB_DEBUG, " get_network_stamp: out of data on attempt %d", maxattempts-attempt+1);
+				break;
 			} else {		// found a packet, process it
 				stats->ref_count++;
 				/* Convert packet to stamp and push it to the stamp queue */
@@ -1054,16 +1052,11 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 					"after %d attempts out of %d", maxattempts-attempt+1, maxattempts);
 					break;
 				}
-				/* Have just seen a halfstamp. It is probably a client-halfstamp, so
-				 * wait a little longer for its matching reply
-				 */
-				if (attempt>1 && err == 1 && attempt % 2)
-					usleep(attempt_wait);
-				
+
+				/* Safety belt to avoid infinite loop, should never execute. */
 				if (attempt == 1)
 					verbose(VERB_DEBUG, " get_network_stamp: giving up full stamp "
-						"search after %d attempts of %.3f [ms]",
-						maxattempts, attempt_wait/1000.0);
+						"search after %d attempts, though data still available", maxattempts);
 			}
 		}
 		break;

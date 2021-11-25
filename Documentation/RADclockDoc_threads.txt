@@ -360,11 +360,11 @@ int pthread_attr_setschedparam	(pthread_attr_t*, const struct sched_param*)
 int pthread_attr_setschedpolicy	(pthread_attr_t*, int)
 /* Condition threads */
 int pthread_cond_init 			(pthread_cond_t*, pthread_condattr_t)
-	//	 Blocks on cond variable, also unlocks mutex
-	//  When awakens, will again own mutex, but won't wake until mutex is freed !
+//	 pthread_cond_wait		Blocks on cond variable, also unlocks mutex
+//  When awakens, will again own mutex, but won't wake until mutex is freed !
 int pthread_cond_wait			(pthread_cond_t* cond, pthread_mutex_t* mutex)
-	//  Unblocks thread blocked on cond.
-	//  Doesn't also release mutex used in cond_wait call, must be done separately
+//  pthread_cond_signal		Unblocks thread blocked on cond.
+//  Doesn't also release mutex used in cond_wait call, must be done separately
 int pthread_cond_signal       (pthread_cond_t*, pthread_t)
 int pthread_cond_destroy		(pthread_cond_t*);
 /* Mutexes */
@@ -643,7 +643,7 @@ poll_period is too small, eg ≤2.
 When there is more than 1 server, a separate timer and associated periodic stamp
 grid is generated for each in ntp_client_init(). The server id sID is passed to
 the timer so its identity can be recovered when the signal is caught, stored as
-lastalarm_sID off the handle or recovery by Trigger.
+lastalarm_sID off the handle for recovery by Trigger.
 Trigger handles packets for all clocks (ie to all servers) via ntp_client()
 dealing with the next alarm that fires, then determining what server it belongs to
 and adjusting pointers to use the corresponding state variables, after which

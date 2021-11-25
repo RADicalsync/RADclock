@@ -321,8 +321,8 @@ ntp_client(struct radclock_handle *handle)
 	struct bidir_algodata *algodata;
 	struct bidir_algostate *state;
 	struct radclock_error *rad_error;
-	float poll_period;
-	
+	float poll_period, gridgap;
+
 	/* Timer and polling grid data */
 	float adjusted_period;		// actual inter-request grid period used [s]
 	float starve_ratio = 1.0;	// placeholder for all servers. Not yet set by algo.
@@ -358,7 +358,8 @@ ntp_client(struct radclock_handle *handle)
 	rad_error = &handle->rad_error[sID];
 	state = &algodata->state[sID];
 	poll_period = (float) handle->conf->poll_period;	// upgrade after
-	
+	gridgap = poll_period / handle->nservers;	// currently universal, hard to generalise
+
 	/* Update adjusted_period [ the actual period used by timers ]
 	 *  - startup burst (using ntpd's BURST (#of pkts), BURST_DELAY (interval) )
 	 *  - sync algo as a function of starvation (not yet implemented)
@@ -375,14 +376,20 @@ ntp_client(struct radclock_handle *handle)
 		ntpclient_period[sID] = adjusted_period;
 	}
 
-	/* Update maxattempts.  Limit to ensure they all (whether successful or not)
-	 * will complete before the next grid point, to reduce complexity.
+	/* Control the retry code.
+    * If poll period is small, then data is plentiful for this server and we
+    * disable retries (set maxattempts = 1) to avoid complexity and risk of
+    * overlapping future grid points of this server.
+    * If grid density is higher overall, we disable retries to ensure we can
+    * complete this grid pt before the next one arrives.
+    * Otherwise, apply conservative controls to ensure all retries (successful
+    * or not) will complete before the next grid point of this server.
 	 * This does not ensure that responses can actually return within these
 	 * timeouts (ie RTT<timeout). That is ensured by timeout setting code below.
 	 */
 	maxattempts = 3;		// if pure loss, 3 enough to get response with high prob
-	if (adjusted_period <= 2)
-		maxattempts = 1;		// data plentiful, retries not worth the complexity
+	if (adjusted_period < 4 || gridgap < 3 )
+		maxattempts = 1;
 	else
 		if (maxattempts > adjusted_period/timeout - 1) {   // -1 provides a buffer
 			maxattempts = MAX(1, (int)(adjusted_period/timeout)-1);
@@ -392,8 +399,14 @@ ntp_client(struct radclock_handle *handle)
 		}
 
 
-	/* Make maxattempts to obtain (request,response) pair if encounter timeouts,
-	 * The goal is to retry to `replace` a lost pair, to help avoid starving the
+	/* The retry loop covers the special case of no retries (maxattempts=1).
+	 * In all cases, the first `retry' first sinks outstanding responses waiting
+	 * on the socket, cleaning the slate for the new reponse of the request just
+	 * made which has yet to arrive. If a retry is attempted, a further blocking
+	 * wait is made with timeout calibrated based on an inflated minRTT.
+	 * If not, then we are done.
+	 *
+	 * The goal of retries is to `replace` a lost stamp, to help avoid starving the
 	 * algo due to loss or unavailability. This is particularly important
 	 * if poll_period high, where stamps are rare.
 	 * A small value is good:  adequate for pure loss effects, and more
@@ -402,6 +415,9 @@ ntp_client(struct radclock_handle *handle)
 	 * which moreover ensures uniqueness of the xmt nonce. It one retries but
 	 * the earlier attempts do end up arriving, the result is two or more
 	 * distinct stamps sent in close proximity (and potentially overlapping).
+	 * The stamp queue logic can handle all cases.
+	 * The final retry is received with a nonblocking recvfrom: we do not wait
+	 * to see if it succeeds.
 	 */
 	retry = maxattempts;
 	while (retry > 0) {
@@ -414,71 +430,66 @@ ntp_client(struct radclock_handle *handle)
 		ret = sendto(client->socket,
 				(char *)&spkt, LEN_PKT_NOMAC /* No auth */, 0,
 				(struct sockaddr *)&client->s_to, socklen);
-
 		if (ret < 0) {
 			verbose(LOG_ERR, "NTPclient: NTP request failed, sendto: %s", strerror(errno));
 			return (1);
 		}
 
-		verbose(VERB_DEBUG, "Sent NTP request to %s at %lu.%lu with id %llu",
+		verbose(VERB_DEBUG, "Sent NTP request to %s at %lu.%lu with id %llu with maxattempts = %d",
 				inet_ntoa(client->s_to.sin_addr), tv.tv_sec, tv.tv_usec,
 				((uint64_t) ntohl(spkt.xmt.l_int)) << 32 |
-				(uint64_t) ntohl(spkt.xmt.l_fra));
+				(uint64_t) ntohl(spkt.xmt.l_fra),
+				maxattempts);
 
-		/* This will block then timeout if nothing received */
-		ret = recvfrom(client->socket,
-				&rpkt, sizeof(struct ntp_pkt), MSG_WAITALL,
+		/* Sink any response packets that are already waiting.
+		 * This includes those from pkts assumed lost following retry timeout. */
+		do {
+			ret = recvfrom(client->socket, &rpkt, sizeof(struct ntp_pkt), MSG_DONTWAIT,
 				(struct sockaddr*)&client->s_from, &socklen);
-
-		/* If dont find a response within timeout, try again.
-		 * If response doesn't match request, try an additional read of this same (final) retry.
-		 * It is likely due to the response from an earlier unneeded retry, and
-		 * the desired response for this attempt is already there waiting just behind it.
-		 * Clearing this out immediately prevents the client from getting the
-		 * (send,rcv) pairing out of sync for long stretches.
-		 * Regardless of the matching outcome(s), just continue.
-		 * All packets will eventually be caught by MAIN and stamp matching code
-		 * in DATA_PROC will deal with out-of-order and other complexities.
-		 * The goal here is to manage timeouts and have effective retries in the
-		 * common loss case (and effective management of the common unneeded
-		 * retry case), not to be a foolproof pkt matcher.
-		 * Remember:  outer retry is about trying again because you got nothing
-		 *            inner retry is about getting sth, but not what you wanted
-		 */
-		if (ret > 0) {
-			verbose(VERB_DEBUG, "Received NTP reply from %s, id %llu, on attempt %d",
-				inet_ntoa(client->s_from.sin_addr),
-				((uint64_t) ntohl(rpkt.org.l_int)) << 32 |
-				(uint64_t) ntohl(rpkt.org.l_fra), maxattempts-retry+1);
-
-			if (unmatched_ntp_pair(&spkt, &rpkt)) {
-				verbose(VERB_DEBUG, "  Got a non-matching response on "
-					"attempt %d, taking a second look :", maxattempts-retry+1);
-					
-				ret = recvfrom(client->socket,
-					&rpkt, sizeof(struct ntp_pkt), MSG_WAITALL,
-					(struct sockaddr*)&NTP_CLIENT(handle)->s_from, &socklen);
-					
-				if (ret > 0) {
-					verbose(VERB_DEBUG, "   found id %llu on this attempt",
-						((uint64_t) ntohl(rpkt.org.l_int)) << 32 |
-						(uint64_t) ntohl(rpkt.org.l_fra) );
-
-					if (unmatched_ntp_pair(&spkt, &rpkt))
-						verbose(VERB_DEBUG, "   again non-matching on this attempt");
-				} else
-					verbose(VERB_DEBUG, "   timed out on this attempt");
+			if (ret < 0) {
+				verbose(LOG_ERR, "NTPclient: NTP response failed, recvfrom: %s", strerror(errno));
+				return (1);
 			}
-			break;
-		} else
-			verbose(VERB_DEBUG, "Socket timed out (%3.lf [ms]) on attempt %d",
-				 1e3*timeout, maxattempts-retry+1);
+
+			if (ret > 0)
+				verbose(VERB_DEBUG, "Received NTP reply from %s, id %llu from prior gridpt",
+					inet_ntoa(client->s_from.sin_addr),
+					((uint64_t) ntohl(rpkt.org.l_int)) << 32 |
+					(uint64_t) ntohl(rpkt.org.l_fra));
+		} while (ret > 0);
+
+		/* In case of retries, recvfrom with timeout aiming to catch the response
+		 * of the pkt just sent. */
+		if (retry > 1) {
+			ret = recvfrom(client->socket, &rpkt, sizeof(struct ntp_pkt), MSG_WAITALL,
+					(struct sockaddr*)&client->s_from, &socklen);
+			if (ret < 0) {
+				verbose(LOG_ERR, "NTPclient: NTP response failed, recvfrom: %s", strerror(errno));
+				return (1);
+			}
+
+			if (ret > 0) {
+				verbose(VERB_DEBUG, "Received NTP reply from %s, id %llu, on attempt %d",
+					inet_ntoa(client->s_from.sin_addr),
+					((uint64_t) ntohl(rpkt.org.l_int)) << 32 |
+					(uint64_t) ntohl(rpkt.org.l_fra), maxattempts-retry+1);
+
+				if (unmatched_ntp_pair(&spkt, &rpkt))
+					verbose(VERB_DEBUG, "  response is not matching ");
+				else {
+					verbose(VERB_DEBUG, "  response matches ");
+					break;
+				}
+			} else
+				verbose(VERB_DEBUG, "No response (%3.lf [ms]) on attempt %d",
+					 1e3*timeout, maxattempts-retry+1);
+		}
 
 		retry--;
 	}
 
-	/*
-	 * Update socket timeout to adjust to client<-->server path conditions.
+	/* In the case a socket timeout is needed, update its value to adjust
+	 * to client<-->server path conditions.
 	 * The timeout must be large enough to cover almost all actual RTTs.
 	 * If it is too small, unnecessary retries will be transmitted as the
 	 * original response was not in fact lost.
@@ -496,23 +507,27 @@ ntp_client(struct radclock_handle *handle)
 	 * In more normal cases (pp,RTT)=(16,50ms)s => newtimeout=200ms << pp  :
 	 * the grid points are distant from each other and interference is not an
 	 * issue.
+	 * This timeout is not about avoiding running into the next grid point in the
+	 * multiple server setting. It is a single server idea concerned with catching
+	 * the response pkt, required for the retry code if enabled.
 	 */
-	if (algodata && state->stamp_i>0) {
-		newtimeout = MIN(1, 2*rad_error->min_RTT);
-		if (newtimeout * 1e6 < NTP_MIN_SO_TIMEOUT)
-			newtimeout = NTP_MIN_SO_TIMEOUT * 1e-6;
-		if (newtimeout > adjusted_period * 0.7)
-			newtimeout = adjusted_period * 0.7;		// ==> maxattempts=1 next time
+	if (maxattempts > 1)		// ie, if retries are activated
+		if (algodata && state->stamp_i>0) {
+			newtimeout = MIN(1, 5*rad_error->min_RTT);
+			if (newtimeout * 1e6 < NTP_MIN_SO_TIMEOUT)
+				newtimeout = NTP_MIN_SO_TIMEOUT * 1e-6;
+			if (newtimeout > adjusted_period * 0.7)
+				newtimeout = adjusted_period * 0.7;	// ==> maxattempts=1 next time
 
-		if ( fabs(newtimeout - timeout) > 4e-3 ) {		// skip trivial updates
-			tv.tv_sec = (time_t)newtimeout;
-			tv.tv_usec = (useconds_t)(1e6 * (newtimeout - (time_t)newtimeout));
-			setsockopt(client->socket, SOL_SOCKET, SO_RCVTIMEO, (void *)(&tv), tvlen);
-			ntpclient_timeout[sID] = newtimeout;
-			verbose(VERB_DEBUG, "NTPclient: Adjusting NTP client socket timeout "
-			"for server %d from %3.0lf to %3.0lf [ms]", sID, 1e3*timeout, 1e3*newtimeout);
+			if ( fabs(newtimeout - timeout) > 4e-3 ) {	// skip trivial updates
+				tv.tv_sec = (time_t)newtimeout;
+				tv.tv_usec = (useconds_t)(1e6 * (newtimeout - (time_t)newtimeout));
+				setsockopt(client->socket, SOL_SOCKET, SO_RCVTIMEO, (void *)(&tv), tvlen);
+				ntpclient_timeout[sID] = newtimeout;
+				verbose(VERB_DEBUG, "NTPclient: Adjusting NTP client socket timeout "
+				"for server %d from %3.0lf to %3.0lf [ms]", sID, 1e3*timeout, 1e3*newtimeout);
+			}
 		}
-	}
 
 	return (0);
 }

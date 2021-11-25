@@ -93,34 +93,21 @@ thread_trigger(void *c_handle)
 		handle->pthread_flag_stop = PTH_STOP_ALL;
 	
 	while ((handle->pthread_flag_stop & PTH_TRIGGER_STOP) != PTH_TRIGGER_STOP) {
-	
-		/* Check if PROC did grab the lock (since now wakeup_checkfordata=0)
-		 * and hence has processed available data.
-		 * Signal repeatedly in case somehow it was missed (eg at startup), sleep
-		 * for efficiency and probably get rescheduled.
-		 */
-		if (handle->wakeup_checkfordata == 1 && !VM_SLAVE(handle)) {
-			pthread_cond_signal(&handle->wakeup_cond);
-			usleep(50);
-			continue;
-		}
-
-		/* Now we know PROC has the lock, can block on it until PROC is done */
-		pthread_mutex_lock(&handle->wakeup_mutex);
 
 		/* Deal with this grid point: send request on time, wait for response */
 		trigger_work(handle);
 
-		/* Raise wakeup_checkfordata flag.
-		 * Signal PROC and release mutex to enable it to awaken and grab wakeup_mutex.
-		 */
+		/* Raise wakeup_checkfordata flag. */
+		pthread_mutex_lock(&handle->wakeup_mutex);
 		handle->wakeup_checkfordata = 1;
-		pthread_cond_signal(&handle->wakeup_cond);
 		pthread_mutex_unlock(&handle->wakeup_mutex);
 	}
 
 	/* Thread exit */
-	verbose(LOG_NOTICE, "Thread trigger is terminating.");	
+	verbose(LOG_NOTICE, "Thread trigger is terminating.");
+	for (int s=0; s < handle->nservers; s++) {
+		close(handle->ntp_client[s].socket);
+	}
 	pthread_exit(NULL);
 }
 
@@ -134,8 +121,10 @@ thread_data_processing(void *c_handle)
 {
 	struct radclock_handle *handle;
 	int err;
+	useconds_t pktwait, maxwait = 1000000;
 
 	JDEBUG
+
 
 	/* Deal with UNIX signal catching */
 	init_thread_signal_mgt();
@@ -143,25 +132,14 @@ thread_data_processing(void *c_handle)
 	/* Clock handle to be able to read global data */
 	handle = (struct radclock_handle *) c_handle;
 
+	/* Set wait period for the next grid point (in mus) */
+	pktwait = 1000000 * handle->conf->poll_period / handle->nservers / 2;
+	if (pktwait > maxwait || pktwait == 0)
+		pktwait = maxwait;
+	verbose(VERB_DEBUG, " thread_data_processing: pktwait = %d", pktwait);
+
 	while ((handle->pthread_flag_stop & PTH_DATA_PROC_STOP) != PTH_DATA_PROC_STOP)
 	{
-		/* Reacquire lock to continue (TRIGGER is not blocking on it) */
-		pthread_mutex_lock(&handle->wakeup_mutex);
-
-		/* Loosely signal this thread did wake up and process data */
-		handle->wakeup_checkfordata = 0;
-	
-		/* If we are meant to die but TRIGGER is already dead, it will never signal
-		 * again and we will block forever, so better die immediately.
-		 */
-		if ((handle->pthread_flag_stop & PTH_DATA_PROC_STOP) == PTH_DATA_PROC_STOP) {
-			pthread_mutex_unlock(&handle->wakeup_mutex);
-			break;
-		}
-
-		/* Allows TRIGGER to do its work, will signal when done */
-		pthread_cond_wait(&handle->wakeup_cond, &handle->wakeup_mutex);
-
 		/* Process rawdata until there is nothing more to process */
 		do {
 			err = process_stamp(handle);
@@ -174,8 +152,9 @@ thread_data_processing(void *c_handle)
 			}
 		} while (err == 0);
 
-		/* Must release lock in case thread told to STOP */
-		pthread_mutex_unlock(&handle->wakeup_mutex);
+		/* rdb empty, wait for more packets to arrive */
+		verbose(VERB_DEBUG, "   sleeping");
+		usleep(pktwait);
 	}
 
 	/* Thread exit */
