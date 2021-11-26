@@ -59,6 +59,7 @@
 #include "radclock-private.h"
 #include "kclock.h"
 
+#include "FIFO.h"
 #include "radclock_daemon.h"
 #include "logger.h"
 #include "verbose.h"
@@ -463,7 +464,15 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Multiple server management */
 	handle->nservers = 0;
 	handle->pref_sID = 0;
-	handle->lastalarm_sID = -1;
+
+	/* Buffer for sIDs of received packet request alarms
+	 * TODO: don't need buffer in piggyback mode */
+	if (FIFO_init(&handle->alarm_buffer, 64)) {
+		free(handle);
+		handle = NULL;
+		verbose(LOG_ERR, "Could not initialize alarm buffer");
+		return (NULL);
+	}
 	
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
 	strcpy(handle->hostIP, "");
@@ -477,7 +486,6 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->wakeup_checkfordata = 0;
 	pthread_mutex_init(&(handle->globaldata_mutex), NULL);
 	pthread_mutex_init(&(handle->wakeup_mutex), NULL);
-	pthread_cond_init(&(handle->wakeup_cond), NULL);
 
 	handle->syncalgo_mode = RADCLOCK_BIDIR; // hardwired, as yet not really used
 	handle->stamp_source = NULL;
@@ -1176,7 +1184,7 @@ main(int argc, char *argv[])
 	 */
 	set_verbose(handle, handle->conf->verbose_level, 0);
 	set_logger(logger_verbose_bridge);
-	
+
 	/* Daemonize now, so that we can open the log files and close connection to
 	 * stdin since we parsed the command line
 	 */
@@ -1362,10 +1370,11 @@ main(int argc, char *argv[])
 	free(((struct bidir_algodata*)handle->algodata)->output);
 	free(((struct bidir_algodata*)handle->algodata)->state);
 	destroy_stamp_queue((struct bidir_algodata*)handle->algodata);
+	FIFO_destroy(handle->alarm_buffer);
+
 	free(handle);
 	handle = NULL;
 	clock_handle = NULL;
 
 	exit(EXIT_SUCCESS);
 }
-

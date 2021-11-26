@@ -35,6 +35,8 @@
 #include <arpa/inet.h>
 //#include <netinet/in.h>
 
+//#include <sys/ioctl.h>
+
 #include <errno.h>
 #include <netdb.h>
 #include <pthread.h>
@@ -57,6 +59,7 @@
 #include "misc.h"
 #include "pthread_mgr.h"
 #include "jdebug.h"
+#include "FIFO.h"
 
 #define NTP_MIN_SO_TIMEOUT 5000		/* units of [mus] */
 #define NTP_INTIAL_SO_TIMEOUT 900000	/* very large in case RTT large */
@@ -107,8 +110,6 @@ ntp_client_init(struct radclock_handle *handle)
 	ntpclient_timerid = calloc(handle->nservers,sizeof(timer_t));
 	ntpclient_period  = calloc(handle->nservers,sizeof(float));
 	ntpclient_timeout = calloc(handle->nservers,sizeof(double));
-
-	handle->lastalarm_sID = -1;
 
 	/* Initialize socket timeout value to well over expected congested RTT */
 	so_timeout.tv_sec = 0;
@@ -168,8 +169,8 @@ ntp_client_init(struct radclock_handle *handle)
 			verbose(LOG_ERR, "NTPclient: POSIX timer create failed");
 			return (1);
 		}
-		/* After a short wait, stagger starting grids over the first half poll_period */
-		if (set_ptimer(*timerid, 0.5 + poll_period*s/(2*handle->nservers), poll_period) < 0) {
+		/* After a short wait, stagger starting grids over the poll_period */
+		if (set_ptimer(*timerid, 0.5 + (poll_period*s)/handle->nservers, poll_period) < 0) {
 			verbose(LOG_ERR, "NTPclient: POSIX timer cannot be set");
 			return (1);
 		}
@@ -343,12 +344,17 @@ ntp_client(struct radclock_handle *handle)
 	tvlen = (socklen_t) sizeof(struct timeval);
 	algodata = handle->algodata;
 
-	/* Sleep until alarm for next grid point goes off */
+	/* Determine the sID of the next grid point to be sent.
+	 * If the alarm FIFO buffer is not empty we have a backlog: get the head
+	 * value and process immediately. Otherwise, wait for the next signal,
+	 * then get its sID from the buffer then process it. */
 	pthread_mutex_lock(&alarm_mutex);
-	pthread_cond_wait(&alarm_cwait, &alarm_mutex);
-	sID = handle->lastalarm_sID;		// discover the server of this grid point
-	verbose(VERB_DEBUG, "Alarm caught for server %d", sID);
+	while (FIFO_get(handle->alarm_buffer, &sID))	// if buffer empty
+		pthread_cond_wait(&alarm_cwait, &alarm_mutex);	// wait for next alarm
+
+	
 	pthread_mutex_unlock(&alarm_mutex);
+	verbose(VERB_DEBUG, "Grid Alarm retrieved for server %d", sID);
 
 	/* Set to data for this server */
 	client = &handle->ntp_client[sID];

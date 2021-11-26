@@ -91,7 +91,7 @@ thread_trigger(void *c_handle)
 	err = trigger_init(handle);
 	if (err)
 		handle->pthread_flag_stop = PTH_STOP_ALL;
-	
+
 	while ((handle->pthread_flag_stop & PTH_TRIGGER_STOP) != PTH_TRIGGER_STOP) {
 
 		/* Deal with this grid point: send request on time, wait for response */

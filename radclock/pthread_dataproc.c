@@ -1149,5 +1149,3 @@ process_stamp(struct radclock_handle *handle)
 	JDEBUG_RUSAGE
 	return (0);
 }
-
-

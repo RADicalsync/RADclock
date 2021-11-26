@@ -54,7 +54,7 @@
 #include "pthread_mgr.h"
 #include "jdebug.h"
 
-
+#include "FIFO.h"
 
 // TODO check if these two have to stay here or should be moved elsewhere.
 // have been extern'ed in client_ntp.c
@@ -86,16 +86,22 @@ extern struct radclock_handle *clock_handle;
 /*
  * Timer handler
  * Timers are created with the sID recorded, recoverable via passed *info.
- * We record this under the handle so ntp_client can know whose alarm fired.
+ * We store the sIDs of signals in a FIFO buffer to ensure they aren't missed during
+ * progressing in TRIGGER in ntp_client.
  */
 void catch_alarm(int sig, siginfo_t *info, void *uap)
 {
 	JDEBUG
-	
-	pthread_mutex_lock(&alarm_mutex);
+
+	//verbose(VERB_DEBUG, "Alarm caught for server %d", info->si_value.sival_int);
 	//tid = info->si_timerid;	// fails! not equal to timer_create's timerid!
-	clock_handle->lastalarm_sID = info->si_value.sival_int;
-	//verbose(LOG_DEBUG, "Alarm caught with si_value = %d", val);
+
+	pthread_mutex_lock(&alarm_mutex);
+	// TODO: THERE IS A RACE CONDITION WHEN THE FIFO IS FULL
+	if (FIFO_put(clock_handle->alarm_buffer, info->si_value.sival_int)) {
+		verbose(LOG_WARNING, "alarm_buffer is full! tail value overwritten");
+	}
+
 	pthread_cond_signal(&alarm_cwait);
 	pthread_mutex_unlock(&alarm_mutex);
 }
