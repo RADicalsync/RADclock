@@ -459,6 +459,8 @@ destroy_stamp_queue(struct bidir_algodata *algodata)
  * Other kinds of halfstamp cleaning (based on temporal ordering, not id) are
  * dealt with in get_fullstamp_from_queue_andclean.
  *
+ * Stamps from different servers are treated in the same way.
+ *
  * The prev direction is toward the queue head/start.
  * Return codes: err = 0 : halfstamp insertion resulted in fullstamp
  *               err = 1 : insertion but no fullstamp, or halfstamp dropped
@@ -480,21 +482,24 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	qel = q->start;
 	while (qel != NULL) {
 		stamp = &qel->stamp;
-		if (stamp->id == new->id) {
+
+		if (stamp->id == new->id) {		// this id in the queue already
 			switch (mode) {
 				case MODE_CLIENT:
 					if (BST(stamp)->Ta != 0) {
-						verbose(LOG_WARNING, "Found duplicate NTP client request.");
+						verbose(LOG_WARNING, "Dropping duplicate NTP client request.");
 						return (1);
 					}
 					break;
 
 				case MODE_SERVER:
 					if (BST(stamp)->Tf != 0) {
-						verbose(LOG_WARNING, "Found duplicate NTP server request.");
+						verbose(LOG_WARNING, "Dropping duplicate NTP server response.");
 						return (1);
 					}
+					break;
 			}
+
 			foundhalfstamptofill = 1;		// qel will point to stamp to fill
 			break;
 		}
@@ -523,23 +528,24 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			q->start->prev = qel;
 		q->start = qel;
 		q->size++;
+
+		/* Fill fields common to both halfstamps */
 		switch (mode) {
 			case MODE_CLIENT:
 			case MODE_SERVER:
 			qel->stamp.type = STAMP_NTP;
 		}
+		qel->stamp.id = new->id;
 	}
 
 	/* Selectively copy content of new halfstamp into stamp to fill (*qel). */
 	stamp = &qel->stamp;
 	switch (mode) {
 		case MODE_CLIENT:
-			stamp->id = new->id;
-			BST(stamp)->Ta = BST(new)->Ta;
 			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
+			BST(stamp)->Ta = BST(new)->Ta;
 			break;
 		case MODE_SERVER:
-			stamp->id = new->id;
 			stamp->ttl = new->ttl;
 			stamp->refid = new->refid;
 			stamp->stratum = new->stratum;
@@ -551,15 +557,20 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			BST(stamp)->Tf = BST(new)->Tf;
 	}
 
-	/* Print out queue from head to tail (oldest in queue at top of printout). */
+	/* Print out queue from head to tail (youngest at top of printout). */
 	if (VERB_LEVEL>1) {
 		qel = q->start;
+
 		while (qel != NULL) {
 			stamp = &qel->stamp;
-			verbose(VERB_DEBUG, "  stamp queue dump: %llu %.6Lf %.6Lf %llu %llu %s",
-				(long long unsigned) BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-				(long long unsigned) BST(stamp)->Tf, (long long unsigned) stamp->id,
+			if (stamp->type == STAMP_NTP) {
+				verbose(VERB_DEBUG, "  stamp queue dump: [%llu]   %llu %llu %.6Lf %.6Lf %s",
+				(long long unsigned) stamp->id,
+				(long long unsigned) BST(stamp)->Ta, (long long unsigned) BST(stamp)->Tf,
+				BST(stamp)->Tb, BST(stamp)->Te,
 				stamp->server_ipaddr);
+			}
+
 			qel = qel->next;
 		}
 	}
@@ -862,7 +873,7 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	vcounter_t	full_time=0;			// used to record stamp order
 	vcounter_t	Tc;
 	int startsize;
-	int c_halfstamp, s_halfstamp, fullstamp;
+	int c_halfstamp, s_halfstamp, fullstamp, dangerous;
 	int c_older, s_older;				// records if halfstamps older than full one
 
 	JDEBUG
@@ -872,10 +883,6 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 		return (1);
 	} else
 	  	startsize = q->size;
-
-// TODO:  add a fast path here for simple common case of startsize =1 ?
-//   quick check if full as expected, if not error, else copy out and
-//   free and reset queue, return(0)
 
    /* Scan queue from tail to head to find and pass back oldest full stamp */
 	qel = q->end;
@@ -904,15 +911,20 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	qel = q->end;
 	while (qel != NULL) {
 		st = &qel->stamp;
+
+		/* Determine the scenario posed by this stamp */
 		c_halfstamp = (BST(st)->Ta != 0) && (BST(st)->Tf == 0);
 		s_halfstamp = (BST(st)->Ta == 0) && (BST(st)->Tf != 0);
 		if (s_halfstamp)
 			verbose(LOG_WARNING, "Found server halfstamp in stamp queue");
 		c_older = c_halfstamp && BST(st)->Ta < full_time;
 		s_older = s_halfstamp && BST(st)->Tf < BST(full_st)->Tf;
+		dangerous = s_older ||
+						(c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0);
+		if (dangerous)
+			verbose(VERB_DEBUG, "Clearing out dangerous halfstamp");
 
-		if (st == full_st || s_older ||
-			 (c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) )
+		if (st == full_st || dangerous)
 	   {	/* Remove *qel from queue, reset qel to continue loop */
 			if (qel==q->end) {
 				if (qel==q->start) {			// only 1 stamp in queue

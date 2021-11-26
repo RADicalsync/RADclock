@@ -446,10 +446,6 @@ ntp_client(struct radclock_handle *handle)
 		do {
 			ret = recvfrom(client->socket, &rpkt, sizeof(struct ntp_pkt), MSG_DONTWAIT,
 				(struct sockaddr*)&client->s_from, &socklen);
-			if (ret < 0) {
-				verbose(LOG_ERR, "NTPclient: NTP response failed, recvfrom: %s", strerror(errno));
-				return (1);
-			}
 
 			if (ret > 0)
 				verbose(VERB_DEBUG, "Received NTP reply from %s, id %llu from prior gridpt",
@@ -463,10 +459,6 @@ ntp_client(struct radclock_handle *handle)
 		if (retry > 1) {
 			ret = recvfrom(client->socket, &rpkt, sizeof(struct ntp_pkt), MSG_WAITALL,
 					(struct sockaddr*)&client->s_from, &socklen);
-			if (ret < 0) {
-				verbose(LOG_ERR, "NTPclient: NTP response failed, recvfrom: %s", strerror(errno));
-				return (1);
-			}
 
 			if (ret > 0) {
 				verbose(VERB_DEBUG, "Received NTP reply from %s, id %llu, on attempt %d",
@@ -513,7 +505,7 @@ ntp_client(struct radclock_handle *handle)
 	 */
 	if (maxattempts > 1)		// ie, if retries are activated
 		if (algodata && state->stamp_i>0) {
-			newtimeout = MIN(1, 5*rad_error->min_RTT);
+			newtimeout = MIN(1, 2*rad_error->min_RTT);
 			if (newtimeout * 1e6 < NTP_MIN_SO_TIMEOUT)
 				newtimeout = NTP_MIN_SO_TIMEOUT * 1e-6;
 			if (newtimeout > adjusted_period * 0.7)
