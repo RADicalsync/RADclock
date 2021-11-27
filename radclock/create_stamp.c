@@ -990,7 +990,6 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	JDEBUG
 
 	err = 0;
-//	attempt_wait = 1000;					/* [mus]  500 suitable for LAN RTT */
 	maxattempts = 20;
 	q = ((struct bidir_algodata*)handle->algodata)->q;
 	packet = create_radpcap_packet();
@@ -1042,10 +1041,6 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	 */
 	case RADCLOCK_SYNC_LIVE:
 	
-		verbose(VERB_DEBUG, " get_network_stamp: wakeup_checkfordata = %d", handle->wakeup_checkfordata);
-		pthread_mutex_lock(&handle->wakeup_mutex);
-		handle->wakeup_checkfordata = 0;
-		pthread_mutex_unlock(&handle->wakeup_mutex);
 		for (attempt=maxattempts; attempt>0; attempt--) {
 			err = get_packet(handle, userdata, &packet); // 1= no rbd data or error
 			if (err) {

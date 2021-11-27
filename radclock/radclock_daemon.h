@@ -159,9 +159,6 @@ struct radclock_handle {
 	pthread_t threads[8];		/* TODO: quite ugly implementation ... */
 	int	pthread_flag_stop;
 	pthread_mutex_t globaldata_mutex;
-	int wakeup_checkfordata;
-	pthread_mutex_t wakeup_mutex;
-	pthread_cond_t wakeup_cond;
 
 	/* Configuration */
 	struct radclock_config *conf;

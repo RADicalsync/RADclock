@@ -69,15 +69,11 @@ int ntp_client_init(struct radclock_handle *handle);
 int ntp_client(struct radclock_handle *handle);
 
 
-/*
- * This one does nothing except sleep and wake up the processing thread every
- * second.
+/* Do nothing except sleep and wake up the processing thread periodically
+ * TODO: check is still need this at all.
  */
-int
-dummy_client() { JDEBUG
-
-	/* 500 ms */
-	usleep(500000);
+int dummy_client() {
+	usleep(500000);	// 500ms
 	return (0);
 }
 
@@ -89,18 +85,15 @@ extern struct radclock_handle *clock_handle;
  * We store the sIDs of signals in a FIFO buffer to ensure they aren't missed during
  * progressing in TRIGGER in ntp_client.
  */
-void catch_alarm(int sig, siginfo_t *info, void *uap)
+void
+catch_alarm(int sig, siginfo_t *info, void *uap)
 {
-	JDEBUG
-
 	//verbose(VERB_DEBUG, "Alarm caught for server %d", info->si_value.sival_int);
-	//tid = info->si_timerid;	// fails! not equal to timer_create's timerid!
-
 	pthread_mutex_lock(&alarm_mutex);
-	// TODO: THERE IS A RACE CONDITION WHEN THE FIFO IS FULL
-	if (FIFO_put(clock_handle->alarm_buffer, info->si_value.sival_int)) {
-		verbose(LOG_WARNING, "alarm_buffer is full! tail value overwritten");
-	}
+	if (clock_handle->alarm_buffer)	// TRIGGER may have just died
+		if (FIFO_put(clock_handle->alarm_buffer, info->si_value.sival_int)) {
+			verbose(LOG_WARNING, "alarm_buffer is full! tail value overwritten");
+		}
 
 	pthread_cond_signal(&alarm_cwait);
 	pthread_mutex_unlock(&alarm_mutex);

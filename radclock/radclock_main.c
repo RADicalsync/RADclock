@@ -465,17 +465,11 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->nservers = 0;
 	handle->pref_sID = 0;
 
-	/* Buffer for sIDs of received packet request alarms
-	 * TODO: don't need buffer in piggyback mode */
-	if (FIFO_init(&handle->alarm_buffer, 64)) {
-		free(handle);
-		handle = NULL;
-		verbose(LOG_ERR, "Could not initialize alarm buffer");
-		return (NULL);
-	}
-	
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
 	strcpy(handle->hostIP, "");
+
+	/* Buffer for sIDs of received packet request alarms */
+	handle->alarm_buffer = NULL;
 
 	/* Output files */
 	handle->stampout_fd = NULL;
@@ -483,9 +477,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 
 	/* Thread related */
 	handle->pthread_flag_stop = 0;
-	handle->wakeup_checkfordata = 0;
 	pthread_mutex_init(&(handle->globaldata_mutex), NULL);
-	pthread_mutex_init(&(handle->wakeup_mutex), NULL);
 
 	handle->syncalgo_mode = RADCLOCK_BIDIR; // hardwired, as yet not really used
 	handle->stamp_source = NULL;
@@ -1349,8 +1341,6 @@ main(int argc, char *argv[])
 
 	/* Clear thread stuff */
 	pthread_mutex_destroy(&(handle->globaldata_mutex));
-	pthread_mutex_destroy(&(handle->wakeup_mutex));
-	pthread_cond_destroy(&(handle->wakeup_cond));
 
 	/* Detach IPC shared memory if were running as IPC server. */
 	if (handle->conf->server_ipc == BOOL_ON)
@@ -1370,7 +1360,6 @@ main(int argc, char *argv[])
 	free(((struct bidir_algodata*)handle->algodata)->output);
 	free(((struct bidir_algodata*)handle->algodata)->state);
 	destroy_stamp_queue((struct bidir_algodata*)handle->algodata);
-	FIFO_destroy(handle->alarm_buffer);
 
 	free(handle);
 	handle = NULL;

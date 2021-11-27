@@ -126,10 +126,16 @@ ntp_client_init(struct radclock_handle *handle)
 	sig_struct.sa_sigaction = catch_alarm;	// info prototype since SA_SIGINFO set
 	/* Initialise the signal data */
 	sigaction(SIGALRM, &sig_struct, NULL);
-		
+
 	/* Initialize thread comms to return to TRIGGER after MAIN catches signal */
 	pthread_mutex_init(&alarm_mutex, NULL);
 	pthread_cond_init(&alarm_cwait, NULL);
+
+	/* Create FIFO queue to buffer the sIDs of received packet request alarms */
+	if (FIFO_init(&handle->alarm_buffer, 64)) {
+		verbose(LOG_ERR, "Could not initialize alarm buffer");
+		return (1);
+	}
 
 	/* Loop over all servers to set up networking data and timers for each */
 	for (s=0; s < handle->nservers; s++) {
@@ -345,14 +351,13 @@ ntp_client(struct radclock_handle *handle)
 	algodata = handle->algodata;
 
 	/* Determine the sID of the next grid point to be sent.
-	 * If the alarm FIFO buffer is not empty we have a backlog: get the head
+	 * If the alarm FIFO buffer is not empty we have a backlog: pop the head
 	 * value and process immediately. Otherwise, wait for the next signal,
 	 * then get its sID from the buffer then process it. */
 	pthread_mutex_lock(&alarm_mutex);
 	while (FIFO_get(handle->alarm_buffer, &sID))	// if buffer empty
 		pthread_cond_wait(&alarm_cwait, &alarm_mutex);	// wait for next alarm
 
-	
 	pthread_mutex_unlock(&alarm_mutex);
 	verbose(VERB_DEBUG, "Grid Alarm retrieved for server %d", sID);
 

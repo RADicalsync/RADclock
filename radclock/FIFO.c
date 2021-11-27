@@ -91,7 +91,6 @@ int FIFO_destroy(struct FIFO *fifo)
 	fifo->buffer = NULL;
 
 	free(fifo);
-	fifo=NULL;
 
 	return 0;
 }

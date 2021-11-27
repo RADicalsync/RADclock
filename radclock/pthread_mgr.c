@@ -92,22 +92,17 @@ thread_trigger(void *c_handle)
 	if (err)
 		handle->pthread_flag_stop = PTH_STOP_ALL;
 
-	while ((handle->pthread_flag_stop & PTH_TRIGGER_STOP) != PTH_TRIGGER_STOP) {
-
-		/* Deal with this grid point: send request on time, wait for response */
+	/* Deal with the next grid point */
+	while ((handle->pthread_flag_stop & PTH_TRIGGER_STOP) != PTH_TRIGGER_STOP)
 		trigger_work(handle);
-
-		/* Raise wakeup_checkfordata flag. */
-		pthread_mutex_lock(&handle->wakeup_mutex);
-		handle->wakeup_checkfordata = 1;
-		pthread_mutex_unlock(&handle->wakeup_mutex);
-	}
 
 	/* Thread exit */
 	verbose(LOG_NOTICE, "Thread trigger is terminating.");
 	for (int s=0; s < handle->nservers; s++) {
 		close(handle->ntp_client[s].socket);
 	}
+	FIFO_destroy(handle->alarm_buffer);
+	handle->alarm_buffer = NULL;
 	pthread_exit(NULL);
 }
 
@@ -153,7 +148,6 @@ thread_data_processing(void *c_handle)
 		} while (err == 0);
 
 		/* rdb empty, wait for more packets to arrive */
-		verbose(VERB_DEBUG, "   sleeping");
 		usleep(pktwait);
 	}
 
