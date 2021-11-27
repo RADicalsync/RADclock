@@ -9,7 +9,7 @@
 #include "verbose.h"
 #include "FIFO.h"
 
-/* Initialize the buffer and return its address */
+/* Initialize the queue, its buffer, and return its address */
 int FIFO_init(struct FIFO **fifo, int buff_size)
 {
 	struct FIFO *new_fifo;
@@ -33,6 +33,7 @@ int FIFO_init(struct FIFO **fifo, int buff_size)
 	return 0;
 }
 
+/* Pop the oldest entry in the queue. If the queue is empty, return -1. */
 int FIFO_get(struct FIFO *fifo, int *data)
 {
 	if (fifo->putID == fifo->getID)
@@ -59,7 +60,7 @@ int FIFO_put(struct FIFO *fifo, int data)
 
 	/* If buffer full, oldest value will be overwritten, advance to next */
 	if ((fifo->putID - fifo->getID) >= fifo->capacity) {	// if full
-		fifo->getID = fifo->putID + 1;
+		fifo->getID++;
 		ret = -1;
 	}
 
