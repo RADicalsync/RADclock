@@ -103,6 +103,8 @@ ff-kernel-src:
     COPY $SRC/vdso.lds.S                        $DEST/arch/x86/entry/vdso/
     COPY $SRC/vdsox32.lds.S                     $DEST/arch/x86/entry/vdso/
 
+    # Copy assembly build scripts for 32 bit VDSO (needed?)
+    COPY $SRC/vdso32.lds.S               $DEST/arch/x86/entry/vdso/vdso32/
 
 
 copy-src:
