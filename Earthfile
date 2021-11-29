@@ -109,6 +109,8 @@ ff-kernel-src:
 
 copy-src:
     FROM +ff-kernel-src
+    # Switch our working directory back
+    WORKDIR /RADclock
     # Copy everything for now
     COPY . ./
     # Generate version
