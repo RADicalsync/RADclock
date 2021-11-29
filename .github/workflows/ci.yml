@@ -29,7 +29,8 @@ jobs:
         with:
           version: v0.5.24
       - uses: actions/checkout@v2
-        fetch-depth: 0
+        with:
+          fetch-depth: 0
       - name: Build radclock for AMD64
         run: earthly +build-radclock-with-kernel
       - uses: actions/upload-artifact@v2
