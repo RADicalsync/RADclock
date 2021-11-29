@@ -99,6 +99,9 @@ ff-kernel-src:
     COPY $SRC/vclock_gettime.c                  $DEST/arch/x86/entry/vdso/
     COPY $SRC/vgtod.h                           $DEST/arch/x86/include/asm/
 
+    # Copy assembly build scripts for 64 bit VDSO
+    COPY $SRC/vdso.lds.S                        $DEST/arch/x86/entry/vdso/
+    COPY $SRC/vdsox32.lds.S                     $DEST/arch/x86/entry/vdso/
 
 
 
