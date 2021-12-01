@@ -99,18 +99,25 @@ ff-kernel-src:
     COPY $SRC/vclock_gettime.c                  $DEST/arch/x86/entry/vdso/
     COPY $SRC/vgtod.h                           $DEST/arch/x86/include/asm/
 
+    # Copy assembly build scripts for 64 bit VDSO
+    COPY $SRC/vdso.lds.S                        $DEST/arch/x86/entry/vdso/
+    COPY $SRC/vdsox32.lds.S                     $DEST/arch/x86/entry/vdso/
 
+    # Copy assembly build scripts for 32 bit VDSO (needed?)
+    COPY $SRC/vdso32.lds.S               $DEST/arch/x86/entry/vdso/vdso32/
 
 
 copy-src:
     FROM +ff-kernel-src
+    # Switch our working directory back
+    WORKDIR /RADclock
     # Copy everything for now
     COPY . ./
     # Generate version
     RUN ./version.sh
 
 
-build:
+build-radclock-no-kernel:
     FROM +copy-src
     RUN autoreconf -i
     # Configure the build
@@ -123,7 +130,7 @@ build:
     SAVE ARTIFACT /radclock-build AS LOCAL ./artifacts/
 
 
-build-radclock:
+build-radclock-with-kernel:
     FROM +copy-src
     # Install the netlink libraries for the RADclock kernel support
     RUN apt-get install -y libnl-3-dev libnl-genl-3-dev

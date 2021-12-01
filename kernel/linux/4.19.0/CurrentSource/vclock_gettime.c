@@ -355,8 +355,8 @@ time_t time(time_t *t)
 #ifdef CONFIG_FFCLOCK
 
 // Hack since they are not being picked up from unistd.h
-#define __NR_ffclock_getcounter 335
-#define __NR_ffclock_getcounter_latency 336
+//#define __NR_ffclock_getcounter 335
+//#define __NR_ffclock_getcounter_latency 336
 /* Equivalent to ffclock_read_counter in timekeeping.c */
 notrace static inline ffcounter vread_ffcounter(void)
 {
