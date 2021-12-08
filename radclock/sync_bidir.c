@@ -896,18 +896,28 @@ process_RTT_warmup(struct bidir_algostate *state, vcounter_t RTT)
 }
 
 
-/* Over warmup window, simple global minimum over all stamps :
+/* OWD algorithm [ identical for each direction ]
+ *  OWD warmup period (<=filstart) Minimum filtering is skipped, since RADclock
+ *  parameters are unreliable, and minimum estimates could be trapped at an
+ *  incorrect low value, or temporarily be at a very large value (eg for stamp 1).
+ *  To avoid these cases, all estimates are clipped to lie in [0,globalmin]
+ *  (however the raw values are stored).
+ *
+ *  After warmup period
+ *   - ignore non +ve values, otherwise global minimum over all stamps
  *   - no upward detection (not even informational, as has window complexities)
- *     An exception is made in case of an increase from an impossible 0
+ *     A (silent) exception is made in case of an increase from an impossible 0
  *   - no storage into defined *hat_hist histories, as never used
- * Filtering is skipped during a OWDwarmup period, since RADclock parameters are
- * unreliable, and minimum estimate could be trapped at an incorrect low value.
- * Negative values for estimates are forbidden at all times, but raw values stored.
- * All downshifts are flagged, no matter how small for simplicity (are rare).
+ *   - all downshifts are flagged, no matter how small for simplicity (are rare).
+ *
+ * Asym algorithm
+ *   - no native raw or filtered asym value, instead estimate based off OWD estimates
+ *   - if clipping detected, the OWDs are unreliable, revert to asym = 0.  In
+ *     this way asym can be protected without disturbing the OWD algorithm.
  *
  * Subtlety: effectively, the current clock is used to evaluate a shift in the new stamp,
  * which will immediately be factored into the clock subsequently in thetanaive,
- * but not necessarilty int the new theta until later.
+ * but not necessarilty into the new theta until later.
  * TODO: consider if good to merge with RTT_warmup to form _Path_warmup
  */
 void
@@ -915,7 +925,9 @@ process_OWDAsym_warmup(struct bidir_algostate *state, struct bidir_stamp *stamp)
 {
 	double Df, Db, Asym;	// `raw' values calculated for this stamp
 	double TS;				// central server value, defines asym, ensures Df+Db=RTT
-	int filstart = 10;	// don't use minimum filtering before this
+	int filstart = 20;	// don't use minimum filtering before this
+	float globalmin = 0.2;	// upper bound on OWD minimum [s] for any sane client<->server path
+	int crazy = 0;
 
 	/* Calculate raw OWD values for this stamp, and record */
 	TS = (stamp->Tb + stamp->Te) / 2;
@@ -926,33 +938,50 @@ process_OWDAsym_warmup(struct bidir_algostate *state, struct bidir_stamp *stamp)
 
 	/* Perform minimum filtering after OWDwarmup for each OWD separately */
 	/* Update Df minimum */
-	if ( state->stamp_i < filstart )
-		state->Dfhat = MIN(1,MAX(0,Df));	// insist early estimates lie in [0,1]
-	else
+	if ( state->stamp_i < filstart ) {
+		state->Dfhat = MIN(globalmin,MAX(0,Df));
+		verbose(VERB_SYNC, "i=%lu: Df startup: (Df,minDf) = (%5.2lf, %5.2lf) [ms]",
+						state->stamp_i, Df*1e3, state->Dfhat*1e3);
+	} else
 		if (state->Dfhat == 0 && Df > 0)	// allow Upjump immediately if Dfhat bogus
 			state->Dfhat = Df;
 		else
 			if (Df < state->Dfhat && Df > 0) {
-				verbose(VERB_SYNC, "i=%lu: Downward Df shift of %5.2lf [mus], minDf now %5.2lf [ms]",
-						state->stamp_i, (state->Dfhat - Df) * 1.e6, Df * 1e3);
+				verbose(VERB_SYNC, "i=%lu: Downward Df shift of %5.2lf [mus], %5.2lf --> %5.2lf [ms]",
+						state->stamp_i, (state->Dfhat - Df)*1.e6, state->Dfhat*1e3, Df*1e3);
 				state->Dfhat = Df;
 			}
 
 	/* Update Db minimum */
-	if ( state->stamp_i < filstart )
-		state->Dbhat = MIN(1,MAX(0,Db));	// insist estimates lie in [0,1]
-	else
+	if ( state->stamp_i < filstart ) {
+		state->Dbhat = MIN(globalmin,MAX(0,Db));
+		verbose(VERB_SYNC, "i=%lu: Db startup: (Db,minDb) = (%5.2lf, %5.2lf) [ms]",
+						state->stamp_i, Db*1e3, state->Dbhat*1e3);
+	} else
 		if (state->Dbhat == 0 && Db > 0)	// allow Upjump immediately if Dbhat bogus
 			state->Dbhat = Db;
 		else
 			if (Db < state->Dbhat && Db > 0) {
-				verbose(VERB_SYNC, "i=%lu: Downward Db shift of %5.2lf [mus], minDb now %5.2lf [ms]",
-						state->stamp_i, (state->Dbhat - Db) * 1.e6, Db * 1e3);
+				verbose(VERB_SYNC, "i=%lu: Downward Db shift of %5.2lf [mus], %5.2lf --> %5.2lf [ms]",
+						state->stamp_i, (state->Dbhat - Db)*1.e6, state->Dbhat*1e3, Db*1e3);
 				state->Dbhat = Db;
 			}
 
-	/* Asym */
-	Asym = state->Dfhat - state->Dbhat;
+	/* Flag an unreliable OWD in at least one direction
+	 * Typically triggered on pkt 1 as Ca parameters still set as pkt 0 */
+	if ( state->Dfhat == globalmin || state->Dfhat == 0 ||
+		  state->Dbhat == globalmin || state->Dbhat == 0 ) {
+		crazy = 1;
+		verbose(VERB_SYNC, "i=%lu: OWD found to be crazy:  (minDf,minDb) = (%5.2lf, %5.2lf) [ms]",
+						state->stamp_i, state->Dfhat*1e3, state->Dbhat*1e3);
+	}
+
+	/* Update Asym */
+	if (crazy)
+		Asym = 0;
+	else
+		Asym = state->Dfhat - state->Dbhat;
+
 	state->Asymhat = Asym;
 
 }
@@ -961,7 +990,7 @@ process_OWDAsym_warmup(struct bidir_algostate *state, struct bidir_stamp *stamp)
 /* Normal updating of OWD minima tracking, and OWD Upshift detection.
  * Resultant Asym estimate.
  * Windows are the same as for RTT
- * Negative values for estimates are forbidden at all times, but raw values stored.
+ * Non +ve values for estimates are ignored, but raw values stored.
  * TODO: consider adding status bits for OWD upshift detection
  */
 void
@@ -985,8 +1014,8 @@ process_OWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
 	history_add(&state->Db_hist, state->stamp_i, &Db);
 
 	/* Perform minimum filtering for each OWD separately.
-	 * Update both D#hat and next_D#hat
 	 * All downshifts are flagged, no matter how small for simplicity (are rare).
+	 * Filtered update ignored if value is negative.
 	 * TODO: add informational Dshift detections
 	 */
 	last_Df = state->Dfhat;
@@ -1000,10 +1029,13 @@ process_OWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
 		verbose(VERB_SYNC, "i=%lu: Downward Db shift of %5.2lf [mus], minDb now %5.2lf [ms]",
 					state->stamp_i, (state->Dbhat - Db) * 1.e6, Db*1e3);
 		state->Dbhat = Db;
-
 	}
-	state->next_Dfhat = MAX(0,MIN(state->next_Dfhat, Df));
-	state->next_Dbhat = MAX(0,MIN(state->next_Dbhat, Db));
+
+	/* Perform same algorithm for online next_*hat estimators */
+	if (Df < state->next_Dfhat && Df > 0)
+		state->next_Dfhat = Df;
+	if (Db < state->next_Dbhat && Db > 0)
+		state->next_Dbhat = Db;
 
 	/* Update shift window minima and the window itself (shared over both OWDs) */
 	if ( state->stamp_i < (state->shift_win-1) + state->shift_end_OWD ) {
@@ -2386,15 +2418,15 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 
 	collect_stats_state(state, stamp);
 	if (state->stamp_i < state->warmup_win) {
-		process_OWDAsym_warmup(state, stamp);
 		process_RTT_warmup(state, RTT);
+		process_OWDAsym_warmup(state, stamp);
 		process_phat_warmup(state, RTT, warmup_winratio);
 		process_plocal_warmup(state);
 		process_thetahat_warmup(state, rad_data, phyparam, RTT, stamp, output);
 	}
 	else {
-		process_OWDAsym_full(state, stamp);
 		process_RTT_full(state, rad_data, RTT);
+		process_OWDAsym_full(state, stamp);
 		record_packet_j(state, RTT, stamp);
 		phat_sanity_raised = process_phat_full(state, rad_data, phyparam, RTT,
 				stamp, qual_warning);
