@@ -965,16 +965,10 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 
  
  
-
 /*
- * Retrieve network packet from live or dead pcap device. This routine tries to
- * handle out of order arrival of packets (for both dead and
- * live input) by adding an extra stamp queue to serialise stamps. There are a
- * few tricks to handle delayed packets when running live. Delayed packets
- * translate into an empty raw data buffer and the routine makes several
- * attempts to get delayed packets. Delays can be caused by a large RTT in 
- * piggy-backing mode (asynchronous wake), or busy system where pcap path is 
- * longer than NTP client UDP socket path.
+ * Retrieve network packet from live or dead pcap device.
+ * The stamp queue infrastructure is used to handle out of order packets (for
+ * both dead and live input) and other aberrations.
  */
 int
 get_network_stamp(struct radclock_handle *handle, void *userdata,
@@ -985,7 +979,6 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	radpcap_packet_t *packet;
 	int attempt, maxattempts;
 	int err;
-	useconds_t attempt_wait;
 
 	JDEBUG
 
@@ -1034,17 +1027,16 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 		break;
 
 
-	/* Read packet from raw data queue. Have probably been woken by trigger 
-	 * thread, hoping to see both a client and server reply. In any event, will
-	 * make several attempts to get enough packets, and hence halfstamps, to find
-	 * a fullstamp to return.
+	/* Read packet from raw data queue and insert into stamp queue until find a
+	 * fullstamp to return, or until no data left. Cap the maximum number of
+	 * pkts inserted before returning for a rest.
 	 */
 	case RADCLOCK_SYNC_LIVE:
 	
 		for (attempt=maxattempts; attempt>0; attempt--) {
 			err = get_packet(handle, userdata, &packet); // 1= no rbd data or error
 			if (err) {
-				verbose(VERB_DEBUG, " get_network_stamp: out of data on attempt %d", maxattempts-attempt+1);
+//				verbose(VERB_DEBUG, " get_network_stamp: out of data on attempt %d", maxattempts-attempt+1);
 				break;
 			} else {		// found a packet, process it
 				stats->ref_count++;
@@ -1060,7 +1052,6 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 					break;
 				}
 
-				/* Safety belt to avoid infinite loop, should never execute. */
 				if (attempt == 1)
 					verbose(VERB_DEBUG, " get_network_stamp: giving up full stamp "
 						"search after %d attempts, though data still available", maxattempts);

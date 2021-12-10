@@ -120,7 +120,6 @@ thread_data_processing(void *c_handle)
 
 	JDEBUG
 
-
 	/* Deal with UNIX signal catching */
 	init_thread_signal_mgt();
 	

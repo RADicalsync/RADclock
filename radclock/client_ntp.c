@@ -399,7 +399,7 @@ ntp_client(struct radclock_handle *handle)
 	 * timeouts (ie RTT<timeout). That is ensured by timeout setting code below.
 	 */
 	maxattempts = 3;		// if pure loss, 3 enough to get response with high prob
-	if (adjusted_period < 4 || gridgap < 3 )
+	if (adjusted_period < 4 || gridgap < 3)
 		maxattempts = 1;
 	else
 		if (maxattempts > adjusted_period/timeout - 1) {   // -1 provides a buffer

@@ -71,8 +71,7 @@ The stamp data structure: struct stamp_t holds more than just the
 
 struct stamp_t {
     stamp_type_t type;  // STAMP_{UNKNOWN,SPY,NTP,PPS}
-    int qual_warning;	/* warning sent to algo if something suspicious */
-    uint64_t id;        // matching key for client/server pkt pair
+    uint64_t id;        // unique key for client/server halfstamp matching
 	// Captured NTP fields
     char server_ipaddr[INET6_ADDRSTRLEN];
     int ttl;
@@ -226,7 +225,7 @@ radpcap_packet_t packet as follows (see create_stamp.c) :
 get_network_stamp
 	get_packet(handle,userdata, &radpkt)  (becomes get_packet_livepcap when called)
 		extract vcount and puts it in standard header (see below)
-	update_stamp_queue(peer->q, radpkt, stats)
+	update_stamp_queue(algodata->q, radpkt, stats)
 		get_vcount(radpkt, &vcount))    // extract from standard header
 		push_{server,client}_halfstamp(q, ntp, &vcount, ...);  // vcount now safe in queue
 
@@ -463,9 +462,9 @@ struct stamp_queue {      // the queue itself, access to it and its size
 };
 #define MAX_STQ_SIZE	20
 
-The queue is created by init_stamp_queue(&peer) and then passed to the handle
-handle->algodata = (void*) &peer; .  Here peer is a (struct bidir_algodata *)
-(defined in sync_algo.h) whose last member peer->q is a pointer to the queue.
+The queue is created by init_stamp_queue(&algodata) and then passed to the handle
+handle->algodata = (void*) &algodata; .  Here algodata is a (struct bidir_algodata *)
+(defined in sync_algo.h) whose last member algodata->q is a pointer to the queue.
 In the case of dead pcap input this occurs in main, and for live pcap
 in pthread_mgr.c:thread_data_processing(void *c_handle).
 
@@ -522,7 +521,7 @@ The top level stamp accessing function (generic across live or dead pcap) is
   get_packet_livepcap  // (get_packet set to this), get new radpcap_packet_t, write to .raw file
   stats->ref_count++;  // count them [currently about the only use of stats]
 
-  update_stamp_queue(peer->q, packet, stats);	// convert to half stamp, enqueue/match/vett
+  update_stamp_queue(algodata->q, packet, stats);	// convert to half stamp, enqueue/match/vett
     get_valid_ntp_payload                       // get NTP data at last
     case MODE_CLIENT:
         bad_packet_client(ntp, ss, &ss_dst, stats);
@@ -534,7 +533,7 @@ The top level stamp accessing function (generic across live or dead pcap) is
         	 insertandmatch_halfstamp(q, &stamp, MODE_SERVER)     // "  stamp queue:
 
   if fullstamp available
-  	get_fullstamp_from_queue_andclean(peer->q, stamp);	// get a full stamp out, drop older half stamps
+  	get_fullstamp_from_queue_andclean(algodata->q, stamp);	// get a full stamp out, drop older half stamps
 
   verbosity for
     stamp queue operations
