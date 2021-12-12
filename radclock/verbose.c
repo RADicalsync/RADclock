@@ -216,7 +216,7 @@ void verbose(int facility, const char* format, ...)
 	/* Output messages to the log file, depending on the verbose level */
 	switch (facility) {
 	case VERB_DEBUG:
-		if (verbose_data.verbose_level > 0) {
+		if (verbose_data.verbose_level > 1) {
 			/* If the log file could not be opened, spit everything to stderr */
 			if (verbose_data.fd == NULL)
 				fprintf(stderr, "%s: %s%s\n", ctime_buf, customize, str);
