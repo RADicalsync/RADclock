@@ -18,25 +18,25 @@ A brief summary of the Documentation files is :
 **RADclockDoc_threads**  
 	The multi-threaded structure of the radclock daemon, and its global variables.
 
-**RADclockDoc_library**
+**RADclockDoc_library**  
 	RADclock library functionality and various inter-process and kernel communications.
 
-**RADclockDoc_config**
+**RADclockDoc_config**  
 	Configuration system of RADclock, including command line options.
 
-**RADclockDoc_verbose**
+**RADclockDoc_verbose**  
 	The verbosity system for the daemon generally, the library and the RADclock algo.
 
-**RADclockDoc_algo_bidir**
+**RADclockDoc_algo_bidir**  
 	The RADclock algorithm itself [Doc under construction].
 
-**RADclockDoc_guide**
+**RADclockDoc_guide**  
 	This document.
 
-**FFclockDoc_FreeBSD**
+**FFclockDoc_FreeBSD**  
 	The FFclock FreeBSD kernel code, and connections to its canonical daemon: RADclock.
 
-**FFclockDoc_Linux**
+**FFclockDoc_Linux**  
 	The FFclock Linux kernel code, and connections to its canonical daemon: RADclock.
   
 For users of RADclock, the most useful documents would be RADclockDoc_library
@@ -48,13 +48,12 @@ settings set to C syntax.
 There are also the man pages in repo/man,  and in the case of FreeBSD, 
 repo/kernel/freebsd/FreeBSD-XX/CurrentSource and in the system once installed :
 
- RADclock:		radclock.conf.5	radclock.8
- FFclockBSD:		ffclock.2	ffclock.4
- 					ffclock_{getcounter,{get,set}estimate}.2     (  identical to ffclock.2  )
+ RADclock:		radclock.conf.5		radclock.8  
+ FFclockBSD:	ffclock.2			ffclock.4		ffclock_{getcounter,{get,set}estimate}.2     (identical to ffclock.2)
 
 
 Research papers on RADclock can be found on Darryl Veitch''s webpage at
-[http://138.25.60.68/~darryl/index.html]   .
+http://138.25.60.68/~darryl/index.html   .
 
 
 Guide to Guide
@@ -62,34 +61,31 @@ Guide to Guide
 
 This guide has the following sections and subsections
 
-## Introduction to RADclock
+**Introduction to RADclock**  
+**Installation FreeBSD**  
+#### -- FFCLOCK kernel
+	Patching, Compiling, Installing  
+	TSC versus TSC-low   
+	Bypass mode
+#### -- RADclock daemon  
+	Installation  
+	Controlling radclock when running as a daemon  
+	Configuration file  
+	Rotating the Log File  
+**RADclock installation Linux & Raspian**  
+**Configuring RADclock**  
 
-## RADclock installation FreeBSD
-### FFCLOCK kernel 
-#### Patching, Compiling, Installing
-#### TSC versus TSC-low
-#### Bypass mode
-### RADclock daemon 
-#### Installation
-#### Controlling radclock when running as a daemon
-#### Configuration file
-#### Rotating the Log File
-
-## RADclock installation Linux & Raspian
-## Configuring RADclock
-
-## Using RADclock
-### Timestamping based on a raw timestamp (counter value)
-### Timestamps obtained through standard system clock read functions
-### Timestamps obtained via pcap, interpreted through radclock
-### Timestamp arrives as an NTP client request packet, to be served by RADserver
-
-## Using the RADclock API
-## The Available Kernel Clocks, and the System Clock
-## Packet timestamping [tsmode]
-## Perfect Clock Comparison built in		[can skip at first reading ]
-
-
+#### Using RADclock 
+	Timestamping based on a raw timestamp (counter value)  
+	Timestamps obtained through standard system clock read functions  
+	Timestamps obtained via pcap, interpreted through radclock  
+	Timestamp arrives as an NTP client request packet, to be served by RADserver
+**Using the RADclock API**  
+**The Available Kernel Clocks, and the System Clock**  
+**Packet timestamping [tsmode]**  
+**Perfect Clock Comparison built in**		[can skip at first reading ]   
+  
+  
 ## Introduction to RADclock
 
 The radclock is a software clock built on top of a suitable host hardware
@@ -121,7 +117,7 @@ advantage of a defined _kernel bypass mode_ when available, to access counter
 reads without system call overhead.
 
 
-## RADclock installation FreeBSD
+## Installation FreeBSD
 
 The radclock daemon requires special support from the FreeBSD kernel.
 FreeBSD 10.1 and later natively provide this via FFCLOCK support,
