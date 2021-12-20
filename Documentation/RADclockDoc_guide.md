@@ -48,8 +48,8 @@ settings set to C syntax.
 There are also the man pages in repo/man,  and in the case of FreeBSD, 
 repo/kernel/freebsd/FreeBSD-XX/CurrentSource and in the system once installed :
 
- RADclock:		radclock.conf.5		radclock.8  
- FFclockBSD:	ffclock.2			ffclock.4		ffclock_{getcounter,{get,set}estimate}.2     (identical to ffclock.2)
+ RADclock:	&nbsp;&nbsp;&nbsp;	radclock.conf.5	&nbsp;	radclock.8  
+ FFclockBSD:	&nbsp;&nbsp;		ffclock.2	&nbsp;	ffclock.4  &nbsp;	ffclock_{getcounter,{get,set}estimate}.2    &nbsp; (identical to ffclock.2)
 
 
 Research papers on RADclock can be found on Darryl Veitch''s webpage at
@@ -238,7 +238,7 @@ Now make and install the daemon.
 
 You can quickly test radclock is working with
 
-	radclock -h						# take a look at the command line options
+	radclock -h					# take a look at the command line options
 	
 and test it on the sample ascii input data provided :
 
@@ -330,7 +330,7 @@ viewed with
 	
 RADclock allows many of its subsystems to be switched on or off  [default is shown]:
 
-	ipc_server = on			//	write to the SMS (Shared Memory Segment) to support user radclocks
+	ipc_server = on			// write to the SMS (Shared Memory Segment) to support user radclocks
 	adjust_FFclock = on		// let the daemon discipline the system FFclock
 	adjust_FBclock = off		// let the daemon discipline the system FBclock
 	ntp_server = off  		// allow the RADserver to serve clients
@@ -343,9 +343,9 @@ Examples include
 	  to select a port other than 123.
 	  
 Other important parameters to keep in mind are
-	time_server				// the remote server queried by the daemon
-	polling_period				// the period separating the timing queries to time_server
-	verbose_level				// this should normally be quiet, but more if testing
+	time_server			// the remote server queried by the daemon
+	polling_period			// the period separating the timing queries to time_server
+	verbose_level			// this should normally be quiet, but more if testing
 
 The time_server should be selected to be reliable and as close as possible
 (in terms of RTT) to the host, and with stable routing.
@@ -356,9 +356,9 @@ To do this, edit the configuration file as desired, then use
 	service radclock reload
 
 Important examples of on-the-fly changes are
-	ntp_server					// to stop excessive incoming client traffic
+	ntp_server				// to stop excessive incoming client traffic
 	verbose_level				// may want to set it high for a period to get more
-								// information if there is a problem, but not forever!
+						// information if there is a problem, but not forever!
 								
 Another approach to verbosity control is to set it to quiet (which yields no output after
 startup except serious errors), but to use the option to save raw output in pcap
@@ -526,16 +526,16 @@ There are now two classes of clocks: FBclock (feedback based) and FFclock
 Which is selected to actually Be the system clock  (which means: used by the
 suite of standard kernel clock read functions) can be seen by
 
-	sysctl -a kern.sysclock			# takes values in {"FBclock", "FFclock"}
+	sysctl -a kern.sysclock		     # takes values in {"FBclock", "FFclock"}
 and set by
 
 	sysctl -a kern.sysclock="FFclock"    # set system clock to read from the FF class
 
 The available clocks are:
 
-  FB class:   FB             :  Absolute clock with an interface matched to a FB based daemon
-  FF class:   FFnativeclock  :  corresponds to the Absolute clock provided by the daemon
-				  FFclock		  :  carefully adjusted version of FFnativeclock to ensure monotonicity
+  FB class: &nbsp;  FB             :  Absolute clock with an interface matched to a FB based daemon
+  FF class: &nbsp;  FFnativeclock  :  corresponds to the Absolute clock provided by the daemon
+				  FFclock	  :  carefully adjusted version of FFnativeclock to ensure monotonicity
 				  FFdiffclock	  :  version of FFnativeclock equivalent to the daemons''s Difference clock
 				  
 Required daemons:
@@ -551,8 +551,8 @@ FFclocks are created within the kernel, based off FFnativeclock.
 	FFclock:  this is the FF clock underlying standard system clock read functions,
 	          because they normally assume or require monotonic behaviour.
 	FFdiffclock:  this effectively enables, from within the kernel, the RADclock
-			    difference clock to be used, even though it returns a normal timestamp.
-			    This is because it is constructed to avoid all absolute clock corrections.
+		      difference clock to be used, even though it returns a normal timestamp.
+	              This is because it is constructed to avoid all absolute clock corrections.
 
 All three FFclock are initialized to the same value (an approximate UTC time
 shortly after boot). FFdiffclock will drift over time.
@@ -588,12 +588,12 @@ To avoid the need to deal with low level details the following presets are defin
 (see comment block in radclock.h for more details)
 
 	enum pktcap_tsmode {
-		PKTCAP_TSMODE_NOMODE = 0,			// no FF support in pcap, or very early versions
+		PKTCAP_TSMODE_NOMODE = 0,		// no FF support in pcap, or very early versions
 		PKTCAP_TSMODE_SYSCLOCK = 1,		// get raw, plus normal timestamp from sysclock
-		PKTCAP_TSMODE_FBCLOCK = 2,			//                "                    FBclock
-		PKTCAP_TSMODE_FFCLOCK = 3,			//                "                    FFclock (mono)
+		PKTCAP_TSMODE_FBCLOCK = 2,		//                "                    FBclock
+		PKTCAP_TSMODE_FFCLOCK = 3,		//                "                    FFclock (mono)
 		PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
-		PKTCAP_TSMODE_FFDIFFCLOCK = 5,	//                "                    FF difference clock
+		PKTCAP_TSMODE_FFDIFFCLOCK = 5,		//                "                    FF difference clock
 		PKTCAP_TSMODE_RADCLOCK = 6,		//    "   , plus RADclock timestamp (userland) [expert use]
 		PKTCAP_TSMODE_CUSTOM = 100,		// direct accept a customised tsmode input
 	};
@@ -618,22 +618,22 @@ the definition of the tsmodes is as follow :
 	#define	BPF_T_MICROTIME	0x0000
 	#define	BPF_T_NANOTIME		0x0001
 	#define	BPF_T_BINTIME		0x0002
-	#define	BPF_T_NONE			0x0003	// relates to ts only, FFRAW independent
+	#define	BPF_T_NONE		0x0003	// relates to ts only, FFRAW independent
 	#define	BPF_T_FORMAT_MASK	0x0003
 	// FFRAW flag
-	#define	BPF_T_NOFFC			0x0000   //   no raw timestamp
-	#define	BPF_T_FFC			0x0010   // want raw timestamp
+	#define	BPF_T_NOFFC		0x0000  //   no raw timestamp
+	#define	BPF_T_FFC		0x0010  // want raw timestamp
 	#define	BPF_T_FFRAW_MASK	0x0010
 	// FLAG flags   [ can view bits as ORable flags ]
 	#define	BPF_T_NORMAL		0x0000	// UTC, !FAST
-	#define	BPF_T_FAST			0x0100   // UTC,  FAST
-	#define	BPF_T_MONOTONIC	0x0200	// UPTIME, !FAST
-	#define	BPF_T_MONOTONIC_FAST	0x0300// UPTIME,  FAST
+	#define	BPF_T_FAST		0x0100  // UTC,  FAST
+	#define	BPF_T_MONOTONIC		0x0200	// UPTIME, !FAST
+	#define	BPF_T_MONOTONIC_FAST	0x0300	// UPTIME,  FAST
 	#define	BPF_T_FLAG_MASK	0x0300
 	// CLOCK flags   [ mutually exclusive, not to be ORed ]
 	#define	BPF_T_SYSCLOCK		0x0000	// read current sysclock
-	#define	BPF_T_FBCLOCK		0x1000   // read FB
-	#define	BPF_T_FFCLOCK		0x2000   // read mono FF (standard reads are mono)
+	#define	BPF_T_FBCLOCK		0x1000  // read FB
+	#define	BPF_T_FFCLOCK		0x2000  // read mono FF (standard reads are mono)
 	#define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
 	#define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
 	#define	BPF_T_CLOCK_MASK	0x7000
