@@ -76,11 +76,6 @@ int FIFO_put(struct FIFO *fifo, int data)
 	return (ret);
 }
 
-int FIFO_getSize(const struct FIFO *fifo)
-{
-	return (fifo->putID - fifo->getID);
-}
-
 /* Deallocates memory for the buffer and the fifo instance */
 int FIFO_destroy(struct FIFO *fifo)
 {

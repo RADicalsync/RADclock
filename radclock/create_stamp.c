@@ -1029,7 +1029,7 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 
 	/* Read packet from raw data queue and insert into stamp queue until find a
 	 * fullstamp to return, or until no data left. Cap the maximum number of
-	 * pkts inserted before returning for a rest.
+	 * pkts inserted before returning to stop PROC taking too many resources.
 	 */
 	case RADCLOCK_SYNC_LIVE:
 	

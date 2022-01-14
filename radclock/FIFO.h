@@ -26,8 +26,6 @@ int FIFO_get(struct FIFO *fifo, int *data);
 
 int FIFO_put(struct FIFO *fifo, int data);
 
-int FIFO_getSize(const struct FIFO *fifo);
-
 int FIFO_destroy(struct FIFO *fifo);
 
 #endif

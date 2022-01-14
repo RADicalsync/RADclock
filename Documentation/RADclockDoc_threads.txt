@@ -549,7 +549,8 @@ packets on time at the points of a periodic grid.
 
 The grids are set up by setting timers (one per server), in ntp_client_init,
 as well as creating a FIFO queue to buffer arriving alarms so none are lost.
-FIFO support is defined in FIFO.{h,c}. A drop tail dropping policy is used.
+FIFO support is defined in FIFO.{h,c}. A drop HEAD dropping policy is used, so
+that insertion always succeeds.
 When an alarm goes off, it is caught by catch_alarm in MAIN where its server id
 is inserted into the queue, before signalling TRIGGER.
 

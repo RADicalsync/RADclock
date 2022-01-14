@@ -127,7 +127,7 @@ thread_data_processing(void *c_handle)
 	handle = (struct radclock_handle *) c_handle;
 
 	/* Set wait period for the next grid point (in mus) */
-	pktwait = 1000000 * handle->conf->poll_period / handle->nservers / 2;
+	pktwait = 1000000 * handle->conf->poll_period / handle->nservers;
 	if (pktwait > maxwait || pktwait == 0)
 		pktwait = maxwait;
 	verbose(VERB_DEBUG, " thread_data_processing: pktwait = %d", pktwait);
