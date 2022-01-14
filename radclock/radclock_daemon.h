@@ -147,7 +147,7 @@ struct radclock_handle {
 
 	/* UNIX signals */
 	unsigned int unix_signal;		// for recording of HUP and TERM
-	int lastalarm_sID;				// sID of last timer SIGALRM
+	struct FIFO *alarm_buffer;		// buffer for sIDs of packet SIGALRMs
 	
 	/* Output file descriptors */
 	FILE* stampout_fd;
@@ -157,9 +157,6 @@ struct radclock_handle {
 	pthread_t threads[8];		/* TODO: quite ugly implementation ... */
 	int	pthread_flag_stop;
 	pthread_mutex_t globaldata_mutex;
-	int wakeup_checkfordata;
-	pthread_mutex_t wakeup_mutex;
-	pthread_cond_t wakeup_cond;
 
 	/* Configuration */
 	struct radclock_config *conf;
@@ -227,4 +224,5 @@ int receive_loop_vm(struct radclock_handle *handle);
 int update_ipc_shared_memory(struct radclock_handle *handle);
 void read_clocks(struct radclock_handle *handle, struct timeval *sys_tv,
 	struct timeval *rad_tv, vcounter_t *counter);
+
 #endif
