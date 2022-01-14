@@ -98,16 +98,16 @@ Leap second treatment
 
 All leapsecond processing is contained within process_stamp(), which owns and sets
 the rad_data member of the handle which defines the RADclock.
-The algo itself sets peer variables, but does not update rad_data.
+The algo itself sets algodata variables, but does not update rad_data.
 The RADclock absolute clock Ca(t) is effectively the UTC clock in vogue at the
 counter origin epoch, not updated by subsequent leaps, which we term the `native RADclock'.
 In radclock-private.h, the functions  read_RADabs_{native,UTC} make the
 distinction clear.
 
-process_stamp(handle, peer)
+process_stamp(handle, algodata)
 	get_next_stamp(handle, stamp_source, &stamp);
 	leap second processing
-	RADalgo_bidir(handle, peer, &stamp_noleap, ..)); // update native RADclock
+	RADalgo_bidir(handle, algodata, &stamp_noleap, ..)); // update native RADclock
 	update handle->rad_data                 					// update UTC RADabsclock
 	push updates as needed (kernel, SMS..)
 		  
@@ -174,7 +174,7 @@ pclocal Clock Algorithm
 ============================
 
 
-================================q==============================
+==============================================================
 plocal Selection Control
 ============================
 

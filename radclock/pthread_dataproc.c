@@ -855,12 +855,22 @@ process_stamp(struct radclock_handle *handle)
 		 * Detection can fail if reset occurs before the first setting of kernel data
 		 * Test is based on the preferred clock as it disciplines the FFclock.
 		 */
-		get_kernel_ffclock(handle->clock, &cest);
-		if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
-			state = &algodata->state[handle->pref_sID];
-			verbose(LOG_WARNING, "RADclock noticed a kernel RTC reset after stamp %d, "
-										"will require a restart I'm afraid", state->stamp_i);
-			return -1;
+		if ( get_kernel_ffclock(handle->clock, &cest) == 0) {
+			if ((cest.update_time.sec == 0) || (cest.period == 0)) {
+				verbose(LOG_WARNING, "FFdata has been hardcore re-initialized! due to RTC reset?");
+				printout_FFdata(&cest);
+				//return (-1);
+			} else {
+				if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
+					state = &algodata->state[handle->pref_sID];
+					if ( VERB_LEVEL>2 ) {
+						verbose(LOG_WARNING, "RADclock noticed a FFdata reset after stamp %d, "
+												"may require a restart I'm afraid", state->stamp_i);
+						printout_FFdata(&cest);
+					}
+					//return -1;
+				}
+			}
 		}
 	}
 
@@ -1282,5 +1292,3 @@ process_stamp(struct radclock_handle *handle)
 	JDEBUG_RUSAGE
 	return (0);
 }
-
-

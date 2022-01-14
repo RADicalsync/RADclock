@@ -1,0 +1,10 @@
+# Ignore Earthly artifacts directory
+artifacts/
+
+# Temp build files
+=======
+.vscode
+*/.vscode
+RADbuild.log
+build.log
+version.m4

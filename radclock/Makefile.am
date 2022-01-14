@@ -36,6 +36,7 @@ noinst_HEADERS = \
 		misc.h \
 		ntohll.h \
 		pthread_mgr.h \
+		FIFO.h	\
 		proto_ntp.h \
 		rawdata.h \
 		stampinput.h \
@@ -62,6 +63,7 @@ radclock_SOURCES = \
 		radclock_main.c \
 		radclock_telemetry.c \
 		ring_buffer.c \
+		FIFO.c \
 		stampinput.c \
 		stampinput_int.h \
 		stampinput-ascii.c \

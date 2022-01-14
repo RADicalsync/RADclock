@@ -59,6 +59,7 @@
 #include "radclock-private.h"
 #include "kclock.h"
 
+#include "FIFO.h"
 #include "radclock_daemon.h"
 #include "logger.h"
 #include "verbose.h"
@@ -559,10 +560,12 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Multiple server management */
 	handle->nservers = 0;
 	handle->pref_sID = 0;
-	handle->lastalarm_sID = -1;
-	
+
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
 	strcpy(handle->hostIP, "");
+
+	/* Buffer for sIDs of received packet request alarms */
+	handle->alarm_buffer = NULL;
 
 	/* Output files */
 	handle->stampout_fd = NULL;
@@ -592,11 +595,8 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	 * Initialize and set thread detached attribute explicitely
 	 */
 	handle->pthread_flag_stop = 0;
-	handle->wakeup_checkfordata = 0;
 	//handle->matchqueue_mutex = 0;		// to manage use by both PROC and SHM
 	pthread_mutex_init(&(handle->globaldata_mutex), NULL);
-	pthread_mutex_init(&(handle->wakeup_mutex), NULL);
-	pthread_cond_init(&(handle->wakeup_cond), NULL);
 
 	handle->syncalgo_mode = RADCLOCK_BIDIR; // hardwired, as yet not really used
 	handle->stamp_source = NULL;
@@ -1347,7 +1347,7 @@ main(int argc, char *argv[])
 	 */
 	set_verbose(handle, handle->conf->verbose_level, 0);
 	set_logger(logger_verbose_bridge);
-	
+
 	/* Daemonize now, so that we can open the log files and close connection to
 	 * stdin since we parsed the command line
 	 */
@@ -1557,9 +1557,7 @@ main(int argc, char *argv[])
 
 	/* Clear thread stuff */
 	pthread_mutex_destroy(&(handle->globaldata_mutex));
-	pthread_mutex_destroy(&(handle->wakeup_mutex));
 	//pthread_mutex_destroy(&(handle->matchqueue_mutex));
-	pthread_cond_destroy(&(handle->wakeup_cond));
 
 	/* Detach IPC shared memory if were running as IPC server. */
 	if (handle->conf->server_ipc == BOOL_ON)
@@ -1589,10 +1587,10 @@ main(int argc, char *argv[])
 	free(((struct bidir_algodata*)handle->algodata)->output);
 	free(((struct bidir_algodata*)handle->algodata)->state);
 	destroy_stamp_queue((struct bidir_algodata*)handle->algodata);
+
 	free(handle);
 	handle = NULL;
 	clock_handle = NULL;
 
 	exit(EXIT_SUCCESS);
 }
-

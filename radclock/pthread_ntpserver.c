@@ -206,6 +206,7 @@ thread_ntp_server(void *c_handle)
 	while ((handle->pthread_flag_stop & PTH_NTP_SERV_STOP) != PTH_NTP_SERV_STOP) {
 
 		/* Receive the UDP request using a blocking call with timeout */
+		// This needs to be changed to be non-blocking.
 		n = recvfrom(s_server, (void*) pkt_in, NTP_PKT_MAX_LEN, 0,
 				(struct sockaddr*)&sin_client, &len);
 		if (n < 0) {	// no bytes read after timeout
