@@ -734,7 +734,7 @@ their update functions back-to-back within process_stamp :
  ----------------------------------
 	get_next_stamp(handle, stamp_source, &stamp);
 	  leap second processing
-	  RADalgo_bidir(handle, peer, &stamp_noleap, ..)); // update native RADclock
+	  RADalgo_bidir(handle, algodata, &stamp_noleap, ..)); // update native RADclock
 	  update handle->rad_data                 // update UTC RADabsclock
 	update_ipc_shared_memory(handle)	    		// update SMS segment
 	fill_ffclock_estimate(rad_data, rad_error, &cest); // convert to kernel-format cest

@@ -459,6 +459,8 @@ destroy_stamp_queue(struct bidir_algodata *algodata)
  * Other kinds of halfstamp cleaning (based on temporal ordering, not id) are
  * dealt with in get_fullstamp_from_queue_andclean.
  *
+ * Stamps from different servers are treated in the same way.
+ *
  * The prev direction is toward the queue head/start.
  * Return codes: err = 0 : halfstamp insertion resulted in fullstamp
  *               err = 1 : insertion but no fullstamp, or halfstamp dropped
@@ -480,21 +482,24 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	qel = q->start;
 	while (qel != NULL) {
 		stamp = &qel->stamp;
-		if (stamp->id == new->id) {
+
+		if (stamp->id == new->id) {		// this id in the queue already
 			switch (mode) {
 				case MODE_CLIENT:
 					if (BST(stamp)->Ta != 0) {
-						verbose(LOG_WARNING, "Found duplicate NTP client request.");
+						verbose(LOG_WARNING, "Dropping duplicate NTP client request.");
 						return (1);
 					}
 					break;
 
 				case MODE_SERVER:
 					if (BST(stamp)->Tf != 0) {
-						verbose(LOG_WARNING, "Found duplicate NTP server request.");
+						verbose(LOG_WARNING, "Dropping duplicate NTP server response.");
 						return (1);
 					}
+					break;
 			}
+
 			foundhalfstamptofill = 1;		// qel will point to stamp to fill
 			break;
 		}
@@ -523,23 +528,24 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			q->start->prev = qel;
 		q->start = qel;
 		q->size++;
+
+		/* Fill fields common to both halfstamps */
 		switch (mode) {
 			case MODE_CLIENT:
 			case MODE_SERVER:
 			qel->stamp.type = STAMP_NTP;
 		}
+		qel->stamp.id = new->id;
 	}
 
 	/* Selectively copy content of new halfstamp into stamp to fill (*qel). */
 	stamp = &qel->stamp;
 	switch (mode) {
 		case MODE_CLIENT:
-			stamp->id = new->id;
-			BST(stamp)->Ta = BST(new)->Ta;
 			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
+			BST(stamp)->Ta = BST(new)->Ta;
 			break;
 		case MODE_SERVER:
-			stamp->id = new->id;
 			stamp->ttl = new->ttl;
 			stamp->refid = new->refid;
 			stamp->stratum = new->stratum;
@@ -551,15 +557,20 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			BST(stamp)->Tf = BST(new)->Tf;
 	}
 
-	/* Print out queue from head to tail (oldest in queue at top of printout). */
+	/* Print out queue from head to tail (youngest at top of printout). */
 	if (VERB_LEVEL>1) {
 		qel = q->start;
+
 		while (qel != NULL) {
 			stamp = &qel->stamp;
-			verbose(VERB_DEBUG, "  stamp queue dump: %llu %.6Lf %.6Lf %llu %llu %s",
-				(long long unsigned) BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-				(long long unsigned) BST(stamp)->Tf, (long long unsigned) stamp->id,
+			if (stamp->type == STAMP_NTP) {
+				verbose(VERB_DEBUG, "  stamp queue dump: [%llu]   %llu %llu %.6Lf %.6Lf %s",
+				(long long unsigned) stamp->id,
+				(long long unsigned) BST(stamp)->Ta, (long long unsigned) BST(stamp)->Tf,
+				BST(stamp)->Tb, BST(stamp)->Te,
 				stamp->server_ipaddr);
+			}
+
 			qel = qel->next;
 		}
 	}
@@ -862,7 +873,7 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	vcounter_t	full_time=0;			// used to record stamp order
 	vcounter_t	Tc;
 	int startsize;
-	int c_halfstamp, s_halfstamp, fullstamp;
+	int c_halfstamp, s_halfstamp, fullstamp, dangerous;
 	int c_older, s_older;				// records if halfstamps older than full one
 
 	JDEBUG
@@ -872,10 +883,6 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 		return (1);
 	} else
 	  	startsize = q->size;
-
-// TODO:  add a fast path here for simple common case of startsize =1 ?
-//   quick check if full as expected, if not error, else copy out and
-//   free and reset queue, return(0)
 
    /* Scan queue from tail to head to find and pass back oldest full stamp */
 	qel = q->end;
@@ -904,15 +911,20 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 	qel = q->end;
 	while (qel != NULL) {
 		st = &qel->stamp;
+
+		/* Determine the scenario posed by this stamp */
 		c_halfstamp = (BST(st)->Ta != 0) && (BST(st)->Tf == 0);
 		s_halfstamp = (BST(st)->Ta == 0) && (BST(st)->Tf != 0);
 		if (s_halfstamp)
 			verbose(LOG_WARNING, "Found server halfstamp in stamp queue");
 		c_older = c_halfstamp && BST(st)->Ta < full_time;
 		s_older = s_halfstamp && BST(st)->Tf < BST(full_st)->Tf;
+		dangerous = s_older ||
+						(c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0);
+		if (dangerous)
+			verbose(VERB_DEBUG, "Clearing out dangerous halfstamp");
 
-		if (st == full_st || s_older ||
-			 (c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) )
+		if (st == full_st || dangerous)
 	   {	/* Remove *qel from queue, reset qel to continue loop */
 			if (qel==q->end) {
 				if (qel==q->start) {			// only 1 stamp in queue
@@ -953,16 +965,10 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 
  
  
-
 /*
- * Retrieve network packet from live or dead pcap device. This routine tries to
- * handle out of order arrival of packets (for both dead and
- * live input) by adding an extra stamp queue to serialise stamps. There are a
- * few tricks to handle delayed packets when running live. Delayed packets
- * translate into an empty raw data buffer and the routine makes several
- * attempts to get delayed packets. Delays can be caused by a large RTT in 
- * piggy-backing mode (asynchronous wake), or busy system where pcap path is 
- * longer than NTP client UDP socket path.
+ * Retrieve network packet from live or dead pcap device.
+ * The stamp queue infrastructure is used to handle out of order packets (for
+ * both dead and live input) and other aberrations.
  */
 int
 get_network_stamp(struct radclock_handle *handle, void *userdata,
@@ -973,13 +979,11 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 	radpcap_packet_t *packet;
 	int attempt, maxattempts;
 	int err;
-	useconds_t attempt_wait;
 
 	JDEBUG
 
 	err = 0;
-	attempt_wait = 1000;					/* [mus]  500 suitable for LAN RTT */
-	maxattempts = 20;						// should be even,  VM needs 20
+	maxattempts = 20;
 	q = ((struct bidir_algodata*)handle->algodata)->q;
 	packet = create_radpcap_packet();
 
@@ -1023,24 +1027,17 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 		break;
 
 
-	/* Read packet from raw data queue. Have probably been woken by trigger 
-	 * thread, hoping to see both a client and server reply. In any event, will
-	 * make several attempts to get enough packets, and hence halfstamps, to find
-	 * a fullstamp to return.
+	/* Read packet from raw data queue and insert into stamp queue until find a
+	 * fullstamp to return, or until no data left. Cap the maximum number of
+	 * pkts inserted before returning to stop PROC taking too many resources.
 	 */
 	case RADCLOCK_SYNC_LIVE:
 	
 		for (attempt=maxattempts; attempt>0; attempt--) {
-			//verbose(VERB_DEBUG, " get_network_stamp: attempt = %d", maxattempts-attempt+1);
 			err = get_packet(handle, userdata, &packet); // 1= no rbd data or error
 			if (err) {
-				if (attempt == 1)
-					verbose(VERB_DEBUG, " get_network_stamp: giving up full stamp "
-						"search after %d attempts of %.3f [ms], no more data",
-						maxattempts, attempt_wait/1000.0);
-				else
-					usleep(attempt_wait);
-
+//				verbose(VERB_DEBUG, " get_network_stamp: out of data on attempt %d", maxattempts-attempt+1);
+				break;
 			} else {		// found a packet, process it
 				stats->ref_count++;
 				/* Convert packet to stamp and push it to the stamp queue */
@@ -1054,16 +1051,10 @@ get_network_stamp(struct radclock_handle *handle, void *userdata,
 					"after %d attempts out of %d", maxattempts-attempt+1, maxattempts);
 					break;
 				}
-				/* Have just seen a halfstamp. It is probably a client-halfstamp, so
-				 * wait a little longer for its matching reply
-				 */
-				if (attempt>1 && err == 1 && attempt % 2)
-					usleep(attempt_wait);
-				
+
 				if (attempt == 1)
 					verbose(VERB_DEBUG, " get_network_stamp: giving up full stamp "
-						"search after %d attempts of %.3f [ms]",
-						maxattempts, attempt_wait/1000.0);
+						"search after %d attempts, though data still available", maxattempts);
 			}
 		}
 		break;

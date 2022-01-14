@@ -862,9 +862,11 @@ process_stamp(struct radclock_handle *handle)
 			} else {
 				if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
 					state = &algodata->state[handle->pref_sID];
-					verbose(LOG_WARNING, "RADclock noticed a FFdata reset after stamp %d, "
+					if ( VERB_LEVEL>2 ) {
+						verbose(LOG_WARNING, "RADclock noticed a FFdata reset after stamp %d, "
 												"may require a restart I'm afraid", state->stamp_i);
-					printout_FFdata(&cest);
+						printout_FFdata(&cest);
+					}
 					//return -1;
 				}
 			}
@@ -1147,5 +1149,3 @@ process_stamp(struct radclock_handle *handle)
 	JDEBUG_RUSAGE
 	return (0);
 }
-
-
