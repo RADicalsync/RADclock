@@ -148,3 +148,73 @@ build-radclock-with-kernel:
 
 build-arm64:
     BUILD --platform=linux/arm64 +kernel-build-patched
+
+
+bh-deps:
+    RUN apt-get -yqq update 
+    RUN apt-get -yqq install gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget xz-utils git flex bison libssl-dev bc file build-essential rsync kmod cpio
+    GIT CLONE --branch rpi-4.19.y https://github.com/raspberrypi/linux.git /linux
+    WORKDIR /linux
+
+
+bh-patch:
+    # Duplication - need to fix this
+    FROM +bh-deps
+    # Handy constants
+    ARG SRC=kernel/linux/4.19.127/CurrentSource
+    ARG DEST=/linux
+    # Create driver directory
+    RUN mkdir -p $DEST/drivers/ffclock/
+
+    # Copy in the files
+    COPY $SRC/af_inet.c                         $DEST/net/ipv4/
+    COPY $SRC/af_packet.c                       $DEST/net/packet/
+    COPY $SRC/asm-generic_sockios.h             $DEST/include/uapi/asm-generic/sockios.h
+    COPY $SRC/dev.c                             $DEST/net/core/
+    COPY $SRC/drivers_Kconfig                   $DEST/drivers/Kconfig
+    COPY $SRC/drivers_Makefile                  $DEST/drivers/Makefile
+
+    COPY $SRC/ffclock.c                         $DEST/drivers/ffclock/
+    COPY $SRC/ffclock.h                         $DEST/include/linux/
+    COPY $SRC/Kconfig                           $DEST/drivers/ffclock/
+    COPY $SRC/Makefile                          $DEST/drivers/ffclock/
+
+    COPY $SRC/skbuff.c                          $DEST/net/core/
+    COPY $SRC/skbuff.h                          $DEST/include/linux/
+    COPY $SRC/sock.c                            $DEST/net/core/
+    COPY $SRC/socket.c                          $DEST/net/
+    COPY $SRC/sock.h                            $DEST/include/net/
+    COPY $SRC/sockios.h                         $DEST/include/uapi/linux/
+    COPY $SRC/syscall_32.tbl                    $DEST/arch/x86/entry/syscalls/
+    COPY $SRC/syscall_64.tbl                    $DEST/arch/x86/entry/syscalls/
+    COPY $SRC/syscalls.h                        $DEST/include/linux/
+    COPY $SRC/time.c                            $DEST/kernel/time/
+    COPY $SRC/timekeeping.c                     $DEST/kernel/time/
+    COPY $SRC/timekeeping.c                     $DEST/kernel/time/
+    COPY $SRC/vclock_gettime.c                  $DEST/arch/x86/entry/vdso/
+    COPY $SRC/vgtod.h                           $DEST/arch/x86/include/asm/
+
+    # Copy assembly build scripts for 64 bit VDSO
+    COPY $SRC/vdso.lds.S                        $DEST/arch/x86/entry/vdso/
+    COPY $SRC/vdsox32.lds.S                     $DEST/arch/x86/entry/vdso/
+
+    # Copy assembly build scripts for 32 bit VDSO (needed?)
+    COPY $SRC/vdso32.lds.S               $DEST/arch/x86/entry/vdso/vdso32/
+
+bh-defconfig:
+    FROM +bh-patch
+    RUN make ARCH=arm64 bcm2711_defconfig
+
+bh-disable-debug:
+    FROM +bh-defconfig
+    # Remove all the debug stuff
+    RUN scripts/config --disable DEBUG_INFO
+    # Don't compress the kernel
+    RUN sed -i '/KBUILD_IMAGE/ s/.gz//' arch/arm64/Makefile
+
+bh-build:
+    FROM +bh-disable-debug
+    RUN ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- make bindeb-pkg
+    SAVE ARTIFACT ../*.deb AS LOCAL artifacts/arm64/
+
+
