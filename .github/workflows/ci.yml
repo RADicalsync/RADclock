@@ -50,7 +50,7 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: Raspbian kernel ARM64 packages
-          path: artifacts/kernel-patched/*arm64.deb
+          path: artifacts/arm64-pi/*arm64.deb
 
 
 

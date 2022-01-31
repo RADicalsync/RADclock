@@ -215,6 +215,6 @@ bh-disable-debug:
 bh-build:
     FROM +bh-disable-debug
     RUN ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- make bindeb-pkg
-    SAVE ARTIFACT ../*.deb AS LOCAL artifacts/arm64/
+    SAVE ARTIFACT ../*.deb AS LOCAL artifacts/arm64-pi/
 
 
