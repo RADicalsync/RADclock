@@ -132,6 +132,8 @@ build-radclock-no-kernel:
 
 build-radclock-with-kernel:
     FROM +copy-src
+    # Allow Earthly to access the architecture
+    ARG TARGETARCH
     # Install the netlink libraries for the RADclock kernel support
     RUN apt-get install -y libnl-3-dev libnl-genl-3-dev
     # Autconf
@@ -143,7 +145,11 @@ build-radclock-with-kernel:
     # Install it so we can grab it
     RUN make install
     # Pull the artifacts out
-    SAVE ARTIFACT /radclock-build AS LOCAL ./artifacts/radclock-with-kernel/
+    SAVE ARTIFACT /radclock-build AS LOCAL ./artifacts/radclock-with-kernel/$TARGETARCH/
+
+build-radclock-with-kernel-arm64:
+   BUILD --platform=linux/arm64 +build-radclock-with-kernel
+
 
 
 build-arm64:

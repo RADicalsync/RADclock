@@ -36,7 +36,7 @@ jobs:
       - uses: actions/upload-artifact@v2
         with:
           name: Debian radclock build
-          path: artifacts/radclock-with-kernel/
+          path: artifacts/radclock-with-kernel/amd64/
   tests-arm64:
     name: Build Pi (ARM64) kernel packages
     runs-on: ubuntu-latest

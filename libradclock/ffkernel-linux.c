@@ -143,36 +143,14 @@ has_vm_vcounter(struct radclock *clock)
 }
 
 
-/* Ensure rdtscll(ull) is defined */
-//#if HAVE_RDTSC_ASM
-//# include <asm/msr.h>			// file is there, but rdtsc, rdtsc_ordered, rdtscll not there
-//#else
-//# ifdef __x86_64__
-//#define  RDTSCTEST1 1
-//#  define rdtscll(val) do { \
-//		unsigned int __a,__d; \
-//		asm volatile("rdtsc" : "=a" (__a), "=d" (__d)); \
-//		(val) = ((unsigned long)__a) | (((unsigned long)__d)<<32); \
-//	} while(0)
-//# endif
-//# ifdef __i386__
-//	#define rdtscll(val) __asm__ __volatile__("rdtsc" : "=A" (val))
-//# endif
-//#endif
-//inline vcounter_t
-//radclock_readtsc(void)
-//{
-//	vcounter_t val;
-//	rdtscll(val);
-//	return (val);
-//}
+#define DefinedLocalRDTSC 0
 
+#ifdef __amd64__
 
 /* Ensure rdtsc() is defined
  * If we can't find it, we define here (same as the macros and defn
  * in  arch/x86/include/asm/msr.h , except for the cast)
  */
-#define DefinedLocalRDTSC 0
 #ifdef HAVE_RDTSC_ASM
 #	include <asm/msr.h>			// file is there, but no functions are in it
 #else
@@ -185,6 +163,14 @@ has_vm_vcounter(struct radclock *clock)
 		 return (low | ((u_int64_t)high << 32));
 	}
 #endif
+
+#else
+static inline uint64_t rdtsc(void) {
+        return 0;
+}
+#endif
+
+
 
 inline vcounter_t
 radclock_readtsc(void)
