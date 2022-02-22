@@ -54,23 +54,23 @@ jobs:
 
 
 
-#  tests-arm64:
-#    name: Build ARM64 kernel packages
-#    runs-on: ubuntu-latest
-#    steps:
-#      - name: Setup QEMU
-#        id: qemu
-#        uses: docker/setup-qemu-action@v1
-#        with:
-#          image: tonistiigi/binfmt:latest
-#          platforms: all
-#      - uses: earthly/actions/setup-earthly@v1
-#        with:
-#          version: v0.5.24
-#      - uses: actions/checkout@v2
-#      - name: Build Debian ARM64 kernel packages
-#        run: earthly --platform=linux/arm64 +kernel-build-patched
-#      - uses: actions/upload-artifact@v2
-#        with:
-#          name: Debian kernel ARM64 packages
-#          path: artifacts/kernel-patched/*arm64.deb
+  tests-arm64:
+    name: Build radclock for ARM64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v1
+        with:
+          image: tonistiigi/binfmt:latest
+          platforms: all
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.6.6
+      - uses: actions/checkout@v2
+      - name: Build radclock for arm64
+        run: earthly --platform=linux/arm64 +build-radclock-with-kernel
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Debian radclock build (ARM64)
+          path: artifacts/radclock-with-kernel/arm64/
