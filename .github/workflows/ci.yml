@@ -7,7 +7,7 @@ on:
     branches: [ RADdev ]
 
 jobs:
-  tests-amd64:
+  kernel-amd64:
     name: Build AMD64 kernel packages
     runs-on: ubuntu-latest
     steps:
@@ -21,23 +21,8 @@ jobs:
         with:
           name: Debian kernel AMD64 packages
           path: artifacts/kernel-patched/*amd64.deb
-  build-radclock-amd64:
-    name: Build radclock for AMD64
-    runs-on: ubuntu-latest
-    steps:
-      - uses: earthly/actions/setup-earthly@v1
-        with:
-          version: v0.5.24
-      - uses: actions/checkout@v2
-        with:
-          fetch-depth: 0
-      - name: Build radclock for AMD64
-        run: earthly +build-radclock-with-kernel
-      - uses: actions/upload-artifact@v2
-        with:
-          name: Debian radclock build
-          path: artifacts/radclock-with-kernel/amd64/
-  tests-arm64:
+
+  kernel-arm64:
     name: Build Pi (ARM64) kernel packages
     runs-on: ubuntu-latest
     steps:
@@ -54,6 +39,25 @@ jobs:
 
 
 
+
+  build-radclock-amd64:
+    name: Build radclock for AMD64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.5.24
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Build radclock for AMD64
+        run: earthly +build-radclock-with-kernel
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Debian radclock build
+          path: artifacts/radclock-with-kernel/amd64/
+
+
   build-radclock-arm64:
     name: Build radclock for ARM64
     runs-on: ubuntu-latest
@@ -68,6 +72,8 @@ jobs:
         with:
           version: v0.6.6
       - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
       - name: Build radclock for arm64
         run: earthly --platform=linux/arm64 +build-radclock-with-kernel
       - uses: actions/upload-artifact@v2
