@@ -54,7 +54,7 @@ jobs:
 
 
 
-  tests-arm64:
+  build-radclock-arm64:
     name: Build radclock for ARM64
     runs-on: ubuntu-latest
     steps:
