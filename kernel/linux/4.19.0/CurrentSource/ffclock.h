@@ -6,11 +6,73 @@
 typedef u64 ffcounter;	// perhaps put in a _ffcounter.h
 
 
-/* Ensure bintime defined (is standard in FreeBSD, but not linux) */
+#==============================================================================
+/* The following code block provides needed support for the bintime format.
+ * The code is a subset of that released under the FreeBSD project, under
+ * 	SPDX-License-Identifier: BSD-3-Clause
+ * We retain that license here.  For full details, see sys/sys/time.h of the
+ * FreeBSD project where the code appears.
+ */
+
 struct bintime {
 	time_t sec;
 	__u64 frac;
 };
+
+static __inline void
+bintime_addx(struct bintime *_bt, uint64_t _x)
+{
+        uint64_t _u;
+
+        _u = _bt->frac;
+        _bt->frac += _x;
+        if (_u > _bt->frac)
+                _bt->sec++;
+}
+
+static __inline void
+bintime_add(struct bintime *_bt, const struct bintime *_bt2)
+{
+        uint64_t _u;
+
+        _u = _bt->frac;
+        _bt->frac += _bt2->frac;
+        if (_u > _bt->frac)
+                _bt->sec++;
+        _bt->sec += _bt2->sec;
+}
+
+static __inline void
+bintime_sub(struct bintime *_bt, const struct bintime *_bt2)
+{
+        uint64_t _u;
+
+        _u = _bt->frac;
+        _bt->frac -= _bt2->frac;
+        if (_u < _bt->frac)
+                _bt->sec--;
+        _bt->sec -= _bt2->sec;
+}
+
+static __inline void
+bintime_mul(struct bintime *_bt, u_int _x)
+{
+        uint64_t _p1, _p2;
+
+        _p1 = (_bt->frac & 0xffffffffull) * _x;
+        _p2 = (_bt->frac >> 32) * _x + (_p1 >> 32);
+        _bt->sec *= _x;
+        _bt->sec += (_p2 >> 32);
+        _bt->frac = (_p2 << 32) | (_p1 & 0xffffffffull);
+}
+
+#define bintime_clear(a)        ((a)->sec = (a)->frac = 0)
+#define bintime_isset(a)        ((a)->sec || (a)->frac)
+#define bintime_cmp(a, b, cmp)                                          \
+        (((a)->sec == (b)->sec) ?                                       \
+            ((a)->frac cmp (b)->frac) :                                 \
+            ((a)->sec cmp (b)->sec))
+#==============================================================================
 
 /*
  * Feed-forward clock estimate
@@ -102,65 +164,6 @@ void ffclock_fill_timestamps(ffcounter ffc, long tsmode, ffcounter *rawts, ktime
 
 /* Return the current value of the feed-forward clock counter. */
 void ffclock_read_counter(ffcounter *ffcount);
-
-
-
-/* bintime related */
-
-static __inline void
-bintime_addx(struct bintime *_bt, uint64_t _x)
-{
-        uint64_t _u;
-
-        _u = _bt->frac;
-        _bt->frac += _x;
-        if (_u > _bt->frac)
-                _bt->sec++;
-}
-
-static __inline void
-bintime_add(struct bintime *_bt, const struct bintime *_bt2)
-{
-        uint64_t _u;
-
-        _u = _bt->frac;
-        _bt->frac += _bt2->frac;
-        if (_u > _bt->frac)
-                _bt->sec++;
-        _bt->sec += _bt2->sec;
-}
-
-static __inline void
-bintime_sub(struct bintime *_bt, const struct bintime *_bt2)
-{
-        uint64_t _u;
-
-        _u = _bt->frac;
-        _bt->frac -= _bt2->frac;
-        if (_u < _bt->frac)
-                _bt->sec--;
-        _bt->sec -= _bt2->sec;
-}
-
-static __inline void
-bintime_mul(struct bintime *_bt, u_int _x)
-{
-        uint64_t _p1, _p2;
-
-        _p1 = (_bt->frac & 0xffffffffull) * _x;
-        _p2 = (_bt->frac >> 32) * _x + (_p1 >> 32);
-        _bt->sec *= _x;
-        _bt->sec += (_p2 >> 32);
-        _bt->frac = (_p2 << 32) | (_p1 & 0xffffffffull);
-}
-
-#define bintime_clear(a)        ((a)->sec = (a)->frac = 0)
-#define bintime_isset(a)        ((a)->sec || (a)->frac)
-#define bintime_cmp(a, b, cmp)                                          \
-        (((a)->sec == (b)->sec) ?                                       \
-            ((a)->frac cmp (b)->frac) :                                 \
-            ((a)->sec cmp (b)->sec))
-
 
 
 /* Netlink related */
