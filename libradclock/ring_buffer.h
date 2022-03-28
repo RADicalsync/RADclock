@@ -61,6 +61,10 @@ struct Ring_Buffer_Prior_Data
     int prior_leapsec_total;
     double prior_minRTT;
     double prior_clockErr;
+
+    unsigned int prior_servertrust;
+    unsigned int prior_sa;
+
 	// long double last_msg_time;
 };
 

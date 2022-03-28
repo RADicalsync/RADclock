@@ -34,7 +34,7 @@ update_prior_data(struct radclock_handle *handle)
 }
 
 int
-active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID, int PICN, int is_sID_NTC)
+active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID, int PICN, int is_sID_NTC, uint64_t SA)
 {
     // Check if the number of clocks has increased
     update_prior_data(handle);
@@ -66,6 +66,20 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
             verbose(LOG_NOTICE, "Telemetry Producer - Change in leap seconds %d");
             return 1;
         }
+
+        // If clock status word has changed
+        if (handle->telemetry_data.prior_data[sID].prior_sa != SA)
+        {
+            verbose(LOG_NOTICE, "Telemetry Producer - Server Anomaly (sa) changed");
+            return 1;
+        }
+
+        // If clock status word has changed
+        if ((handle->telemetry_data.prior_data[sID].prior_servertrust & (1ULL << sID)) != (handle->servertrust & (1ULL << sID)) )
+        {
+            verbose(LOG_NOTICE, "Telemetry Producer - ServerTrust status changed");
+            return 1;
+        }        
 
         // If clock underlying asymmetry has changed 
         // struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];
@@ -110,7 +124,24 @@ push_telemetry(struct radclock_handle *handle, int sID)
     if (sID > -1 && handle->conf->time_server_ntc_mapping[sID] != -1)
         is_sID_NTC = 1;
 
-    if (active_trigger(handle, &radclock_ts, sID, PICN, is_sID_NTC))
+    uint64_t SA = 0;
+
+    // Create a bit compressed array of server anomalies sorted by NTC id
+    if (handle->conf->is_cn)
+    {
+        for (int sID =0;sID<handle->nservers;sID++)
+        {
+            int NTC_id = handle->conf->time_server_ntc_mapping[sID];
+            if (sID != -1)
+            {
+                int temp_SA = ((struct bidir_perfdata *)(handle->perfdata))->state[sID].SA;
+                if (temp_SA)
+                    SA |= 1 << NTC_id;
+            }
+        }
+    }
+
+    if (active_trigger(handle, &radclock_ts, sID, PICN, is_sID_NTC, SA))
     {
         // If the telemetry data changed then use the time of the last packet
         // Otherwise use the current time as its a keep alive message - set flag keep_alive_trigger
@@ -119,7 +150,7 @@ push_telemetry(struct radclock_handle *handle, int sID)
         else
             keep_alive_trigger = 1;
         
-        push_telemetry_batch(handle->telemetry_data.packetId, &handle->telemetry_data.write_pos, handle->telemetry_data.buffer, &handle->telemetry_data.holding_buffer_size, handle->telemetry_data.holding_buffer, handle, radclock_ts, keep_alive_trigger, PICN, handle->nservers);
+        push_telemetry_batch(handle->telemetry_data.packetId, &handle->telemetry_data.write_pos, handle->telemetry_data.buffer, &handle->telemetry_data.holding_buffer_size, handle->telemetry_data.holding_buffer, handle, radclock_ts, keep_alive_trigger, PICN, handle->nservers, SA);
 
         handle->telemetry_data.packetId += 1;
         handle->telemetry_data.last_msg_time = radclock_ts;
@@ -135,6 +166,9 @@ push_telemetry(struct radclock_handle *handle, int sID)
             handle->telemetry_data.prior_data[sID].prior_uA = uA;
             handle->telemetry_data.prior_data[sID].prior_leapsec_total = handle->rad_data[sID].leapsec_total;
             handle->telemetry_data.prior_data[sID].prior_minRTT = handle->ntp_server[sID].minRTT;
+
+            handle->telemetry_data.prior_data[sID].prior_sa = SA;
+            handle->telemetry_data.prior_data[sID].prior_servertrust = handle->servertrust;
             
         }
 
@@ -144,7 +178,7 @@ push_telemetry(struct radclock_handle *handle, int sID)
 }
 
 int 
-push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_handle, int *holding_buffer_size, void* holding_buffer, struct radclock_handle *handle, long double timestamp, int keep_alive_trigger,  int PICN, int NTC_Count)
+push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_handle, int *holding_buffer_size, void* holding_buffer, struct radclock_handle *handle, long double timestamp, int keep_alive_trigger,  int PICN, int NTC_Count, uint64_t SA)
 {
     int bytes_written = 0;
 
@@ -177,22 +211,7 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
 
         handle->prior_ntp_sent = handle->accepted_public_ntp;
         handle->prior_ntp_rejected = handle->rejected_public_ntp;
-        uint64_t SA = 0;
 
-        // Create a bit compressed array of server anomalies sorted by NTC id
-        if (handle->conf->is_cn)
-        {
-            for (int sID =0;sID<NTC_Count;sID++)
-            {
-                int NTC_id = handle->conf->time_server_ntc_mapping[sID];
-                if (sID != -1)
-                {
-                    int temp_SA = ((struct bidir_perfdata *)(handle->perfdata))->state[sID].SA;
-                    if (temp_SA)
-                        SA |= 1 << NTC_id;
-                }
-            }
-        }
 
         // printf("Telemetry SA val: %d\n", SA);
         *header_data = make_telemetry_packet(packetId, PICN, NTC_Count, timestamp, delta_accepted_public_ntp, delta_rejected_public_ntp, handle->servertrust, handle->conf->public_ntp, SA);
