@@ -39,6 +39,10 @@ kernel-config:
     WORKDIR linux-4.19.208
     # Build default config
     RUN make defconfig
+    # Modify config to match Darryl's VM settings
+    RUN scripts/config --disable DEBUG_INFO
+    RUN scripts/config --set-str MODULE_SIG_KEY certs/signing_key.pem
+    RUN scripts/config --set-str CONFIG_SYSTEM_TRUSTED_KEYS ""
 
 kernel-build:
     FROM +kernel-config
@@ -95,7 +99,6 @@ ff-kernel-src:
     COPY $SRC/syscalls.h                        $DEST/include/linux/
     COPY $SRC/time.c                            $DEST/kernel/time/
     COPY $SRC/timekeeping.c                     $DEST/kernel/time/
-    COPY $SRC/timekeeping.c                     $DEST/kernel/time/
     COPY $SRC/vclock_gettime.c                  $DEST/arch/x86/entry/vdso/
     COPY $SRC/vgtod.h                           $DEST/arch/x86/include/asm/
 
@@ -129,14 +132,14 @@ build-radclock-no-kernel:
     # Pull the artifacts out
     SAVE ARTIFACT /radclock-build AS LOCAL ./artifacts/
 
-
 build-radclock-with-kernel:
     FROM +copy-src
     # Allow Earthly to access the architecture
+
     ARG TARGETARCH
     # Install the netlink libraries for the RADclock kernel support
     RUN apt-get install -y libnl-3-dev libnl-genl-3-dev
-    # Autconf
+    # Autoconf
     RUN autoreconf -i
     # Configure the build
     RUN ./configure --prefix /radclock-build --with-radclock-kernel
@@ -147,8 +150,38 @@ build-radclock-with-kernel:
     # Pull the artifacts out
     SAVE ARTIFACT /radclock-build AS LOCAL ./artifacts/radclock-with-kernel/$TARGETARCH/
 
+# Brute force bh version to get it working
+build-radclock-with-kernel-armsrc:
+ ## This section is a bh version of target copy-src
+    FROM +bh-patch
+  	 # Switch our working directory back
+    WORKDIR /RADclock
+    # Copy everything for now
+    COPY . ./
+    # Generate version
+    RUN ./version.sh
+ ## DONE.  Now return to copying the generic remainder of build-radclock-with-kernel:
+
+	 # Allow Earthly to access the architecture
+    ARG TARGETARCH
+    # Install the netlink libraries for the RADclock kernel support
+    RUN apt-get install -y libnl-3-dev libnl-genl-3-dev
+    # Autoconf
+    RUN autoreconf -i
+    # Configure the build
+    RUN ./configure --prefix /radclock-build --with-radclock-kernel
+    # Actually build it
+    RUN make
+    # Install it so we can grab it
+    RUN make install
+    # Pull the artifacts out
+    SAVE ARTIFACT /radclock-build AS LOCAL ./artifacts/radclock-with-kernel/$TARGETARCH/
+
+
+
 build-radclock-with-kernel-arm64:
-   BUILD --platform=linux/arm64 +build-radclock-with-kernel
+#   BUILD --platform=linux/arm64 +build-radclock-with-kernel
+   BUILD --platform=linux/arm64 +build-radclock-with-kernel-armsrc
 
 
 
@@ -158,8 +191,10 @@ build-arm64:
 
 bh-deps:
     RUN apt-get -yqq update 
-    RUN apt-get -yqq install gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget xz-utils git flex bison libssl-dev bc file build-essential rsync kmod cpio
-    GIT CLONE --branch rpi-4.19.y https://github.com/raspberrypi/linux.git /linux
+    RUN apt-get -yqq install build-essential autoconf git libtool-bin vim libpcap-dev
+    RUN apt-get -yqq install gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu make wget xz-utils flex bison libssl-dev bc file rsync kmod cpio
+    RUN apt-get -yqq install mlocate
+	 GIT CLONE --branch rpi-4.19.y https://github.com/raspberrypi/linux.git /linux
     WORKDIR /linux
 
 
@@ -169,8 +204,9 @@ bh-patch:
     # Handy constants
     ARG SRC=kernel/linux/4.19.127/CurrentSource
     ARG DEST=/linux
-    # Create driver directory
+    # Create driver directory [ no cache forces the COPY cmds to ignore cache ]
     RUN mkdir -p $DEST/drivers/ffclock/
+    #RUN --no-cache mkdir -p $DEST/drivers/ffclock/
 
     # Copy in the files
     COPY $SRC/af_inet.c                         $DEST/net/ipv4/
@@ -196,16 +232,17 @@ bh-patch:
     COPY $SRC/syscalls.h                        $DEST/include/linux/
     COPY $SRC/time.c                            $DEST/kernel/time/
     COPY $SRC/timekeeping.c                     $DEST/kernel/time/
-    COPY $SRC/timekeeping.c                     $DEST/kernel/time/
-    COPY $SRC/vclock_gettime.c                  $DEST/arch/x86/entry/vdso/
-    COPY $SRC/vgtod.h                           $DEST/arch/x86/include/asm/
+    #COPY $SRC/vclock_gettime.c                  $DEST/arch/x86/entry/vdso/
+    #COPY $SRC/vgtod.h                           $DEST/arch/x86/include/asm/
+	 # ARM specific files
+	 COPY $SRC/unistd.h									$DEST/include/uapi/asm-generic/
 
     # Copy assembly build scripts for 64 bit VDSO
-    COPY $SRC/vdso.lds.S                        $DEST/arch/x86/entry/vdso/
-    COPY $SRC/vdsox32.lds.S                     $DEST/arch/x86/entry/vdso/
+    #COPY $SRC/vdso.lds.S                        $DEST/arch/x86/entry/vdso/
+    #COPY $SRC/vdsox32.lds.S                     $DEST/arch/x86/entry/vdso/
 
     # Copy assembly build scripts for 32 bit VDSO (needed?)
-    COPY $SRC/vdso32.lds.S               $DEST/arch/x86/entry/vdso/vdso32/
+    #COPY $SRC/vdso32.lds.S               $DEST/arch/x86/entry/vdso/vdso32/
 
 bh-defconfig:
     FROM +bh-patch

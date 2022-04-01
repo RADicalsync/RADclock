@@ -520,9 +520,16 @@ case "$target_os" in
 						syscall_get_vcounter_number=335
 						syscall_get_vcounter_latency_number=336
 					;;
+					# Not working since osversion not defined, Why??
+					aarch64 | arm64)
+						syscall_get_vcounter_number=294
+						syscall_get_vcounter_latency_number=295
+					;;
 				esac
-			;;				*)
-				syscall_get_vcounter_number=0
+			;;
+			# Use the case default as a hack to get this working.
+			*)
+				syscall_get_vcounter_number=294
 				syscall_get_vcounter_latency_number=0
 			;;
 		esac
@@ -553,7 +560,7 @@ AC_OUTPUT
 AC_MSG_NOTICE([----------------------------------------])
 AC_MSG_NOTICE([RADClock version $PACKAGE_VERSION])
 AC_MSG_NOTICE([Found target arch: $target_cpu])
-AC_MSG_NOTICE([Compiling for $target_os])
+AC_MSG_NOTICE([Compiling for $target_os, osversion: $osversion])
 AC_MSG_NOTICE([Feed-forward kernel: $tscexts (version: $ffsupportversion)])
 
 case $target_os in

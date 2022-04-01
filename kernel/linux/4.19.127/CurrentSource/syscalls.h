@@ -683,12 +683,12 @@ asmlinkage long sys_settimeofday(struct timeval __user *tv,
 				struct timezone __user *tz);
 asmlinkage long sys_adjtimex(struct timex __user *txc_p);
 
-/* arch/x86/entry/vdso/vclock_gettime.c syscall fallbacks
- * Entries in this file should match those in uapi/asm-generic/unistd.h, not true here, so put elsewhere? */
-#ifdef CONFIG_FFCLOCK
-asmlinkage long sys_ffclock_getcounter(ffcounter __user *ffcount);
-asmlinkage long sys_ffclock_getcounter_latency(ffcounter __user *ffcount, u64 __user *vcount_lat, u64 __user *tsc_lat);
-#endif
+///* arch/x86/entry/vdso/vclock_gettime.c syscall fallbacks
+// * Entries in this file should match those in uapi/asm-generic/unistd.h, not true here, so put elsewhere? */
+//#ifdef CONFIG_FFCLOCK
+//asmlinkage long sys_ffclock_getcounter(ffcounter __user *ffcount);
+//asmlinkage long sys_ffclock_getcounter_latency(ffcounter __user *ffcount, u64 __user *vcount_lat, u64 __user *tsc_lat);
+//#endif
 
 /* kernel/timer.c */
 asmlinkage long sys_getpid(void);
@@ -916,6 +916,12 @@ asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
 			  unsigned mask, struct statx __user *buffer);
 asmlinkage long sys_rseq(struct rseq __user *rseq, uint32_t rseq_len,
 			 int flags, uint32_t sig);
+
+/* Placed here to match syscall # order in uapi/asm-generic/unistd.h */
+#ifdef CONFIG_FFCLOCK
+asmlinkage long sys_ffclock_getcounter(ffcounter __user *ffcount);
+asmlinkage long sys_ffclock_getcounter_latency(ffcounter __user *ffcount, u64 __user *vcount_lat, u64 __user *tsc_lat);
+#endif
 
 /*
  * Architecture-specific system calls

@@ -41,6 +41,8 @@
 #include <errno.h>
 #include <err.h>
 #include <string.h>
+/* This compiles but still does not give us the IOCTLS, why? */
+#include <linux/sockios.h>
 
 #include "radclock.h"
 #include "radclock-private.h"
