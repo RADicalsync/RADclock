@@ -87,11 +87,27 @@ if test "$jdebug" = "yes"; then
 fi
 
 dnl Kernel support forced or auto-detect
+dnl If we are forcing kernel suport, we need to specify the version of the kernel we want
+dnl to build for. If a version isn't provided, it defaults to 4.19.0, our latest working
+dnl version (and almost certainly the one people will want). If a version is provided
+dnl then use that instead.
 AC_ARG_WITH([radclock-kernel],
-			[AS_HELP_STRING([--with-radclock-kernel],
-							[Force compilation of radclock kernel support])],
-							[tscexts=yes],
-							[tscexts=no])
+                        [AS_HELP_STRING([--with-radclock-kernel],
+                                                        [Force compilation of radclock kernel support])],
+                                                        [if test "$withval" = "yes"; then
+                                                         osversion=4.19.0
+							  tscexts=yes
+                                                        else
+                                                         osversion=$withval
+                                                         tscexts=yes
+                                                        fi
+                                                         ],
+                                                        [tscexts=no])
+
+
+
+
+
 
 
 
@@ -527,10 +543,11 @@ case "$target_os" in
 					;;
 				esac
 			;;
-			# Use the case default as a hack to get this working.
+			# Set to zero and raise an error if it's not a supported kernel
 			*)
-				syscall_get_vcounter_number=294
+				syscall_get_vcounter_number=0
 				syscall_get_vcounter_latency_number=0
+				AC_MSG_ERROR([Sorry, kernel version $osversion is not supported!])
 			;;
 		esac
 		# These are internal names, not necc. the actual syscall names

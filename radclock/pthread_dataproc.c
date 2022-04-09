@@ -1036,12 +1036,13 @@ process_stamp(struct radclock_handle *handle)
 				update_kernel_fixed(handle);
 				verbose(VERB_DEBUG, "Sync pthread updated kernel fixed pt data.");
 			} else {
+#ifndef WITH_FFKERNEL_NONE
 				// TODO: great many things to do here to performm a clean shutdown or reset...
 				if ( get_currentcounter(handle->clock) == 1 ) {
 					verbose(LOG_NOTICE, "Hardware counter has changed, shutting down RADclock");
 					return (-1);
 				}
-
+#endif
 				/* Examine FF form of new updated rad_data */
 				fill_ffclock_estimate(RAD_DATA(handle), RAD_ERROR(handle), &cest);
 				if ( VERB_LEVEL>2 ) {
