@@ -36,7 +36,7 @@ kernel-deps:
 kernel-config:
     FROM +kernel-deps
     # Jump in
-    WORKDIR linux-4.19.208
+    WORKDIR linux-4.19.235
     # Build default config
     RUN make defconfig
     # Modify config to match Darryl's VM settings
@@ -55,7 +55,7 @@ kernel-build:
 kernel-config-patched:
     FROM +ff-kernel-src
     # Jump in
-    WORKDIR linux-4.19.208
+    WORKDIR linux-4.19.235
     # Build default config
     RUN make defconfig
 
@@ -71,7 +71,7 @@ ff-kernel-src:
     FROM +kernel-deps
     # Handy constants
     ARG SRC=kernel/linux/4.19.0/CurrentSource
-    ARG DEST=linux-4.19.208
+    ARG DEST=linux-4.19.235
     # Create driver directory
     RUN mkdir -p $DEST/drivers/ffclock/
 
