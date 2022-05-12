@@ -31,7 +31,6 @@
 
 #include <asm/types.h>
 #include <sys/ioctl.h>
-//#include <sys/sysctl.h>
 #include <sys/socket.h>
 
 #include <stdio.h>
@@ -143,18 +142,25 @@ has_vm_vcounter(struct radclock *clock)
 }
 
 
-#define DefinedLocalRDTSC 0
-
-#ifdef __amd64__
-
-/* Ensure rdtsc() is defined
- * If we can't find it, we define here (same as the macros and defn
- * in  arch/x86/include/asm/msr.h , except for the cast)
+/* RDTSC detection and rdtsc() definition
+ *  configure.ac tries to flag if there is no TSC via NO_TSC_ONPLATFORM, for
+ *  example, on arm this is defined.
+ *  If it can't, it tries to find a header file where rdtsc() may be defined.
+ *  If this fails, we define a rdtsc() manually here, hoping that in fact a
+ *  TSC exists, otherwise the assembler will fail!
  */
-#ifdef HAVE_RDTSC_ASM
+#define DefinedLocalRDTSC 0		// diagnostics only, 0 means system rdtsc found
+
+#ifdef NO_TSC_ONPLATFORM
+#define DefinedLocalRDTSC 2
+static inline uint64_t rdtsc(void) {
+        return 0;
+}
+#else	// there may be a TSC, try to find a rdtsc()
+#ifdef HAVE_RDTSC_ASM			// DefinedLocalRDTSC will remain 0
 #	include <asm/msr.h>			// file is there, but no functions are in it
 #else
-#	define DefinedLocalRDTSC 1
+#define DefinedLocalRDTSC 1
 	static inline uint64_t	// same definition as in FreeBSD
 	rdtsc(void)
 	{
@@ -163,11 +169,6 @@ has_vm_vcounter(struct radclock *clock)
 		 return (low | ((u_int64_t)high << 32));
 	}
 #endif
-
-#else
-static inline uint64_t rdtsc(void) {
-        return 0;
-}
 #endif
 
 
@@ -234,7 +235,8 @@ radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
  * Return codes:  {-1,0,1} = {couldn't access, no change or initialized, changed}
  * Assumes KV>0 .
  */
-int get_currentcounter(struct radclock *clock)
+int
+get_currentcounter(struct radclock *clock)
 {
 	char hw_counter[32];
 	FILE *fd = NULL;
@@ -281,6 +283,17 @@ radclock_init_vcounter(struct radclock *clock)
 	 */
 	logger(RADLOG_NOTICE, "Available sysclocks: traditional (sysclock not implemented)");
 
+	/* Report result of rdtsc search */
+	switch (DefinedLocalRDTSC) {
+	case 0:
+		logger(RADLOG_NOTICE, "System rdtsc() found");
+		break;
+	case 1:
+		logger(RADLOG_NOTICE, "System rdtsc() not found, have defined locally in daemon");
+		break;
+	case 2:
+		logger(RADLOG_NOTICE, "Platform has no TSC, dummy rdtsc() defined for compilation");
+	}
 
 	/* Retrieve and register name of counter used by the kernel timecounter */
 	if ( get_currentcounter(clock) == -1 )
@@ -325,12 +338,6 @@ radclock_init_vcounter(struct radclock *clock)
 	 *  where handle->conf is available and pass here as 2nd argument.
 	 */
 	int activateBP = 0;	// user's bypass intention, may set the kernal option!
-
-	if ( DefinedLocalRDTSC )
-		logger(RADLOG_NOTICE, "rdtsc() not found, have defined locally in daemon");
-	else
-		logger(RADLOG_NOTICE, "system rdtsc() found");
-
 	if ( (bypass_active == 0 && activateBP == 0) || clock->kernel_version < 2) {
 		clock->get_vcounter = &radclock_get_vcounter_syscall;
 		logger(RADLOG_NOTICE, "Initialising get_vcounter with syscall.");

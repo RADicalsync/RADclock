@@ -32,19 +32,19 @@ set -e
 
 case "$1" in
   start)
-	log_dameon_msg "Starting $DESC: "
+	log_daemon_msg "Starting $DESC: "
 	start-stop-daemon --start --quiet --pidfile $PIDFILE \
 		--exec $DAEMON -- $DAEMON_OPTS
 	log_end_msg "done."
 	;;
   stop)
-	log_dameon_msg "Stopping $DESC: "
+	log_daemon_msg "Stopping $DESC: "
 	start-stop-daemon --stop --quiet --retry TERM/2/TERM/forever/TERM \
 		--pidfile $PIDFILE --exec $DAEMON
 	log_end_msg "done."
 	;;
   restart)
-	log_dameon_msg "Restarting $DESC: "
+	log_daemon_msg "Restarting $DESC: "
 	start-stop-daemon --stop --quiet --retry TERM/2/TERM/forever/TERM \
 		--pidfile $PIDFILE --exec $DAEMON
 	sleep 2
@@ -53,19 +53,19 @@ case "$1" in
 	log_end_msg "done."
 	;;
   reload)
-	log_dameon_msg "Reloading $DESC configuration files."
+	log_daemon_msg "Reloading $DESC configuration files."
 	start-stop-daemon --stop --signal HUP --quiet --pidfile $PIDFILE \
 		--exec $DAEMON
 	log_end_msg "done."
 	;;
   rotate)
-	log_dameon_msg "Rotating $DESC log file (will reopen)."
+	log_daemon_msg "Rotating $DESC log file (will reopen)."
 	start-stop-daemon --stop --signal USR1 --quiet --pidfile $PIDFILE \
 		--exec $DAEMON
 	log_end_msg "done."
 	;;
   status)
-	log_dameon_msg "$DESC status:  "
+	log_daemon_msg "$DESC status:  "
 	if [ ! -r "$PIDFILE" ]; then
 		log_end_msg "is not running."
 		exit 3 

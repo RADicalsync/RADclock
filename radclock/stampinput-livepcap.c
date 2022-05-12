@@ -65,8 +65,6 @@
 #include "rawdata.h"
 #include "jdebug.h"
 
-#include <sys/sysctl.h>
-
 
 /* Defines required by the Linux SLL header */
 #define LINUX_SLL_HOST		0

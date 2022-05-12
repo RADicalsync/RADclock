@@ -75,8 +75,6 @@
 #include "proto_ntp.h"
 #include "jdebug.h"
 
-#include <sys/sysctl.h>
-
 /* Default PID lockfile (-P overrides this) */
 #define DAEMON_LOCK_FILE ( RADCLOCK_RUN_DIRECTORY "/radclock.pid" )
 
