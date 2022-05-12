@@ -969,7 +969,6 @@ static void tk_setup_internals(struct timekeeper *tk, struct clocksource *clock)
 	tk->tkr_raw.mult = clock->mult;
 	tk->ntp_err_mult = 0;
 	tk->skip_second_overflow = 0;
-
 }
 
 /* Timekeeper helper functions. */
@@ -1333,6 +1332,7 @@ static void timekeeping_forward_now(struct timekeeper *tk)
 	/* If arch requires, add in get_arch_timeoffset() */
 	tk->tkr_mono.xtime_nsec += (u64)arch_gettimeoffset() << tk->tkr_mono.shift;
 
+
 	tk->tkr_raw.xtime_nsec += delta * tk->tkr_raw.mult;
 
 	/* If arch requires, add in get_arch_timeoffset() */
@@ -1634,8 +1634,9 @@ static int scale64_check_overflow(u64 mult, u64 div, u64 *base)
 	    ((int)sizeof(u64)*8 - fls64(mult) < fls64(rem)))
 		return -EOVERFLOW;
 	tmp *= mult;
+	rem *= mult;
 
-	rem = div64_u64(rem * mult, div);
+	do_div(rem, div);
 	*base = tmp + rem;
 	return 0;
 }
@@ -2743,7 +2744,6 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	if (mode != TK_ADV_TICK)
 		goto out;
 #else
-	// fn prepares tk to replace real_tk at end. At entry, they are equal
 	offset = clocksource_delta(tk_clock_read(&tk->tkr_mono),
 				   tk->tkr_mono.cycle_last, tk->tkr_mono.mask);
 
@@ -2769,7 +2769,8 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	maxshift = (64 - (ilog2(ntp_tick_length())+1)) - 1;
 	shift = min(shift, maxshift);
 	while (offset >= tk->cycle_interval) {
-		offset = logarithmic_accumulation(tk, offset, shift, &clock_set);
+		offset = logarithmic_accumulation(tk, offset, shift,
+							&clock_set);
 		if (offset < tk->cycle_interval<<shift)
 			shift--;
 	}
@@ -2794,11 +2795,8 @@ static void timekeeping_advance(enum timekeeping_adv_mode mode)
 	 * memcpy under the tk_core.seq against one before we start
 	 * updating.
 	 */
-	/* BUG: weirdness, this fn updates the passed tk (which is shadow_tk), but at the end,
-	 * overwrites shadow_tk directly with real_tk , thereby throwing away all updates
-	 * Then when we come here, they are already the same, and so the entire fn fails to update */
-	timekeeping_update(tk, clock_set);	// this fn does tk <-- real_tk
-	memcpy(real_tk, tk, sizeof(*tk));	// already the same, does nth ??
+	timekeeping_update(tk, clock_set);
+	memcpy(real_tk, tk, sizeof(*tk));
 	/* The memcpy must come last. Do not put anything here! */
 	write_seqcount_end(&tk_core.seq);
 out:

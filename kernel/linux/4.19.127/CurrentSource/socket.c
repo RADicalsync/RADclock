@@ -474,7 +474,7 @@ static struct socket *sockfd_lookup_light(int fd, int *err, int *fput_needed)
 	if (f.file) {
 		sock = sock_from_file(f.file, err);
 		if (likely(sock)) {
-			*fput_needed = f.flags & FDPUT_FPUT;
+			*fput_needed = f.flags;
 			return sock;
 		}
 		fdput(f);
@@ -982,7 +982,6 @@ static long sock_do_ioctl(struct net *net, struct socket *sock,
  *	With an ioctl, arg may well be a user mode pointer, but we don't know
  *	what to do with it - that's up to the protocol still.
  */
-
 
 struct ns_common *get_net_ns(struct ns_common *ns)
 {

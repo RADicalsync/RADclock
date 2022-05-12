@@ -12,9 +12,9 @@
  */
 
 #include <uapi/linux/time.h>
-#include <asm/vgtod.h>		// includes ffclock.h defining  struct ffcounter
+#include <asm/vgtod.h>
 #include <asm/vvar.h>
-#include <asm/unistd.h>		// has auto-generated defns of __NR_* syscall numbers
+#include <asm/unistd.h>
 #include <asm/msr.h>
 #include <asm/pvclock.h>
 #include <asm/mshyperv.h>

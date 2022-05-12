@@ -26,7 +26,7 @@
  *		Alan Cox	:	Disallow bind() to addresses that are
  *					not ours - especially broadcast ones!!
  *		Alan Cox	:	Socket 1024 _IS_ ok for users. (fencepost)
- *		Alan Cox	:	sock_wfree/sock_rfree don't destroy sockets
+ *		Alan Cox	:	sock_wfree/sock_rfree don't destroy sockets,
  *					instead they leave that for the DESTROY timer.
  *		Alan Cox	:	Clean up error flag in accept
  *		Alan Cox	:	TCP ack handling is buggy, the DESTROY timer
@@ -644,7 +644,7 @@ bool sk_mc_loop(struct sock *sk)
 		return inet6_sk(sk)->mc_loop;
 #endif
 	}
-	WARN_ON_ONCE(1);
+	WARN_ON(1);
 	return true;
 }
 EXPORT_SYMBOL(sk_mc_loop);
@@ -1544,7 +1544,6 @@ struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
 		cgroup_sk_alloc(&sk->sk_cgrp_data);
 		sock_update_classid(&sk->sk_cgrp_data);
 		sock_update_netprioidx(&sk->sk_cgrp_data);
-		sk_tx_queue_clear(sk);
 	}
 
 	return sk;
@@ -1752,7 +1751,6 @@ struct sock *sk_clone_lock(const struct sock *sk, const gfp_t priority)
 		 */
 		sk_refcnt_debug_inc(newsk);
 		sk_set_socket(newsk, NULL);
-		sk_tx_queue_clear(newsk);
 		newsk->sk_wq = NULL;
 
 		if (newsk->sk_prot->sockets_allocated)
@@ -2639,27 +2637,6 @@ int sock_no_mmap(struct file *file, struct socket *sock, struct vm_area_struct *
 	return -ENODEV;
 }
 EXPORT_SYMBOL(sock_no_mmap);
-
-/*
- * When a file is received (via SCM_RIGHTS, etc), we must bump the
- * various sock-based usage counts.
- */
-void __receive_sock(struct file *file)
-{
-	struct socket *sock;
-	int error;
-
-	/*
-	 * The resulting value of "error" is ignored here since we only
-	 * need to take action when the file is a socket and testing
-	 * "sock" for NULL is sufficient.
-	 */
-	sock = sock_from_file(file, &error);
-	if (sock) {
-		sock_update_netprioidx(&sock->sk->sk_cgrp_data);
-		sock_update_classid(&sock->sk->sk_cgrp_data);
-	}
-}
 
 ssize_t sock_no_sendpage(struct socket *sock, struct page *page, int offset, size_t size, int flags)
 {

@@ -695,7 +695,6 @@ struct sk_buff {
 		ktime_t		tstamp;
 		u64		skb_mstamp;
 	};
-
 	/*
 	 * This is the control buffer. It is free to use for every
 	 * layer. Please put your private variables there. If you
@@ -1770,7 +1769,7 @@ static inline void __skb_insert(struct sk_buff *newsk,
 	WRITE_ONCE(newsk->prev, prev);
 	WRITE_ONCE(next->prev, newsk);
 	WRITE_ONCE(prev->next, newsk);
-	list->qlen++;
+	WRITE_ONCE(list->qlen, list->qlen + 1);
 }
 
 static inline void __skb_queue_splice(const struct sk_buff_head *list,
@@ -2795,6 +2794,15 @@ static inline void skb_propagate_pfmemalloc(struct page *page,
 {
 	if (page_is_pfmemalloc(page))
 		skb->pfmemalloc = true;
+}
+
+/**
+ * skb_frag_off() - Returns the offset of a skb fragment
+ * @frag: the paged fragment
+ */
+static inline unsigned int skb_frag_off(const skb_frag_t *frag)
+{
+	return frag->page_offset;
 }
 
 /**
