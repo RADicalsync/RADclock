@@ -37,7 +37,7 @@ deb-kernel-deps:
     RUN apt-get -y source linux
     # Work out what we have and jump in [ went from 4.19.{181,208,235,..} ]
 	 ARG osversion=$(ls -tr |tail -1 |cut -d'-' -f2)
-    WORKDIR linux-$osversion
+    WORKDIR linux-$osversion			# osversion extractable by other targets
 	 RUN --no-cache pwd
 	 # Save the source (needed for compile on VM)
 	 ARG DEST="./artifacts/kernelsourcefiles/deb-$osversion/"
@@ -54,7 +54,8 @@ deb-kernel-config-patched:
 	 # Get essential packages and kernel source
 	 FROM +deb-kernel-deps
 	 # Impose latest FFfile changes onto source
-    DO +COPY_IN_FFFILES --SRC=kernel/linux/4.19.0/CurrentSource
+	 ARG osversion=$(pwd | tr '/' '\n' |tail -1 |cut -d'-' -f2) # find matching version
+    DO +COPY_IN_FFFILES --SRC=kernel/linux/$osversion/CurrentSource
     # Build default config
     RUN make defconfig
 
@@ -165,6 +166,8 @@ build-radclock-no-kernel:
 deb-build-radclock-with-kernel:
 	 # Get essential packages and kernel source
 	 FROM +deb-kernel-deps
+	 ARG osversion=$(pwd | tr '/' '\n' |tail -1 |cut -d'-' -f2) # find desired version
+	 RUN echo "Will be compiling radclock for a $osversion AMD64 kernel"
 	 # no need to copy FFfiles to compile radclock, configure.ac contains details
 
     # Switch our working directory back
@@ -174,9 +177,9 @@ deb-build-radclock-with-kernel:
     # Generate version
     RUN ./version.sh
 
-    # Configure the build matching the latest FF files for deb
+    # Configure the build using the matching FF files for deb
     RUN autoreconf -i
-    RUN ./configure --prefix /radclock-build --with-FFclock-kernel=4.19.0
+    RUN ./configure --prefix /radclock-build --with-FFclock-kernel=$osversion
     # Actually build it
     RUN make
     # Install it so we can grab it
@@ -196,6 +199,8 @@ deb-build-radclock-with-kernel:
 arm-build-radclock-with-kernel:
 	 # Get essential packages and kernel source
     FROM +arm-kernel-deps
+	 ARG osversion=4.19.127 		# specify desired version
+	 RUN echo "Will be compiling radclock for a $osversion ARM64 kernel"
 	 # no need to copy FFfiles to compile radclock, configure.ac contains details
 
   	 # Switch our working directory back
@@ -207,7 +212,7 @@ arm-build-radclock-with-kernel:
 
     # Configure build for a specified FF kernel version for the Pi
     RUN autoreconf -i
-    RUN ./configure --prefix /radclock-build --with-FFclock-kernel=4.19.127
+    RUN ./configure --prefix /radclock-build --with-FFclock-kernel=$osversion
     # Actually build it
     RUN make
     # Install it so we can grab it
@@ -237,7 +242,7 @@ arm-kernel-config-patched:
 	 # Get essential packages and kernel source
     FROM +arm-kernel-deps
 	 # Impose FFfile changes onto source
-    DO +COPY_IN_FFFILES --SRC=kernel/linux/4.19.127/CurrentSource --ARM=YES
+    DO +COPY_IN_FFFILES --SRC=kernel/rpi/4.19.127/CurrentSource --ARM=YES
 	 # Build default config
     RUN make ARCH=arm64 bcm2711_defconfig
 
@@ -358,10 +363,11 @@ test-basic:
     	ARG DEST=linux-4.19.235
 	ELSE
 		RUN echo "Assuming architecture is arm64 (actually $TARGETARCH)"
-		ARG SRC=kernel/linux/4.19.127/CurrentSource
+		ARG SRC=kernel/rpi/4.19.127/CurrentSource
     	ARG DEST=/linux
 	END
 	RUN echo "SRC set to $SRC;  DEST set to $DEST"
+	WORKDIR $DEST
 
 # Testing persistance of action defined/performed in test-basic
 test-persistance:
@@ -370,6 +376,9 @@ test-persistance:
 	RUN pwd									# WORKINGDIR
 	# Things that are not
 	RUN echo $BASICVAR
+	# Extract osversion from current dir name
+	ARG osversion=$(pwd | tr '/' '\n' |tail -1 |cut -d'-' -f2)
+	RUN echo $osversion
 
 # Test the UDC
 test-UDC:
@@ -377,7 +386,7 @@ test-UDC:
 	DO +UDC_ARG_TEST --SRC="supplied src"
 	DO +UDC_ARG_TEST --SRC="supplied src" --ARM=YES
 
-# test-UDC
+# Test argument passing to a UDC
 UDC_ARG_TEST:
 	 COMMAND
 	 ARG SRC
