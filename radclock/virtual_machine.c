@@ -31,9 +31,6 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#ifdef WITH_FFKERNEL_FBSD
-#include <sys/sysctl.h>
-#endif
 
 #include <netdb.h>
 

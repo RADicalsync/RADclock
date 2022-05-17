@@ -32,7 +32,6 @@
 
 #include <asm/types.h>
 #include <sys/ioctl.h>
-//#include <sys/sysctl.h>
 #include <sys/socket.h>
 
 #include <stdio.h>
@@ -41,6 +40,8 @@
 #include <errno.h>
 #include <err.h>
 #include <string.h>
+/* This compiles but still does not give us the IOCTLS, why? */
+#include <linux/sockios.h>
 
 #include "radclock.h"
 #include "radclock-private.h"

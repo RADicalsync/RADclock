@@ -52,9 +52,6 @@
 #include "pthread_mgr.h"
 #include "jdebug.h"
 
-#include <sys/sysctl.h>		// TODO remove when pushing sysctl code within arch
-							// specific code
-
 
 #ifdef WITH_FFKERNEL_NONE
 int update_FBclock(struct radclock_handle *handle) { return (0); }

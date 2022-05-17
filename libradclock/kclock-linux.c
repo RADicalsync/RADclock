@@ -31,7 +31,6 @@
 
 #include <asm/types.h>
 #include <sys/ioctl.h>
-//#include <sys/sysctl.h>
 #include <sys/socket.h>
 
 #include <netinet/in.h>
