@@ -6,7 +6,6 @@
 typedef u64 ffcounter;	// perhaps put in a _ffcounter.h
 
 
-#==============================================================================
 /* The following code block provides needed support for the bintime format.
  * The code is a subset of that released under the FreeBSD project, under
  * 	SPDX-License-Identifier: BSD-3-Clause
@@ -72,7 +71,7 @@ bintime_mul(struct bintime *_bt, u_int _x)
         (((a)->sec == (b)->sec) ?                                       \
             ((a)->frac cmp (b)->frac) :                                 \
             ((a)->sec cmp (b)->sec))
-#==============================================================================
+
 
 /*
  * Feed-forward clock estimate

@@ -30,8 +30,8 @@ ACLOCAL_AMFLAGS = -I m4
 
 DIST_SUBDIRS = libradclock radclock examples man tests
 
-EXTRA_DIST = Documentation Tools FreeBSD python-module
-#EXTRA_DIST = python-module debian redhat
+EXTRA_DIST = Documentation Tools FreeBSD debian
+#EXTRA_DIST = python-module redhat
 
 
 SUBDIRS = $(DIST_SUBDIRS)
@@ -72,13 +72,13 @@ dist-hook:
 		mkdir $(distdir)/kernel-patches/linux/$$d; \
 		cp $(srcdir)/kernel/linux/$$d/* $(distdir)/kernel-patches/linux/$$d/ ; \
 	done
-	mkdir $(distdir)/kernel-patches/raspbian
-	for d in `ls $(srcdir)/kernel/raspbian`; do \
-		mkdir $(distdir)/kernel-patches/raspbian/$$d; \
-		cp $(srcdir)/kernel/raspbian/$$d/* $(distdir)/kernel-patches/raspbian/$$d/ ; \
+	mkdir $(distdir)/kernel-patches/rpi
+	for d in `ls $(srcdir)/kernel/rpi`; do \
+		mkdir $(distdir)/kernel-patches/rpi/$$d; \
+		cp $(srcdir)/kernel/rpi/$$d/* $(distdir)/kernel-patches/rpi/$$d/ ; \
 	done
 #	@echo "Pushing version number in packaging scripts"
-#	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/debian/changelog
+	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/debian/changelog
 #	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/redhat/radclock.spec
 #	@echo "Move debian copyright file in $(distdir) for Debian packaging"
 #	mv $(distdir)/debian/copyright $(distdir)/

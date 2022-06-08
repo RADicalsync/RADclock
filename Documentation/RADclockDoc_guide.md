@@ -53,7 +53,7 @@ repo/kernel/freebsd/FreeBSD-XX/CurrentSource and in the system once installed :
 
 
 Research papers on RADclock can be found on Darryl Veitch''s webpage at
-http://138.25.60.68/~darryl/index.html   .
+https://tklab.feit.uts.edu.au/~darryl/index.html    .
 
 
 Guide to Guide
