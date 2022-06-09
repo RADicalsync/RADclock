@@ -8,3 +8,8 @@ artifacts/
 RADbuild.log
 build.log
 version.m4
+
+# Secret
+bashtest
+id_rsa.pub
+sshaccessline

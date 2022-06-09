@@ -1,0 +1,95 @@
+#!/bin/bash
+
+## Creates a tree-form of the Current FF code, and creates a patch against the Original tree code (ie Original --> Current).
+## With the -c option, creates a patch against the source currently in the tree [probably an older patched version
+## requiring updating].
+
+Arch=`uname -p`
+OS=`uname -s`
+
+if [ $OS != "FreeBSD" ]; then
+	echo "This script only supports FreeBSD currently, you are on $OS! sorry."
+	exit
+fi
+
+
+OSv=`uname -r | cut -d'-' -f1`		# the version of this OS
+Based="$HOME/FFkernel_Work"
+FFsource=$Based/FFclock_working		# Flat form of Current FF files
+Installd="/usr/src"			# Level above needed dirs: {sys,share,lib,$arch}
+
+## Create the sparse tree version of Installd, rooted at Root
+##  Any dir will do, since running   diff old new >patchOldNew   in old's install directory,
+##  when used by  patch <patchOldNew  (in install directory), transforms Old-->New in situ, 
+##  it doesnt change or create a directory New
+if [ -z "$1" ]; then
+    Root=$Based/FFCLOCK-$OS-$OSv	# this becomes the patched form of Installd 
+    #Root=/usr/src/FFCLOCK-$OSv		# turns out no need to put in Installd !  patch  
+else
+    Root=$Based/$1
+fi
+
+echo "Assembling the flat source in   $FFsource  --> "
+echo "   sparse source tree rooted at $Root"
+
+## Create any missing dirs in Root tree, including the root
+## [currently hardwired to FreeBSD layout]
+[[ -e "$Root" ]] || mkdir $Root		#   test || execute if fail
+for Dir in  sys sys/kern sys/sys sys/net sys/dev sys/dev/e1000 sys/$Arch sys/$Arch/conf lib lib/libc lib/libc/sys share share/man share/man/man4
+do
+	[[ -e "$Root/$Dir" ]] || mkdir $Root/$Dir
+done
+
+
+## Copy current source into sparse tree form
+\cp $FFsource/{kern_*,subr_rtc}.c       $Root/sys/kern/
+\cp $FFsource/{timeffc,_ffcounter}.h    $Root/sys/sys/
+\cp $FFsource/bpf.{c,h}                 $Root/sys/net/
+\cp $FFsource/if_{em,igb}.c             $Root/sys/dev/e1000/
+\cp $FFsource/FFCLOCK	                $Root/sys/$Arch/conf
+\cp $FFsource/ffclock.2	 		$Root/lib/libc/sys/
+\cp $FFsource/ffclock.4	 		$Root/share/man/man4/
+
+du $Root
+
+
+
+## Patch name reflects the Original source in all cases [careful]
+PATCHfile=FFCLOCK-$OS-$OSv.patch
+
+if [ "$1" == "-c" ]; then
+	echo "Creating patch $PATCHfile against current source tree, may not be the original $OS-$OSv source!"
+else
+	echo "Creating patch $PATCHfile against $OS-$OSv source."
+	move_into_srctree -o 		# move Original code in
+fi
+cd $Installd			# operation must be performed in Dir where users will apply patch !
+diff -ar -U 2 --unidirectional-new-file  $Installd  $Root  |grep -v ^Only  > $Based/$PATCHfile
+#move_into_srctree 		# move Current source back in
+
+
+## Move into repo
+OSrepo=$Based/V4_mountedfrom_Icaro/RADclock_mycurrent/kernel/freebsd/$OS-$OSv
+echo "Copying $PATCHfile into repo"
+cp $Based/$PATCHfile $OSrepo/
+ls -l  $OSrepo 
+
+
+## Test patch by reverting files back, and clean up
+if [ `id -u` -ne 0 ]; then
+        echo "Sorry `id -un`, this must be run as root"
+        exit 0
+fi
+
+if true; then
+	echo "Testing patch and cleaning up"
+	\rm -r $Root		# was only created to make patch, on a target system, this doesn't exist
+	cd $Installd 
+	patch -Nsp0  < $Based/$PATCHfile    	# will patch $Installd, not create Root !
+	cd $Based	
+	grep kern_tc $PATCHfile |grep diff 	# check to see file names are right
+	diff FFclock_working CurrentSource	# should be back to previous state
+	if [ $? -eq 0 ]; then
+		echo "Patch passed reversion test: source is reinstated back to Current"
+	fi
+fi

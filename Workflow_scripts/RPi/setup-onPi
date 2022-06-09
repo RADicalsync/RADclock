@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# This is a companion bootstrapping script to setupRPi, to be run on the Pi
+# immediately after it has been reset from scratch with a new system.
+# NOTE:   the /boot partition now appears under /boot/firmware
+echo "Installing the setup files/script prepositioned by setupRPi" 
+
+# Local workflow setup
+Based="FFkernel_Work"
+ToolDir="RPi_toolkit"
+
+cd /root
+mkdir -pv $Based
+mkdir -pv $Based/$ToolDir
+mkdir -pv $Based/RADclock_working
+
+# Move pre-positioned files into place.
+mv /boot/firmware/bashrc .bashrc
+cd $Based 
+mv /boot/firmware/{id_rsa.pub,sshaccessline,{setup,update,quick,install}_*  $ToolDir
+chmod -x $ToolDir/sshaccessline
+cat $ToolDir/id_rsa.pub >> /root/.ssh/authorized_keys		# may need to insert a newline
+
+
+# Create symlinks for workflow scripts to mimic structure in VM workflow
+ln -s $ToolDir/{setup,update,quick,install}_* .
+
+# Setup headless access over ssh (command is in .bashrc), as well your environment
+source /root/.bashrc
+export LC_ALL=C			# needed for perl, put into .bashrc?
+
+
+## Add additional packages
+echo
+apt update
+# Generic
+apt -y -qq install mlocate vim rsync
+updatedb
+# Compilation support
+apt-get -y -qq install make autoconf libtool-bin
+# RADclock
+apt-get -y -qq install libpcap-dev libnl-3-dev libnl-genl-3-dev
+
+
+echo "You are now setup! All setup scripts now in $Based/$ToolDir"

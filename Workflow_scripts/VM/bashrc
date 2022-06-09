@@ -1,0 +1,105 @@
+#!/usr/local/bin/bash
+
+# set options
+set -o noclobber
+
+# terminal settings
+#stty erase "^?"    #  del
+#stty erase "^H"    #  backspace
+#stty intr  "^C"
+
+Arch=`uname -m`
+OS=`uname -s`
+
+# path setting  bracket shortcut, eg /usr/{bin,sbin,lib} ,  seems not to work in # bash..
+PATH="/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/bin:/usr/local/sbin:$HOME/bin:.:$HOME/FFkernel_Work"
+export PATH
+
+# environment variables
+#SHELL="/bin/bash"
+MANPATH="/usr/share/man:/usr/local/share/man"
+PS1="$USER-\s> "
+PS2="-->"
+PAGER="less"
+#LSCOLORS="gxfxcxdxbxegedabagacad"
+
+
+export MANPATH PAGER LSCOLORS
+##############################################################################
+
+history=100
+
+# Pi detection and aliases
+if [ $Arch == "aarch64" ]; then
+	if [ $OS == "Linux" ]; then
+		echo "Bashrc here: I see $OS on $Arch, I infer you are on a Pi"
+		OnPi="Yes" 
+
+		export LC_ALL=C
+ 		# Regenerate ssh access
+		grep feit024350 /boot/firmware/sysconf.txt >> /dev/null
+		if [ $? -ne 0 ]; then
+			echo "  - ssh key not found, re-inserting into /boot/firmware/sysconf.txt to enable next reboot"
+			cat /root/FFkernel_Work/RPi_toolkit/sshaccessline >> /boot/firmware/sysconf.txt
+		fi
+	fi
+fi
+
+# system aliases
+alias rm='rm -i'
+alias cp='cp -i'
+alias h='history'
+alias s='source ~/.bashrc'
+#alias top='top -o CPU'
+alias duh='du -h -d 1'
+alias mynic="ifconfig |grep '^e.0' | cut -d':' -f1"
+alias mynet='ifconfig `mynic` | grep netmask'
+alias myip="mynet | cut -d' ' -f2"
+
+case $OS in
+        FreeBSD | Darwin)
+                alias ls='ls -F -G';
+				alias ll='ls -lT';
+				alias llt='ls -latrT';;
+        Linux)
+                alias ls='ls -F --color';
+				alias ll='ls -l';
+				alias llt='ls -latr';;
+        SunOS)
+                alias ls='ls -F';
+				alias ll='ls -l';
+				alias llt='ls -latr';;
+esac
+
+
+# my convenience aliases
+case $OS in
+	FreeBSD | Darwin)
+		alias relocate='sudo /usr/libexec/locate.updatedb -e /root/FFkernel_Work/V4_mountedfrom_Icaro/';
+		alias clocate='llt /private/var/db/locate.database';;
+	Linux)
+		if [ $OnPi == "Yes" ]; then
+			alias relocate='/bin/updatedb'
+		else
+			alias relocate='sudo /usr/bin/updatedb -e /root/FFkernel_Work/V4_mountedfrom_Icaro/'
+		fi;;
+esac
+alias kmoz='kill -9 `ps -e | grep mozilla | grep ${USER}  | grep -v grep | awk "{print $2}"`'
+alias untar='tar -xvf'
+alias dotar='tar -cvf'
+
+# RADclock aliases
+alias lr='less /var/log/radclock.log'
+alias lm='less /var/log/messages'
+alias tr='tail -f /var/log/radclock.log'
+alias tm='tail -f /var/log/messages'
+alias ss='service radclock status'
+alias sr='service radclock reload'
+
+
+# opening docs aliases
+
+# cd to location aliases
+
+# # more complex aliases
+

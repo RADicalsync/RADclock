@@ -1,0 +1,56 @@
+#!/bin/bash
+
+echo Updating working FF Source
+
+OS=`uname -s`
+Based="$HOME/FFkernel_Work"
+MountPoint="V4_mountedfrom_Icaro"
+FFtarget=$Based/FFclock_working
+case $OS in
+	FreeBSD)
+		OSv=`uname -r | cut -d'-' -f1`
+		FFsource=$Based/$MountPoint/RADclock_mycurrent/kernel/freebsd/FreeBSD-$OSv/CurrentSource;;
+	Linux)
+		OSfullv=`uname -r` # VERSION.PATCHLEVEL.SUBLEVEL current running
+	 	OSv=`echo $OSfullv | cut -d'.' -f1-2`  	 # VERSION.PATCHLEVEL
+		#OSfullv=$OSv".0"		# did this before changed dir names
+		FFsource=$Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSfullv/CurrentSource
+
+		# Optionally replace entire source tree before patching 
+        if [[ "$1" == "-s" ]]; then
+			#Kname=$OSv.235				# should read desired SUBLEVEL from command line option 
+			Installd="/usr/src/linux-source-$OSv"		# dirname always VERSION.PATCHLEVEL, regardless of SUBLEVEL
+			FullSrcDir="$Based/$MountPoint/RADclock_mycurrent/artifacts/kernelsourcefiles/deb-$OSfullv/linux-source"
+			echo " **before patching, Copying full source tree at $FullSrcDir to $Installd -- could take a while"
+			scp -r $FullSrcDir $Installd 
+			ls -ltr /usr/src |tail -3
+		fi;;
+esac
+
+echo "  Differences with current repo version before the update :"
+echo " ----------------------------------------------------------------------------------"
+diff $FFsource  $FFtarget	| grep -v Only
+echo " ----------------------------------------------------------------------------------"
+echo
+
+# Copy over All files present:  
+#   new files:  futureproof,  must modify  move_into_srctree to `activate'
+#   old files:  must be removed manually on VM, or made impotent by modifying  move_into_srctree
+echo "  rSyncing from  $FFsource  -->  "
+echo "                 $FFtarget"
+rsync  -aic $FFsource/*	$FFtarget  --delete
+#rsync $1  -aic $FFsource/{kern_{ffclock,tc}.c,subr_rtc.c,timeffc.h,bpf.{c,h},_ffcounter.h,if_*.c}	$FFtarget
+
+case $OS in
+    FreeBSD)
+		Included="/usr/include"
+		echo "  Also copying header files into $Included"
+		\cp $FFtarget/{timeffc,_ffcounter}.h	$Included/sys/
+		\cp $FFtarget/bpf.h			$Included/net/;;
+	Linux)
+		Included="/usr/include"
+		echo "  Also copying header files into $Included"
+		\cp $FFtarget/ffclock.h	$Included/linux/
+		#Included="/usr/src/linux-source-$OSv/include/"
+		#echo "  On Linux, not yet copying header files into $Included or anywhere else"
+esac

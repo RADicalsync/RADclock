@@ -1,0 +1,59 @@
+#!/bin/bash
+
+Based="$HOME/FFkernel_Work"
+RADsource=$Based/V4_mountedfrom_Icaro/RADclock_mycurrent
+RADbuild=$Based/RADclock_working
+
+echo Creating distribution based on current snapshot	# ensure snapshot at desired commit/tag!
+cd $RADbuild
+
+echo
+echo "*** Get current source ***"
+update_workingRADclock		# contains the current FFclock stuff already, but scripts need more
+update_workingFFsource		# update FF stuff to the expected location for scripts
+
+echo
+echo "*** Cleaning build tree ***"
+cleanbuildtree
+
+echo
+echo "*** Regenerating configure ***"
+autoreconf -if
+
+echo
+echo "*** Configuring ***"
+configure -q
+
+# regenerate git-dependent M4 version macro   Requires git installed on build machine.
+echo
+echo "*** Generating distribution version macro ***"
+cd $RADsource
+version.sh 			# must run in repo dir
+cat version.m4
+mv -f version.m4  $RADbuild	# version.m4 never tracked by git, and not cleaned by cleanbuildtree
+cd $RADbuild
+
+echo
+
+
+# Go ahead and make the distribution if you really want it
+[[ -e version.sh ]] || echo "Warning: version.sh trigger missing, external distribution extras won't be included"
+	
+read -p "Go ahead and actually create the distribution [Ny] ?" ans
+if [ "$ans" == "y" ]; then
+
+	read -p "Should we update the FF patch in the repo before proceeding [nY] ?" ans
+	[[ "$ans" == "n" ]] ||	createPatch
+
+	echo "*** Making distribution ***"
+	make -s dist
+
+	echo
+        echo "*** Copying tar.gz file to $Based/Testpkg to allow testing ***"	
+	cp radclock-*.gz $Based/Testpkg
+else
+	echo "Skipping distribution creation."
+fi
+
+
+echo "------------------------------------------------------------------------------"

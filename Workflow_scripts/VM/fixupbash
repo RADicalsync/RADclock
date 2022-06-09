@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+MountPoint="V4_mountedfrom_Icaro"
+ToolDir="RADclock_mycurrent/Workflow_scripts/VM"
+
+cp  $MountPoint/$ToolDir/bashrc  ../.bashrc		# this exact line wont work inside setupVM, very wierd, despite same env
+source ../.bashrc
