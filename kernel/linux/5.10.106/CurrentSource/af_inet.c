@@ -911,6 +911,14 @@ int inet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 	struct rtentry rt;
 
 	switch (cmd) {
+#ifdef CONFIG_FFCLOCK
+		case SIOCGFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Get FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+			break;
+		case SIOCSFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Set FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+			break;
+#endif
 	case SIOCGSTAMP:
 		err = sock_get_timestamp(sk, (struct timeval __user *)arg);
 		break;

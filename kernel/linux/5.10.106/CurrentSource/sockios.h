@@ -132,6 +132,10 @@
 #define SIOCSHWTSTAMP	0x89b0		/* set and get config		*/
 #define SIOCGHWTSTAMP	0x89b1		/* get config			*/
 
+#ifdef CONFIG_FFCLOCK
+#define SIOCGFFCLOCKSTAMP 0x89b2	/* get current ffcount timestamp */
+#endif
+
 /* Device private ioctl calls */
 
 /*

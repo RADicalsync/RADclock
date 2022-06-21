@@ -5,6 +5,10 @@
 #include <linux/compiler.h>
 #include <linux/clocksource.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>		// needed for defn of ffcounter
+#endif
+
 #ifdef BUILD_VDSO32_64
 typedef u64 gtod_long_t;
 #else
@@ -35,6 +39,11 @@ struct vsyscall_gtod_data {
 
 	int		tz_minuteswest;
 	int		tz_dsttime;
+
+#ifdef CONFIG_FFCLOCK
+	/* Placed at the end to encourage binary compatibility */
+	ffcounter tick_ffcount;
+#endif
 };
 extern struct vsyscall_gtod_data vsyscall_gtod_data;
 

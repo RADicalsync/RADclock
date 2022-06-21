@@ -1999,6 +1999,11 @@ void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 	struct packet_type *pt_prev = NULL;
 	struct list_head *ptype_list = &ptype_all;
 
+#ifdef CONFIG_FFCLOCK
+	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk("=====>FFC dev_queue_XMIT_nit: filling skb->ffclock_ffc with ffc = %llu\n", skb->ffclock_ffc);
+#endif
+
 	rcu_read_lock();
 again:
 	list_for_each_entry_rcu(ptype, ptype_list, list) {
@@ -4476,6 +4481,12 @@ static int netif_rx_internal(struct sk_buff *skb)
 
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
+#ifdef CONFIG_FFCLOCK
+	/* Copy the FFclock raw timestamp to the skbuff */
+	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk("=>>FFC netif_RX_internal:   ffc = %llu\n", skb->ffclock_ffc);
+#endif
+
 	trace_netif_rx(skb);
 
 #ifdef CONFIG_RPS
@@ -5147,6 +5158,12 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 	int ret;
 
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
+
+#ifdef CONFIG_FFCLOCK
+	/* Copy the FFclock raw timestamp to the skbuff */
+	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk("<==FFC netif_RECEIVE_skb_:    filling skb->ffclock_ffc with ffc = %llu\n", skb->ffclock_ffc);
+#endif
 
 	if (skb_defer_rx_timestamp(skb))
 		return NET_RX_SUCCESS;

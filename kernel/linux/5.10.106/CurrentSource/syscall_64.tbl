@@ -343,6 +343,10 @@
 332	common	statx			__x64_sys_statx
 333	common	io_pgetevents		__x64_sys_io_pgetevents
 334	common	rseq			__x64_sys_rseq
+#ifdef CONFIG_FFCLOCK
+335	64	ffclock_getcounter	__x64_sys_ffclock_getcounter
+336	64	ffclock_getcounter_latency	__x64_sys_ffclock_getcounter_latency
+#endif
 
 #
 # x32-specific system call numbers start at 512 to avoid cache impact

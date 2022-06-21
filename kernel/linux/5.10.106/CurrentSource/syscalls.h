@@ -83,6 +83,9 @@ union bpf_attr;
 #include <linux/key.h>
 #include <linux/personality.h>
 #include <trace/syscall.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
 
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 /*
@@ -906,6 +909,12 @@ asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
 			  unsigned mask, struct statx __user *buffer);
 asmlinkage long sys_rseq(struct rseq __user *rseq, uint32_t rseq_len,
 			 int flags, uint32_t sig);
+
+/* Placed here to match syscall # order in uapi/asm-generic/unistd.h */
+#ifdef CONFIG_FFCLOCK
+asmlinkage long sys_ffclock_getcounter(ffcounter __user *ffcount);
+asmlinkage long sys_ffclock_getcounter_latency(ffcounter __user *ffcount, u64 __user *vcount_lat, u64 __user *tsc_lat);
+#endif
 
 /*
  * Architecture-specific system calls
