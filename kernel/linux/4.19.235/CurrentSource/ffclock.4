@@ -1,0 +1,112 @@
+.\" This documentation was written by Darryl Veitch at the
+.\" University of Technology Sydney.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.\" $FreeBSD$
+.\"
+.Dd December 11, 2021
+.Dt FFCLOCK 4
+.Os
+.Sh NAME
+.Nm FFCLOCK
+.Nd Feed-forward clock support 
+.Cd TODO: move to linux template!
+.Sh SYNOPSIS
+.Cd options FFCLOCK
+.Sh DESCRIPTION
+The
+.Xr ntpd 8
+daemon has been the dominant solution for system clock synchronization for many
+years, which has in turn influenced the design of the system clock.
+The ntpd daemon implements a feedback control algorithm which has been
+demonstrated to perform poorly in common use cases.
+.Pp
+Feed-forward clock synchronisation algorithms implemented by an appropriate
+daemon, in concert with the
+.Nm
+kernel support, have been shown to provide highly robust and accurate clock
+synchronization.
+In addition to time keeping, the
+.Nm
+kernel mechanism provides new timestamping capabilities and the ability to
+use specialised clocks. This includes one designed for the
+measurement of time differences which is extremely robust and accurate, for
+example offering nanosecond accuracy and below for packet round-trip times.
+Feed-forward synchronization is also very well suited for virtualised
+environments, reducing the overhead of timekeeping in guests and ensuring
+continued smooth operation of the system clock during guest live migration.
+.Pp
+The
+.Nm
+kernel support provides feed-forward timestamping functions within the kernel
+and system calls to support feed-forward synchronization daemons
+.Po see
+.Xr ffclock 2
+.Pc .
+.Ss Kernel Options
+The following kernel configuration options are related to
+.Nm :
+.Pp
+.Bl -tag -width ".Dv FFCLOCK" -compact
+.It Dv ffclock
+Enable feed-forward clock support.
+.El
+.Ss Configuration
+Within the feed-forward clock family, three variants of the underlying clock
+are available: the clock corresponding to the FFclock daemon, a monotonized version of it,
+and the associated difference clock. These can be selected by user processes for in-kernel packet
+timestamping using a timestamp mode descriptor.
+.Pp
+Configuration is possible via a ffclock sysfs device which provides the following variables:
+.Bl -tag -width "    " -offset indent
+.It Va version_ffclock
+Feed-forward clock kernel version
+.Po
+read only
+.Pc .
+.It Va tsmode_ffclock
+The default tsmode descriptor used by a packet tap until/if overwritten.
+.It Va bypass_ffclock
+Takes values in {0,1}. When 1, use direct reads of the chosen hardware clocksource when
+timestamping for latency reduction, rather than using the ffclock's
+re-synthesized version of the counter. This only applies when the native
+hardware counter is suitable for feed-forward use, and direct access is
+available. It is currently supported only in the case of an invariant TSC.
+The origins of the native and timecounter-based versions of the counter are
+guaranteed to align.
+.El
+.Sh SEE ALSO
+.Xr ffclock 2
+.Sh HISTORY
+.Sh AUTHORS
+.An -nosplit
+The feed-forward clock support was originally written by
+.An Julien Ridoux
+in collaboration with
+.An Darryl Veitch
+at the University of Melbourne.
+It was later rewritten and extended by Darryl Veitch at the University of
+Technology Sydney.
+.Pp
+This manual page was written by
+.An Darryl Veitch Aq darryl.veitch@uts.edu.au .

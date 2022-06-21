@@ -72,8 +72,10 @@
 
 typedef uint64_t vcounter_t;
 
-typedef enum { RADCLOCK_LOCAL_PERIOD_ON, RADCLOCK_LOCAL_PERIOD_OFF }
-		radclock_local_period_t;
+typedef enum {
+	RADCLOCK_LOCAL_PERIOD_ON,
+	RADCLOCK_LOCAL_PERIOD_OFF,
+} radclock_local_period_t;
 
 struct radclock;
 

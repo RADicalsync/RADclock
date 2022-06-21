@@ -35,9 +35,6 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
-//#ifdef HAVE_SYS_TIMEFFC_H
-//#include <sys/timeffc.h>   // TODO, remove this include kclock.h instead
-//#endif
 #include <sys/socket.h>
 
 #include <net/ethernet.h>	// ETHER_HDR_LEN
@@ -55,6 +52,7 @@
 
 #include "radclock.h"
 #include "radclock-private.h"
+#include "kclock.h"
 #include "logger.h"
 
 
@@ -128,16 +126,16 @@
 
 
 
-
 /* The decoding functions display what the given bpf timestamp type descriptor
  * corresponds to, explicity and exhaustively, in terms of its independent
  * components, and fields within each component.
  */
 static void
-decode_bpf_tsflags_KV2(u_int bd_tstamp)
+decode_bpf_tsflags_KV2(long bd_tstamp)
 {
-		logger(RADLOG_NOTICE, "Decoding bpf timestamp type _T_ flags (bd_tstamp = %u (0x%04x))",
+		logger(RADLOG_NOTICE, "Decoding bpf timestamp type _T_ flags (bd_tstamp = %ld (0x%04x))",
 				 bd_tstamp, bd_tstamp);
+
 	 	switch (BPF_T_FORMAT(bd_tstamp)) {
 		case BPF_T_MICROTIME:
 			logger(RADLOG_NOTICE, "     FORMAT = MICROTIME");
@@ -178,7 +176,7 @@ decode_bpf_tsflags_KV2(u_int bd_tstamp)
 }
 
 static void
-decode_bpf_tsflags_KV3(u_int bd_tstamp)
+decode_bpf_tsflags_KV3(long bd_tstamp)
 {
 		logger(RADLOG_NOTICE, "Decoding bpf timestamp type _T_ flags (bd_tstamp = 0x%04x)",
 				 bd_tstamp);
@@ -241,14 +239,14 @@ decode_bpf_tsflags_KV3(u_int bd_tstamp)
 int
 descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_int custom)
 {
-	u_int bd_tstamp = 0U;
-	int override_mode = *mode;		// record input mode
+	long bd_tstamp = 0;
+	long override_mode = *mode;		// record input mode
 
 	switch (handle->kernel_version) {
 	case 0:
 	case 1:
 		if (ioctl(pcap_fileno(p_handle), BIOCSRADCLOCKTSMODE, (caddr_t)mode) == -1) {
-			logger(RADLOG_ERR, "Setting capture mode failed");
+			logger(RADLOG_ERR, "Setting timestamping mode failed");
 			return (1);
 		}
 		break;
@@ -273,13 +271,13 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 		}
 		*mode = override_mode;	// inform caller of final mode
 		if (ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp) == -1) {
-			logger(RADLOG_ERR, "Setting capture mode failed: %s", strerror(errno));
+			logger(RADLOG_ERR, "Setting timestamping mode failed: %s", strerror(errno));
 			return (1);
 		}
 		break;
 
 	case 3:
-		/* Initial test of value of BIOCSTSTAMP */
+		/* Initial test of value of tsmode */
 //		logger(RADLOG_NOTICE, "Checking current tsmode before setting it :");
 //		if (ioctl(pcap_fileno(p_handle), BIOCGTSTAMP, (caddr_t)(&bd_tstamp)) == -1)
 //			logger(RADLOG_ERR, "Getting initial timestamping mode failed: %s", strerror(errno));
@@ -309,14 +307,14 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 				bd_tstamp = custom;
 				break;
 			default:
-				logger(RADLOG_ERR, "descriptor_set_tsmode: Unknown timestamping mode.");
+				logger(RADLOG_ERR, "descriptor_set_tsmode: Unknown timestamping mode %d.", *mode);
 				return (1);
 		}
 		*mode = override_mode;	// inform caller of final mode
 
 		int pcaprtn = 0;
 		if ( (pcaprtn = ioctl(pcap_fileno(p_handle), BIOCSTSTAMP, (caddr_t)&bd_tstamp)) == -1) {
-			logger(RADLOG_ERR, "Setting capture mode to bd_tstamp = 0x%04x "
+			logger(RADLOG_ERR, "Setting timestamping mode to bd_tstamp = 0x%04lx "
 					"failed: %s", bd_tstamp, strerror(errno));
 			return (1);
 		}
@@ -340,16 +338,17 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 int
 descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 {
-	u_int bd_tstamp = 0U;		// need to be ≥16 bits to fit BPF_T_{,,,} flags
+	long bd_tstamp = 0;		// need to be ≥16 bits to fit BPF_T_{,,,} flags
 
 	switch (handle->kernel_version) {
 
 	case 0:
 	case 1:
-		if (ioctl(pcap_fileno(p_handle), BIOCGRADCLOCKTSMODE, (caddr_t)mode) == -1) {
+		if (ioctl(pcap_fileno(p_handle), BIOCGRADCLOCKTSMODE, (caddr_t)&bd_tstamp) == -1) {
 			logger(RADLOG_ERR, "Getting timestamping mode failed");
 			return (1);
 		}
+		*mode = bd_tstamp;
 		break;
 
 	case 2:
@@ -391,7 +390,7 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 			break;
 		case BPF_T_FFDIFFCLOCK:
 			*mode = PKTCAP_TSMODE_FFDIFFCLOCK;
-		break;
+			break;
 		}
 		break;
 
@@ -499,7 +498,7 @@ extract_vcount_stamp_v1(pcap_t *p_handle, const struct pcap_pkthdr *header,
 		return (1);
 	}
 
-	*vcount= hack->vcount;
+	*vcount = hack->vcount;
 	return (0);
 }
 
@@ -642,7 +641,6 @@ ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
 	h = (struct bpf_hdr *)(packet - blen);
 	
 	/* Perfect once-only checks */
-	/* TODO: make these compiler checks, but retain verbosity if fail somehow */
 	if (!checkcnt) {
 		/* Check header and member sizes currently accessible */
 		logger(RADLOG_NOTICE, "Performing initial checks of bpf header, timeval and timestamp sizes");
@@ -873,6 +871,8 @@ extract_vcount_stamp_v3(pcap_t *p_handle,  const struct pcap_pkthdr *header,
 
 	/* Assuming structures align, are bpf and pcap timestamps identical?
 	 * Is likely to occur on 0, or All pkts: limit warning to first occurrence.
+	 * TODO: make the whole thing a compiler, or init, check, speed this up!
+	 *       implement by using a fn ptr, with two versions: check or not?
 	 */
 	static int tstested = 0;
 	if ( memcmp(&h->bh_tstamp, &header->ts, sizeof(struct timeval)) != 0 ) {
@@ -926,6 +926,7 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 		}
 		break;
 	case 3:
+		/* Copy pcap header to rdhdr internally as _v3 may correct the ts first */
 		err = extract_vcount_stamp_v3(clock->pcap_handle, header, packet, vcount, rdhdr);
 		break;
 	default:
@@ -940,6 +941,81 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 
 	return (0);
 }
+
+
+/* This routine interprets the contents of the timeval-typed ts field from
+ * the pcap header according to the BPF_T_FORMAT options, and converts the
+ * timestamp to a long double.
+ * The options where the tv_usec field have been used to store the fractional
+ * component of time (MICROTIME (mus, the original tval format), and
+ * and NANOTIME (ns)) both fit within either 32 or 64 bits tv_usec field,
+ * whereas BINTIME can only work in the 64 bit case.
+ */
+#define	MS_AS_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
+
+void
+ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
+{
+	static int limit = 0;					// limit verbosity to once-only
+	//long double two32 = 4294967296.0;	// 2^32
+	//long double timetest;
+
+	*timestamp = pcapts->tv_sec;
+
+	switch (BPF_T_FORMAT(tstype)) {
+	case BPF_T_MICROTIME:
+		if (!limit) fprintf(stdout, "converting microtime\n");
+		*timestamp += 1e-6 * pcapts->tv_usec;
+		break;
+	case BPF_T_NANOTIME:
+		if (!limit) fprintf(stdout, "converting nanotime\n");
+		*timestamp += 1e-9 * pcapts->tv_usec;
+		break;
+	case BPF_T_BINTIME:
+		if (!limit) fprintf(stdout, "converting bintime\n");
+		if (sizeof(struct timeval) < 16)
+			fprintf(stderr, "Looks like timeval frac field is only 32 bits, ignoring!\n");
+		else {
+//			*timestamp += ((long double)pcapts->tv_usec)/( 1000*(long double)MS_AS_BINFRAC );
+//			*timestamp += ((long double)((long long unsigned)pcapts->tv_usec))/( two32*two32 );
+			bintime_to_ld(timestamp, (struct bintime *) pcapts);	// treat the ts as a bintime
+			//if (*timestamp - timetest != 0)
+			//	fprintf(stderr, "conversion error:  %3.4Lf [ns] \n", 1e9*(*timestamp - timetest));
+		}
+		break;
+	}
+
+	limit++;
+}
+
+
+/* Takes a bintime input, converts it to the desired tstype FORMAT, then forces
+ * it into a bpf_ts type which can handle all cases.
+ */
+//static void
+//bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)
+//{
+//	struct timeval tsm;
+//	struct timespec tsn;
+//
+//	switch (BPF_T_FORMAT(tstype)) {
+//	case BPF_T_MICROTIME:
+//		bintime2timeval(bt, &tsm);
+//		ts->bt_sec = tsm.tv_sec;
+//		ts->bt_frac = tsm.tv_usec;
+//		break;
+//	case BPF_T_NANOTIME:
+//		bintime2timespec(bt, &tsn);
+//		ts->bt_sec = tsn.tv_sec;
+//		ts->bt_frac = tsn.tv_nsec;
+//		break;
+//	case BPF_T_BINTIME:
+//		ts->bt_sec = bt->sec;
+//		ts->bt_frac = bt->frac;
+//		break;
+//	}
+//}
+
 
 
 #endif

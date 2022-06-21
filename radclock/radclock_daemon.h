@@ -45,11 +45,13 @@
 typedef enum {
 	RADCLOCK_SYNC_NOTSET,
 	RADCLOCK_SYNC_DEAD,
-	RADCLOCK_SYNC_LIVE } radclock_runmode_t;
+	RADCLOCK_SYNC_LIVE,
+} radclock_runmode_t;
 
 typedef enum {
 	RADCLOCK_UNIDIR,
-	RADCLOCK_BIDIR} radclock_syncalgo_mode_t;
+	RADCLOCK_BIDIR,
+} radclock_syncalgo_mode_t;
 
 
 struct radclock_handle;

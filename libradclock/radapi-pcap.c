@@ -81,7 +81,7 @@ pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode
 		case PKTCAP_TSMODE_CUSTOM:
 			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_CUSTOM");
 			break;
-			
+
 	}
 	
 	/* Call to system specific method to set the bpf ts type */
@@ -153,8 +153,8 @@ struct routine_priv_data
 
 /* Callback for pcap_loop
  * Compare the standard parameter list with the callback used in the daemon :
- * void fill_rawdata_pcap(u_char *c_handle, const struct pcap_pkthdr *pcap_hdr,
-		const u_char *packet_data)
+ * void fill_rawdata_pcap(u_char *c_handle,
+ *                const struct pcap_pkthdr *pcap_hdr, const u_char *packet_data)
  */
 void kernelclock_routine(u_char *user, const struct pcap_pkthdr *phdr, const u_char *pdata)
 {

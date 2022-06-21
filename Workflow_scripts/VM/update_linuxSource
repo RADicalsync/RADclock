@@ -1,0 +1,143 @@
+#!/bin/bash
+# This script regenerates a kernel config file, and source if needed.  
+# Typically needed because of a bump in SUBLEVEL. 
+# Can be run from anywhere.
+#
+# Use cases:
+# When compiling a new sublevel in the VM 
+#    update_linuxSource -l 		# start from scratch, get source and rebuild config 
+#    quick_FF_build 			# when FF source newly patched to the latest sublevel
+# When compiling a new sublevel using earthly 
+#    install_earthlyFF			# get latest debs and match to their sublevel
+#    	update_linuxSource -d  	# start from scratch only if needed, rebuild config
+# To check the config and regenerate if needed (no source changes, config saved to FFkernel_Work)
+# 	update_linuxSource
+
+echo "Updating source and regenerating a new config file for Debian" 
+
+OS=`uname -s`
+if [ $OS != "Linux" ]; then
+	echo "Sorry, this script is only meant for Linux at present, you are on $OS"
+	exit
+fi
+
+
+############## Source section ################
+
+# Determine what source we have now
+OSv=`uname -r | cut -d'.' -f1-2`
+OSsub=`uname -r | cut -d'.' -f3`
+SourceDir="/usr/src/linux-source-$OSv"
+CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+echo "  Running image is `uname -r`"
+echo "  Current source  in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
+
+# Determine what source we will move to
+cd /usr/src
+
+if [[ "$1" == "-l" || "$CurrSUBLEVEL" == "" ]]; then
+	echo " Update to latest source required, will start clean"
+	apt update
+    apt upgrade
+	\rm -r *
+    apt reinstall linux-source-$OSv
+    tar xaf linux-source-$OSv.tar.xz
+	CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+	echo "  Updated source  in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
+	echo "==================================================================="
+fi
+
+# Determine latest debs we have now, if any
+if [[ "$1" == "-d" ]]; then
+	Kname=`ls -tr |grep  linux-image | tail -1 |cut -d'_' -f1 |cut -d'-' -f3-`
+	if [[ "$Kname" == "" ]]; then
+		echo " ** there are no .deb here to use! **"
+		exit
+	fi
+	NewSUBLEVEL=`echo $Kname |cut -d'.' -f3`
+	echo "  Latest packages in `pwd` have version $Kname, hence SUBLEVEL $NewSUBLEVEL"
+
+	# Ensure source matches new packages
+	if [[ $NewSUBLEVEL != $CurrSUBLEVEL ]]; then
+    	echo "  Updating source to match packages"  # don't clean out /usr/src, the debs are there!
+		apt update
+		apt upgrade
+		apt reinstall linux-source-$OSv
+		tar xaf linux-source-$OSv.tar.xz
+		CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+    	echo "  Updated source  in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
+	fi
+fi
+
+
+
+############## Config file section ################
+
+# Ensure config of source matched the current (perhaps new) source 
+cd $SourceDir
+if [[ $CurrSUBLEVEL == $OSsub ]]; then
+	echo "  New packages match the current sublevel $OSsub$, will keep the current config"
+else
+	echo "  Creating new config in $SourceDir"
+	cp .config /root/FFkernel_Work/savedkernelconfig
+	make localmodconfig			# will need to answer qns interactively
+	#make defconfig				# didn't seem to work
+fi
+
+
+# Check config file has the desired settings [ it should have already ]
+option="DEBUG_INFO"
+if [[ `scripts/config -s $option` == "y" ]]; then	# specifying with the --file option doesn't work for some reason
+	echo "DEBUG_INFO was set!, unsetting"
+	scripts/config --disable $option
+else
+	echo "$option is good"
+fi
+
+option="SYSTEM_TRUSTED_KEYS"
+if [[ `scripts/config -s $option` != "" ]]; then
+    echo "$option not blank!, fixing"
+    scripts/config --set-str $option "" 
+else
+    echo "$option is good"
+fi
+
+option="MODULE_SIG_KEY"		# Need to set this right for VMware to work
+if [[ `scripts/config -s $option` != "certs/signing_key.pem" ]]; then
+    echo "$option not set to default!, setting"
+    scripts/config --set-str $option "certs/signing_key.pem" 
+else
+    echo "$option is good"
+fi
+
+
+# For interest, should be auto-generated anyway
+echo "  Check if the signing key info is in source dir"
+ls -l $SourceDir/certs/signing_key.pem
+
+
+exit
+
+
+
+
+
+
+## Attic 
+
+ConfigFile="$SourceDir/.config"
+echo "  > Check for signing_key in source config file $ConfigFile"
+grep signing_key $ConfigFile >> /dev/null
+if [ $? -ne 0 ]; then
+    echo "  - signing_key not found in $ConfigFile"
+    #echo "  - signing_key not found in $ConfigFile, re-inserting"
+    #scripts/config --set-str MODULE_SIG_KEY certs/signing_key.pem
+fi
+
+ConfigFile="/boot/config-$OSv.$CurrSUBLEVEL"
+echo "  > Check for signing_key in boot   config file $ConfigFile"
+grep signing_key $ConfigFile >> /dev/null
+if [ $? -ne 0 ]; then
+    echo "  - signing_key not found in $ConfigFile"
+fi
+

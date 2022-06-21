@@ -1,8 +1,8 @@
-#!/usr/local/bin/bash
+#!/usr/bin/env bash
 
 # Enable easy CLI adjustment of the value parameters within radclock.conf
 # It looks for the conf file in the currect dir and prompts otherwise
-#  conf_value_set polling_period 1 		# set to 1 sec  (if it isn't already)
+#  confset_value polling_period 1 		# set to 1 sec  (if it isn't already)
 # If a new value is omitted, it still echos the current value
 
 
@@ -43,6 +43,13 @@ newstate=$2
 varoff=$param" = "$currset
 varon=$param" = "$newstate
 if [ $currset != $newstate ]; then
-#echo "$varoff --> $varon"
-	sed -i "" "s/$varoff/$varon/" $conf; echo " --> setting to $newstate"
+	OS=`uname -s`
+	echo "$varoff --> $varon"
+	case $OS in
+		FreeBSD)
+			sed -i "" "s/$varoff/$varon/" $conf;;
+		Linux)
+			sed -i    "s/$varoff/$varon/" $conf;;
+	esac
+	echo " --> setting to $newstate"
 fi

@@ -667,12 +667,12 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		if (sysclock_active == SYSCLOCK_FB)
 			ffclock_boottime = *reset_FBbootime;
 		else {
-			/* First calculate what uptime would be at tick start, if not reset */
+			/* First calculate what FFmono would be at tick start, if not reset */
 			ffth->tick_time_lerp = fftimehands->tick_time_lerp;
 			ffclock_convert_delta(ffdelta, ffth->period_lerp, &bt);
 			bintime_add(&ffth->tick_time_lerp, &bt);
 
-			/* Cancel out jump in UTC due to reset */
+			/* Cancel out jump in Uptime due to reset */
 			bintime_clear(&gap_lerp);
 			if (bintime_cmp(reset_UTC, &ffth->tick_time_lerp, >)) {
 				gap_lerp = *reset_UTC;
@@ -717,7 +717,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		upt = ffth->tick_time_lerp;
 		bintime_sub(&upt, &ffclock_boottime);
 		printf("FFclock processing RTC reset: UTC: %ld.%03lu"
-				 " boottime: %llu.%03lu, uptime preserved at: %llu.%03lu\n",
+				 " boottime: %llu.%03lu, uptime: %llu.%03lu\n",
 				(long)ffth->tick_time_lerp.sec,
 				(unsigned long)(ffth->tick_time_lerp.frac / MS_AS_BINFRAC),
 				(unsigned long long)ffclock_boottime.sec,
@@ -751,7 +751,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		memcpy(cest, &fftimehands->cest, sizeof(struct ffclock_estimate));
 		ffth->tick_time		= fftimehands->tick_time;
 		ffth->tick_time_diff = fftimehands->tick_time_diff;
-		ffclock_convert_delta(ffdelta, cest->period, &bt);
+		ffclock_convert_delta(ffdelta, cest->period, &bt);  // use bintime_addx(bt, period * ffdelta); ?
 		bintime_add(&ffth->tick_time, &bt);
 		bintime_add(&ffth->tick_time_diff, &bt);
 		bintime_mul(&bt, cest->errb_rate * PS_AS_BINFRAC);	// errb_rate in [ps/s]
@@ -954,11 +954,11 @@ ffclock_change_tc(struct timehands *th, u_int ncount)
 		/* reconstruct the counter value at the time ncount was taken */
 		ffth->tick_ffcount = now - (ffcounter)((u_int)now - ncount);
 	}
-	
+
 	/*
 	 * This update does not advance the tick itself, intead it reinitiates when
 	 * existing values are not appropriate for the new counter.
-	 * NOte cest->update_{time,ffcount} are still valid as a record of when the
+	 * Note cest->update_time is still valid as a record of when the
 	 * data was changed, wrt the new counter.
 	 */
 	memcpy(cest, &(fftimehands->cest), sizeof(struct ffclock_estimate));

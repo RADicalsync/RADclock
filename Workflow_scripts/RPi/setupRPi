@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# This is a bootstrapping script to be run on your Mac to perform an
+# installation of an existing system image, eg after a loss of headless access.
+# In addition to writing the image, it pre-positions files to ease setup on 
+# the Pi once it is up, including "setup-onPi", a companion bootstrapping 
+# script to be run on the Pi to install these components.
+#
+# The file sshaccessline  contains the public key for root, including the prefix
+# That prefix is grepped for in bashrc .
+#
+# The files secret file id_rsa.pub and sshaccessline are referred to by the
+# scripts but are not included in the repo, as they are local variables, and of
+# course for security. They must be generated locally, stored outside the repo,
+# and the script paths modified according.
+#
+# Procedure:
+#   Mac: insert microSD
+#        setupRPi
+#        move microSD to Pi; power up
+#        sudo ssh root@192.168.1.115
+#   Pi:
+#        /boot/firmware/setup-onPi"
+
+echo "Setting up microSD with base system for a RPi" 
+
+# Definitions
+BootPartitionName="RASPIFIRM"
+ImageDir="/Users/darryl/Papers/TSCclock/Programs/V4/RPi"    # not in repo
+BaseImage="$ImageDir/20220121_raspi_4_bookworm.img"
+Repo="Papers/TSCclock/Programs/V4/RADclock_mycurrent"
+ToolDir="$Repo/Workflow_scripts/RPi"
+LocalPiIP="192.168.1.115"		# IP of Pi on local network
+
+# Test if we can proceed
+if [ -e "$BootPartitionName/sysconf.txt" ]; then
+	echo "microSD found, writing image (Ctrl-T to monitor progress)"
+	cd $Based
+else
+	echo "  -- microSD seems to be missing, aborting"
+	exit
+fi
+
+# Prepare microSD with base image
+diskutil  unmountDisk /dev/disk3
+sudo dd   if=$BaseImage   of=/dev/rdisk3  bs=32m 
+
+# Enable one-time headless access over ssh
+cat RPi_toolkit/sshaccessline >> /Volumes/$BootPartitionName/sysconf.txt
+
+# Pre-position files to ease Pi-side setup once booted
+cp RPi_toolkit/{id_rsa.pub,sshaccessline,bashrc,{setup,update,quick,install}_*} $BootPartitionName\
+ls -al /Volumes/$BootPartitionName
+
+# Eject microSD
+sudo diskutil eject /dev/rdisk3
+
+echo 'Done.  You can now put the microSD in the Pi and fire it up.'
+echo "Access with: sudo ssh root@$LocalPiIP, then run: /boot/firmware/setup-onPi"

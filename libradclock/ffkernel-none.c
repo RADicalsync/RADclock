@@ -80,6 +80,13 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 
 
 int
+get_currentcounter(struct radclock *clock)
+{
+	return (-ENOENT);
+}
+
+
+int
 radclock_init_vcounter(struct radclock *clock)
 {
 	clock->get_vcounter = NULL;

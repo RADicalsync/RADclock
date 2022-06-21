@@ -75,8 +75,6 @@
 #include "proto_ntp.h"
 #include "jdebug.h"
 
-#include <sys/sysctl.h>
-
 /* Default PID lockfile (-P overrides this) */
 #define DAEMON_LOCK_FILE ( RADCLOCK_RUN_DIRECTORY "/radclock.pid" )
 
@@ -557,46 +555,67 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	struct radclock_error *rad_error)
 {
 	struct ffclock_estimate cest;
+	struct radclock_data rd;
+	struct radclock_error rde;
 	int err;
 
 	JDEBUG
 
-	/* Make sure we have detected the version of the kernel we are running on */
+	/* Detect the version of the kernel support we are running on */
 	clock->kernel_version = found_ffwd_kernel_version();
-
-	/* Make sure we are doing the right thing */
 	if (clock->kernel_version < 0) {
-		verbose(LOG_ERR, "The RADclock does not run live without Feed-Forward "
-				"kernel support");
+		verbose(LOG_ERR, "No Feed-Forward kernel support - cannot run live");
 		return (1);
 	}
 
-	/*
-	 * Attempt to retrieve some slightly better clock estimates from the kernel.
-	 * If successful, this overwrites the naive default set by radclock_create.
-	 * This is common to the radclock sync algo and any 3rd party application.
-	 * This feature has been introduced in kernel version 2.
+	/* Establish the link allowing raddata <--> FFdata exchange */
+	err = init_kernel_clock(clock);
+	if (err)
+		return (1);
+	verbose(LOG_NOTICE, "Feed-Forward clock support initialised");
+
+
+	/* Attempt to retrieve FFdata from the kernel
+	 * Provide verbose checking of raddata <--> FFdata correspondance
+	 * Use to overwrite the naive default set by radclock_create.
+	 * ** Currently suppressed due to RTC reset complications making such initialization
+	 *    dangerous.
 	 */
-// TODO is that really specific to kernel version >2 and which arch ?
-	err = 0;
-	if (clock->kernel_version >= 2)
-		err = get_kernel_ffclock(clock, &cest);
+	err = get_kernel_ffclock(clock, &cest);
+	if (err != 1) {		// if this kernel supports FFdata getting
 
-	if (err < 0) {
-		verbose(LOG_ERR, "Failed to get initial ffclock data from kernel");
-		return (1);
+		if (err < 0) {
+			verbose(LOG_ERR, "Failed to get initial ffclock data from kernel");
+			return (1);
+		}
+		verbose(LOG_NOTICE, "Initial retrieve of FFclock data successful");
+		if ( VERB_LEVEL > 1 )
+			printout_FFdata(&cest);
+
+		/* Sanity check warnings when FFdata not fully set */
+		if ((cest.update_time.sec == 0) || (cest.period == 0)) {
+			logger(RADLOG_WARNING, "kernel FFdata is uninitialized!");
+			printout_FFdata(&cest);
+		}
+
+		/* Debug code: check FFdata <--> rad_data mapping inverts as expected */
+		if ( VERB_LEVEL > 2 ) {
+			fill_radclock_data(&cest, &rd);
+			verbose(LOG_NOTICE, "  Conversion to raddata :");
+			printout_raddata(&rd);
+			fill_ffclock_estimate(&rd, &rde, &cest);
+			verbose(LOG_NOTICE, "  Inversion back to FFdata :");
+			printout_FFdata(&cest);
+		}
+
+		/* Override default rad_data value with current kernel version */
+		verbose(LOG_NOTICE, "  NOT Setting central rad_data to mirror FFdata");
+//		memcpy(&rad_data,&rd,sizeof(rd));
+//		verbose(LOG_NOTICE, "  Setting central rad_data to mirror FFdata");
+//		if ( VERB_LEVEL > 1 )
+//			printout_raddata(rad_data);
 	}
-	
-	/* Check FFclock data from kernel, map it to rad_data, and check mapping */
-	verbose(LOG_NOTICE, "clock_init_live: retrieved and mapped FFclock data");
-	if ( VERB_LEVEL>1 ) printout_FFdata(&cest);
-	fill_radclock_data(&cest, rad_data);
-	if ( VERB_LEVEL>2 ) {  // check conversion, and inversion, are as expected
-		printout_raddata(rad_data);
-		fill_ffclock_estimate(rad_data, rad_error, &cest);
-		printout_FFdata(&cest);
-	}
-	
+
 	err = radclock_init_vcounter_syscall(clock); // null if KV>1
 	if (err)
 		return (1);
@@ -604,13 +623,6 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	err = radclock_init_vcounter(clock);
 	if (err < 0)
 		return (1);
-
-	// TODO this could be revamped into one single function
-	err = init_kernel_clock(clock);
-	if (err)
-		return (1);
-	verbose(LOG_NOTICE, "Kernel clock support initialised");
-
 
 
 	/* Get information about FF status from kernel
@@ -852,9 +864,6 @@ start_live(struct radclock_handle *handle)
 	/*
 	 * To be able to provide the RADCLOCK timestamping mode, we need to refresh
 	 * the fixed point data in the kernel.  That's this guy's job.
-	 * XXX Update: with kernel version 2, the overflow problem is taking care of
-	 * by the kernel. The fixedpoint thread is deprecated and should be removed
-	 * in the future
 	 */
 	if ((handle->run_mode == RADCLOCK_SYNC_LIVE) &&
 			(handle->clock->kernel_version < 2)) {

@@ -21,8 +21,9 @@
 
 
 /*
- * This program illustrate the use of functions related to capture network
- * traffic and producing kernel timestamps based on the RADclock.
+ * This program illustrate the use of functions related to the capture of network
+ * traffic, and producing kernel timestamps based on the RADclock daemon via the
+ * associated kernel FFclock.
  *
  * The RADclock daemon should be running for this example to work correctly.
  */
@@ -44,8 +45,8 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-//#include <pcap.h>			// includes <net/bpf.h>
-#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
+#include <pcap.h>			// includes <net/bpf.h>
+//#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
 
 /* RADclock API and RADclock packet capture API */
 #include <radclock.h>		// includes <pcap.h>
@@ -119,79 +120,32 @@ initialise_pcap_device(char * network_device, char * filtstr)
 }
 
 
-/* This routine interprets the contents of the timeval-typed ts field from
- * the pcap header according to the BPF_T_FORMAT options, and converts the
- * timestamp to a long double.
- * The options where the tv_usec field have been used to store the fractional
- * component of time (MICROTIME (mus, the original tval format), and
- * and NANOTIME (ns)) both fit within either 32 or 64 bits tv_usec field,
- * whereas BINTIME can only work in the 64 bit case.
- */
-#define	MS_AS_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
 
-static void
-ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
-{
-	static int limit = 0;					// limit verbosity to once-only
-	//long double two32 = 4294967296.0;	// 2^32
-	//long double timetest;
-	
-	*timestamp = pcapts->tv_sec;
-	
-	switch (BPF_T_FORMAT(tstype)) {
-	case BPF_T_MICROTIME:
-		if (!limit) fprintf(stdout, "converting microtime\n");
-		*timestamp += 1e-6 * pcapts->tv_usec;
-		break;
-	case BPF_T_NANOTIME:
-		if (!limit) fprintf(stdout, "converting nanotime\n");
-		*timestamp += 1e-9 * pcapts->tv_usec;
-		break;
-	case BPF_T_BINTIME:
-		if (!limit) fprintf(stdout, "converting bintime\n");
-		if (sizeof(struct timeval) < 16)
-			fprintf(stderr, "Looks like timeval frac field is only 32 bits, ignoring!\n");
-		else {
-//			*timestamp += ((long double)pcapts->tv_usec)/( 1000*(long double)MS_AS_BINFRAC );
-//			*timestamp += ((long double)((long long unsigned)pcapts->tv_usec))/( two32*two32 );
-			bintime_to_ld(timestamp, (struct bintime *) pcapts);	// treat the ts as a bintime
-			//if (*timestamp - timetest != 0)
-			//	fprintf(stderr, "conversion error:  %3.4Lf [ns] \n", 1e9*(*timestamp - timetest));
-		}
-		break;
-	}
-	
-	limit++;
-}
-
-
-/* Takes a bintime input, converts it to the desired tstype FORMAT, then forces
- * it into a bpf_ts type which can handle all cases.
- */
-//static void
-//bpf_bintime2ts(struct bintime *bt, struct bpf_ts *ts, int tstype)
-//{
-//	struct timeval tsm;
-//	struct timespec tsn;
-//
-//	switch (BPF_T_FORMAT(tstype)) {
-//	case BPF_T_MICROTIME:
-//		bintime2timeval(bt, &tsm);
-//		ts->bt_sec = tsm.tv_sec;
-//		ts->bt_frac = tsm.tv_usec;
-//		break;
-//	case BPF_T_NANOTIME:
-//		bintime2timespec(bt, &tsn);
-//		ts->bt_sec = tsn.tv_sec;
-//		ts->bt_frac = tsn.tv_nsec;
-//		break;
-//	case BPF_T_BINTIME:
-//		ts->bt_sec = bt->sec;
-//		ts->bt_frac = bt->frac;
-//		break;
-//	}
-//}
-
+/* The main goal of this program is to check that the FFclock normal timestamp
+ * conversions, agree with conversions made using a radclock in userland.
+ * Also enables the tsmode to be varied to test different branches
+ * Performs other checks, including comparing the parameters held in the sms
+ * with those held as global FFdata, and using an older set to see that that is
+ * the cause of mismatches.  Thus this tests the FF code, as well as whether
+ * the FFdata and sms RADdata are in sync.
+ *
+ * NOTE on sniffing of the daemon's NTP packets:
+ * In this case we are sniffing the same pkts used to form stamps fed to the daemon.
+ * The update_ffcount member of the FFdata is none other than the response raw
+ * timestamp Tf, so that it is in fact possible for a raw timestamp T of a pkt,
+ * to be interpreted using FFdata with the same update_ffcount=T, in which case
+ * update_gap = 0  in the printouts below.
+ *  Of course this is only possible if
+ *  in fact the SAMe raw pkt timestamp is given to both listening applications.
+ *  Happily this is occurring in Linux, and also occurs in FreeBSD thanks to the
+ *  FFclock bpf snapshot system.
+ * However this is unlikely, as it can only occur if this T reached the daemon,
+ * was fully processed, and the FFdata update pushed, all before T is translated
+ * to a normal timestamp in the kernel for the sniffing application.
+ * Typically, T is translated using the FFdata before this, which will
+ * be a poll-period behind.  Hence in the printouts below  update_gap_sec  is
+ * typically very close to poll_period.
+ *    */
 int
 main (int argc, char *argv[])
 {
@@ -397,17 +351,20 @@ main (int argc, char *argv[])
 		/* Generation checks and fix */
 		gen_diff   = (signed long)(FFgen - RADgen);	// check that the two versions of RADdata nominally used agree
 		update_gap = (signed long)(vcount - FFgen);	// gap between the vcount and the Current FFdata
+//		if (update_gap == 0)			// turns out they were all indeed the same
+//			fprintf(stdout, " Testing gen_diff in all dirns: vcount: %llu, FFgen: %llu, RADgen: %llu\n",
+//				(long long unsigned)vcount, (long long unsigned)FFgen, (long long unsigned)RADgen);
 		update_gap_sec = update_gap * SMS_DATA(sms)->phat;		// value in [sec]
-//		if (update_gap<0)	// FFdata has been updated since the version used to create tv and vcount
-//			read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);  // overwrite from old SMS to find a match
+		if (update_gap<0)	// FFdata has been updated since the version used to create tv and vcount
+			read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);  // overwrite from old SMS to find a match
 				
 
 		/* Convert tv to double for comparison */
-		ts_format_to_double(&tv, custom, &tvdouble);
+		ts_format_to_double(&tv, custom, &tvdouble);		// custom currently ignored if Linux
 		cdiff = (currtime - tvdouble);
 		frac = cdiff - (int) cdiff;
 		
-		/* Output the kernel's absolute timestamp, the raw, radclocks's abs time */
+		/* Based on the same raw, output the kernel's absolute timestamp, and radclocks's abs time */
 		fprintf(output_fd, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) (smsgen: %u) \n",
 							(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
 							tv.tv_sec, (long long unsigned)tv.tv_usec,
@@ -415,8 +372,9 @@ main (int argc, char *argv[])
 							gen);
 //		fprintf(output_fd,  "%ld.%.6d %llu %.9Lf\n", tv.tv_sec, (int)tv.tv_usec,
 //				(long long unsigned)vcount, currtime);
-			/* Repeat with old SMS to see if get a match there if spot a problem */
-		if ( fabs(1e9*frac) > 1 ) {
+		/* Repeat with old SMS to see if get a match there if spot a problem, note gen missed at end so u can c it*/
+//		if ( fabs(1e9*frac) > 1 ) {		// 1ns trigger
+		if ( fabs(1e6*frac) > 1 ) {		// 1mus trigger
 			count_err_ns++;
 			read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
 			cdiff = (currtime - tvdouble);
@@ -429,23 +387,24 @@ main (int argc, char *argv[])
 		fflush(output_fd);
 		
 
-		
+/***************      Verbose does to stdout    ***********/
 		if (verbose_flag) {
-			fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) (smsgen: %u) \n",
-								(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
+			fprintf(stdout, "(%llu) %llu [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) (smsgen: %u) \n",
+								(long long unsigned) vcount, (long long unsigned) FFgen, update_gap, update_gap_sec, gen_diff,
 								tv.tv_sec, (long long unsigned)tv.tv_usec,
 								currtime, cdiff, 1e6*frac, 1e9*frac,
 								gen);
 			/* Repeat with old SMS to see if get a match there if spot a problem */
-			if ( fabs(1e9*frac) > 1 ) {
-				count_err_ns++;
-				read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
-				cdiff = (currtime - tvdouble);
-				frac = cdiff - (int) cdiff;
-				fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) \n",
-						(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
-						tv.tv_sec, (long long unsigned)tv.tv_usec,
-						currtime, cdiff, 1e6*frac, 1e9*frac);
+//			if ( fabs(1e9*frac) > 1 ) {		// 1ns trigger
+			if ( fabs(1e6*frac) > 1 ) {		// 1mus trigger
+					//count_err_ns++;
+					read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
+					cdiff = (currtime - tvdouble);
+					frac = cdiff - (int) cdiff;
+					fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) \n",
+							(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
+							tv.tv_sec, (long long unsigned)tv.tv_usec,
+							currtime, cdiff, 1e6*frac, 1e9*frac);
 			}
 		}
 		

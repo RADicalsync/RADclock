@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+Based="$HOME/FFkernel_Work"
+RADbuild=$Based/RADclock_working
+
+echo Updating and re-making RADclock
+
+update_workingRADclock
+
+echo
+echo "*** Making radclock  ***"
+cd $RADbuild
+make -s clean
+make &> RADbuild.log
+
+echo
+echo "*** Checking local radclock runs with 'radclock -h' ***"
+radclock/radclock -h
+
+if [ $? -eq 0 ]; then
+	echo
+	echo "*** Installing radclock  ***"
+	make -s install
+	
+	echo
+echo "*** Making check programs as well ***"
+make -s check
+else
+	echo
+	echo "*** Radclock build failed (see RADbuild.log), skipping installation ***"
+fi
+
+echo "------------------------------------------------------------------------------"
