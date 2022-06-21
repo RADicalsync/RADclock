@@ -1,13 +1,12 @@
-# Simple Earthfile to build the basic RADclock app and library
-# 
-# By using debian:buster-slim, we are forced to install all the tools and libraries we need.
-# This has the happy side effect that we will capture not only our build and library dependencies
-# but we also provide the means to compile and ultimately package it as well.
-#
-# Repeatable builds ftw :)
+# Earthfile to build the RADclock app and library, and the FFkernel on both
+# amd64 and arm64 for the Raspberry Pi (RPi).
+
+# Select the distribution we want
+#ARG DIST=buster
+ARG DIST=bullseye
 
 # Use a bare bones image - make sure we capture all our dependencies
-FROM debian:buster-slim
+FROM debian:$DIST-slim
 
 # Create our working directory
 WORKDIR /RADclock
@@ -26,7 +25,7 @@ base-deps:
 deb-kernel-deps:
     FROM +base-deps
     # Add Debians sources
-    RUN echo "deb-src http://deb.debian.org/debian buster main" > /etc/apt/sources.list.d/main.list
+    RUN echo "deb-src http://deb.debian.org/debian $DIST main" > /etc/apt/sources.list.d/main.list
     # Update apt cache
     RUN apt-get update
     # Enables deb pkg creation when not root
@@ -327,7 +326,7 @@ extract-source-rpi:
 
 extract-source-deb:
 	 # Add Debians sources
-	 RUN echo "deb-src http://deb.debian.org/debian buster main" > /etc/apt/sources.list.d/main.list
+	 RUN echo "deb-src http://deb.debian.org/debian $DIST main" > /etc/apt/sources.list.d/main.list
 	 RUN apt-get update
 	 # Install the tools we need to extract the source
 	 RUN apt-get -yqq install build-essential
@@ -351,7 +350,13 @@ extract-source-deb:
 
 # Tests of various kinds
 test-basic:
-	RUN echo "I am currently running under $USER on $(hostname) under $(pwd)"
+	RUN echo "I am currently running as $USER on $(hostname) under $(pwd)"
+
+	ARG DIST
+	RUN echo "Base distribution set to $DIST"
+	RUN echo "deb-src http://deb.debian.org/debian $DIST main" > /etc/apt/sources.list.d/main.list
+	RUN cat /etc/apt/sources.list.d/main.list
+
 	WORKDIR NewTest
 	RUN pwd
 	ARG BASICVAR="myvar"
