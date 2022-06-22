@@ -1,0 +1,3 @@
+# For all files not gitignored, apply EoL normalisation to LF for text files pushed to the remote.
+# Files in the WD are not affected.
+* text=auto 
