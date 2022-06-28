@@ -141,6 +141,11 @@
 #define SIOCSHWTSTAMP	0x89b0		/* set and get config		*/
 #define SIOCGHWTSTAMP	0x89b1		/* get config			*/
 
+#define SIOCGFFCLOCKSTAMP 0x89b2		/* get current ffcount timestamp */
+/* These should be higher up, but no harm done, keep under one FFCLOCK roof */
+#define SIOCSFFCLOCKTSMODE	0x8908	/* set FFCLOCK timestamp mode */
+#define SIOCGFFCLOCKTSMODE	0x8909	/* get FFCLOCK timestamp mode */
+
 /* Device private ioctl calls */
 
 /*

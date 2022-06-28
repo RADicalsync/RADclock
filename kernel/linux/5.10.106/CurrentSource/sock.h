@@ -69,6 +69,10 @@
 #include <linux/net_tstamp.h>
 #include <net/l3mdev.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -522,6 +526,10 @@ struct sock {
 	struct bpf_local_storage __rcu	*sk_bpf_storage;
 #endif
 	struct rcu_head		sk_rcu;
+#ifdef CONFIG_FFCLOCK
+	ffcounter		sk_ffclock_ffc;
+	long			sk_ffclock_tsmode;
+#endif
 };
 
 enum sk_pacing {

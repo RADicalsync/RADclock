@@ -2321,6 +2321,12 @@ void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 	struct packet_type *pt_prev = NULL;
 	struct list_head *ptype_list = &ptype_all;
 
+#ifdef CONFIG_FFCLOCK
+//	printk("==>FFC XMIT_nit:  skb->ffclock_ffc = %llu", skb->ffclock_ffc);
+	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk(" --> %llu\n", skb->ffclock_ffc);
+#endif
+
 	rcu_read_lock();
 again:
 	list_for_each_entry_rcu(ptype, ptype_list, list) {
@@ -4793,6 +4799,12 @@ static int netif_rx_internal(struct sk_buff *skb)
 
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
+#ifdef CONFIG_FFCLOCK
+	/* Copy the FFclock raw timestamp to the skbuff */
+//	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk("=>>FFC netif_RX_internal:   ffc = %llu\n", skb->ffclock_ffc);
+#endif
+
 	trace_netif_rx(skb);
 
 #ifdef CONFIG_RPS
@@ -5151,6 +5163,13 @@ static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 	bool deliver_exact = false;
 	int ret = NET_RX_DROP;
 	__be16 type;
+
+#ifdef CONFIG_FFCLOCK
+//	/* Copy the FFclock raw timestamp to the skbuff */
+//	printk("<==FFC __netif_receive_skb_core:  skb->ffclock_ffc = %llu", skb->ffclock_ffc);
+	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk(" --> %llu\n", skb->ffclock_ffc);
+#endif
 
 	net_timestamp_check(!netdev_tstamp_prequeue, skb);
 
@@ -5556,6 +5575,12 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 
 	net_timestamp_check(netdev_tstamp_prequeue, skb);
 
+#ifdef CONFIG_FFCLOCK
+//	/* Copy the FFclock raw timestamp to the skbuff */
+//	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk("<==FFC netif_RECEIVE_skb_internal:    set skb->ffclock_ffc = %llu\n", skb->ffclock_ffc);
+#endif
+
 	if (skb_defer_rx_timestamp(skb))
 		return NET_RX_SUCCESS;
 
@@ -5581,6 +5606,10 @@ static void netif_receive_skb_list_internal(struct list_head *head)
 {
 	struct sk_buff *skb, *next;
 	struct list_head sublist;
+
+#ifdef CONFIG_FFCLOCK
+//	printk("<==FFC netif_RECEIVE_skb_list:   ");
+#endif
 
 	INIT_LIST_HEAD(&sublist);
 	list_for_each_entry_safe(skb, next, head, list) {

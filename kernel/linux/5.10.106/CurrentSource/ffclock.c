@@ -1,31 +1,18 @@
 /*
- * FFclock data
+ * FFclock data support
  *
- * Written by Thomas Young <tfyoung@orcon.net.nz>
- * Modified by Julien Ridoux <julien@synclab.org>
+ * Written by Thomas Young, modified by Julien Ridoux.
+ * Rewritten and maintained by Darryl Veitch
  *
- * Store FFclock data in the kernel for the purpose of absolute time
- * timestamping in timeval format. Requires updated synchronization data
- * and "fixed point" data to compute  (vcount * phat + Ca).
+ * Support for the kernel form (FFdata) of the FeedForward clock daemon state
+ * data (RADdata) used as the synchronization input to the FFclock code defined
+ * in timekeeping.c .
  *
- * Use a generic netlink socket to allow user space and kernel to access it.
- * In future other access methods could also be made available such as procfs
+ * The code is chiefly support for netlink based communication with the
+ * daemon to allow get/set of FFdata, and sysfs support.
  *
- * FFclock data is protected by the ffclock_mtx rw mutex. If global
- * data ever needs to be read from the interupt context, then this will have
- * to change.
- *
- * FFclock fixedpoint data is protected by the radclock_fixedpoint_mtx rw
- * mutex.
- *
- * Since using an old version isn't a complete disaster, it wouldn't be a bad
- * idea to use a wheel and to use lighter locking.
- *
- * Things needed:
- *	Bounds checking on input
  */
 
-#include <linux/bootmem.h>
 #include <linux/fcntl.h>
 #include <linux/fs.h>
 #include <linux/init.h>
@@ -47,39 +34,38 @@ extern struct bintime ffclock_boottime;
 extern int8_t ffclock_updated;
 extern struct rw_semaphore ffclock_mtx;
 
-static struct genl_family radclock_genl = {
+static struct nla_policy ffclock_policy[FFCLOCK_ATTR_MAX +1] __read_mostly = {
+	[FFCLOCK_ATTR_DUMMY]		= { .type = NLA_U16 },
+	[FFCLOCK_ATTR_DATA]		= { .len = sizeof(struct ffclock_estimate) },
+};
+
+static struct genl_family ffclock_genl = {
 	.name = FFCLOCK_NAME,
 	.version = 0x1,
-	.hdrsize = 0,
+//	.hdrsize = 0,
 	.maxattr = FFCLOCK_ATTR_MAX,
+	.policy = ffclock_policy,
+	.module = THIS_MODULE,
 };
 
 /**
  * Fill an skb `message' with the global data as an attribute.
  */
-static int radclock_fill_skb(struct genl_info *info, u32 flags, struct sk_buff *skb, u8 cmd)
+static int ffclock_fill_skb(struct genl_info *info, u32 flags, struct sk_buff *skb, u8 cmd)
 {
 	void * hdr;
 	int puterr;
 
-	hdr = genlmsg_put(skb, info->snd_portid, info->snd_seq, &radclock_genl, flags, cmd);
+	hdr = genlmsg_put(skb, info->snd_portid, info->snd_seq, &ffclock_genl, flags, cmd);
 	if (hdr == NULL)
 		return -1;
 
 	/* Fill message with each available attribute */
-	//printk(KERN_INFO " ** getting RAD attr data \n");
 	down_read(&ffclock_mtx);
 	puterr = nla_put(skb, FFCLOCK_ATTR_DATA, sizeof(ffclock_estimate), &ffclock_estimate);
 	up_read(&ffclock_mtx);
 	if (puterr<0)
 		goto nla_put_failure;
-
-//	down_read(&radclock_fixedpoint_mtx);
-//	//printk(KERN_INFO " ** getting RAD attr fp \n");
-//	puterr = nla_put(skb, FFCLOCK_ATTR_FIXEDPOINT, sizeof(radclock_fp), &radclock_fp);
-//	up_read(&radclock_fixedpoint_mtx);
-//	if (puterr<0)
-//		goto nla_put_failure;
 
 	genlmsg_end(skb, hdr);
 	return 0;
@@ -92,7 +78,7 @@ nla_put_failure:
 /**
  * Build a reply for a global data request
  */
-static struct sk_buff * radclock_build_msg(struct genl_info *info, int cmd)
+static struct sk_buff * ffclock_build_msg(struct genl_info *info, int cmd)
 {
 	struct sk_buff *skb;
 	int err;
@@ -101,7 +87,7 @@ static struct sk_buff * radclock_build_msg(struct genl_info *info, int cmd)
 	if (skb == NULL)
 		return ERR_PTR(-ENOBUFS);
 
-	err = radclock_fill_skb(info, 0, skb, cmd);
+	err = ffclock_fill_skb(info, 0, skb, cmd);
 	if (err < 0) {
 		nlmsg_free(skb);
 		return ERR_PTR(err);
@@ -113,32 +99,34 @@ static struct sk_buff * radclock_build_msg(struct genl_info *info, int cmd)
  * Respond to a get request. The request does not specify which attribute is desired.
  * All available will be sent in the message.
  */
-static int radclock_getattr(struct sk_buff *skb, struct genl_info *info)
+static int ffclock_getattr(struct sk_buff *skb, struct genl_info *info)
 {
 	struct sk_buff *msg;
 
-	msg = radclock_build_msg(info, FFCLOCK_CMD_GETATTR);
+	msg = ffclock_build_msg(info, FFCLOCK_CMD_GETATTR);
 	if (IS_ERR(msg))
 		return PTR_ERR(msg);
 
+	//printk(KERN_INFO " ** getting FF attr data \n");
+
 	return genlmsg_unicast(genl_info_net(info), msg, info->snd_portid);
 }
-
-static struct nla_policy radclock_policy[FFCLOCK_ATTR_MAX +1] __read_mostly = {
-	[FFCLOCK_ATTR_DATA] 		= {  .len = sizeof(struct ffclock_estimate) },
-};
 
 /**
  * Set the global data by transferring attributes from the received set message to the global variables
  * Each of the two active kinds of global data acted on, if present.
  * TODO: only let priviledged processes set global data
  */
-static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
+static int ffclock_setattr(struct sk_buff *skb, struct genl_info *info)
 {
-	if (!info)
-		BUG();
-	if (!info->attrs)
-		BUG();
+	if (!info) {
+		printk(KERN_INFO " ** ffclock_setattr :  info bad, exiting \n");
+		return -1;
+	}
+	if (!info->attrs) {
+		printk(KERN_INFO " ** ffclock_setattr :  info ok but attr bad, exiting \n");
+		return -1;
+	}
 
 	/* `Loop' over all possible attribute types */
 	if (info->attrs[FFCLOCK_ATTR_DATA] != NULL)
@@ -159,16 +147,15 @@ static int radclock_setattr(struct sk_buff *skb, struct genl_info *info)
 }
 
 /* Setup the callbacks */
-static struct  genl_ops radclock_ops[] = {
+static struct genl_ops ffclock_ops[] = {
 	{
 		.cmd = FFCLOCK_CMD_GETATTR,
-		.doit = radclock_getattr,
-		.policy = radclock_policy,
+		.doit = ffclock_getattr,
 	},
 	{
 		.cmd = FFCLOCK_CMD_SETATTR,
-		.doit = radclock_setattr,
-		.policy = radclock_policy,
+		.doit = ffclock_setattr,
+		.validate = GENL_DONT_VALIDATE_STRICT | GENL_DONT_VALIDATE_DUMP,
 	},
 };
 
@@ -386,18 +373,18 @@ static int __init init_ffclock_sysfs(void)
 
 /* FFclock module definition */
 
-/* Register radclock with netlink and sysfs */
-static int __init radclock_register(void)
+/* Register ffclock with netlink and sysfs */
+static int __init ffclock_register(void)
 {
 	/* Register family and operations with netlink */
-	radclock_genl.ops = radclock_ops;
-	radclock_genl.n_ops = 2;
-	if (genl_register_family(&radclock_genl)) {
+	ffclock_genl.ops = ffclock_ops;
+	ffclock_genl.n_ops = 2;
+	if (genl_register_family(&ffclock_genl)) {
 		printk(KERN_WARNING "FFclock netlink socket could not be created, exiting\n");
 		goto errout;
 	} else
 		printk(KERN_INFO "%s netlink family registered with id %d\n",
-							radclock_genl.name, radclock_genl.id);
+							ffclock_genl.name, ffclock_genl.id);
 
 	/* Register ffclock sysfs subsystem */
 	if ( init_ffclock_sysfs() )
@@ -407,22 +394,22 @@ static int __init radclock_register(void)
 	return 0;
 
 errout_unregister:
-	genl_unregister_family(&radclock_genl);
+	genl_unregister_family(&ffclock_genl);
 errout:
 	return -EFAULT;
 }
 
-static void __exit radclock_unregister(void)
+static void __exit ffclock_unregister(void)
 {
 	printk(KERN_INFO "FFclock netlink family unregistered\n");
-	genl_unregister_family(&radclock_genl);
+	genl_unregister_family(&ffclock_genl);
 }
 
 
 
-module_init(radclock_register);
-module_exit(radclock_unregister);
+module_init(ffclock_register);
+module_exit(ffclock_unregister);
 
-MODULE_AUTHOR("Thomas Young, Julien Ridoux, Darryl Veitch");
+MODULE_AUTHOR("Darryl Veitch");
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("FFclock driver support");

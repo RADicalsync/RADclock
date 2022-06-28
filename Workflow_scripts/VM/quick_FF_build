@@ -19,11 +19,13 @@ esac
 
 # Determine if will patch the kernel or not
 if [[ "$1" == "-n" ]]; then
-	echo "=== Will compile and install an unpatched kernel $SourceDir for $OS ==="
+	echo "=== Will compile and install the current kernel $SourceDir for $OS ==="
 else	
 	echo "=== Will update FF source, copy it to source tree at $SourceDir for $OS, then compile and install ==="
-	update_workingFFsource
+	update_workingFFsource 5.10.106
 	echo
+   update_linuxSource -l
+   echo "=============================================================="
 	cd $Based
 	move_into_srctree
 fi
@@ -61,7 +63,7 @@ if [ $OS == "Linux" ]; then
 
 
 	if [[ "$1" != "-f" ]]; then
-		echo "Now trying to build clean, executing 'make clean; make deb-pkg' - remember to answer cmdline qn!"
+		echo "Now trying to build clean, executing 'make clean; make deb-pkg' - remember to hit rtn to ans cmdline qn!"
 		make clean > $Based/build.log
 		make deb-pkg >> $Based/build.log 2>&1			# make the kernel in the form of a package
 		#Y				# answers the initial cmdline qn regarding FFclock inclusion
@@ -77,9 +79,9 @@ if [ $OS == "Linux" ]; then
 		echo 
 
 		echo "First check to see if deb creation altered configuration: "
-	    ConfigFile="$SourceDir/.config"
+		ConfigFile="$SourceDir/.config"
 		echo "Check in source config file $ConfigFile"
-    	grep signing_key $ConfigFile >> /dev/null
+		grep signing_key $ConfigFile >> /dev/null
     	if [ $? -ne 0 ]; then
         	echo "  - signing_key not found in $ConfigFile, re-inserting"
         	scripts/config --set-str MODULE_SIG_KEY certs/signing_key.pem

@@ -14,7 +14,7 @@ typedef u64 ffcounter;	// perhaps put in a _ffcounter.h
  */
 
 struct bintime {
-	time_t sec;
+	int64_t sec;
 	__u64 frac;
 };
 
@@ -170,10 +170,10 @@ void ffclock_read_counter(ffcounter *ffcount);
 
 enum {
 	FFCLOCK_ATTR_DUMMY,
-	FFCLOCK_ATTR_DATA,
+	FFCLOCK_ATTR_DATA,		// first attribute starts at 1 as required
 	__FFCLOCK_ATTR_MAX,
 };
-#define FFCLOCK_ATTR_MAX (__FFCLOCK_ATTR_MAX - 1)
+#define FFCLOCK_ATTR_MAX (__FFCLOCK_ATTR_MAX - 1)	// number of attributes
 
 enum {
 	FFCLOCK_CMD_UNSPEC,

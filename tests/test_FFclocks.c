@@ -130,7 +130,7 @@ initialise_pcap_device(char * network_device, char * filtstr)
  * the FFdata and sms RADdata are in sync.
  *
  * NOTE on sniffing of the daemon's NTP packets:
- * In this case we are sniffing the same pkts used to form stamps fed to the daemon.
+ * i) In this case we are sniffing the same pkts used to form stamps fed to the daemon.
  * The update_ffcount member of the FFdata is none other than the response raw
  * timestamp Tf, so that it is in fact possible for a raw timestamp T of a pkt,
  * to be interpreted using FFdata with the same update_ffcount=T, in which case
@@ -145,6 +145,8 @@ initialise_pcap_device(char * network_device, char * filtstr)
  * Typically, T is translated using the FFdata before this, which will
  * be a poll-period behind.  Hence in the printouts below  update_gap_sec  is
  * typically very close to poll_period.
+ * ii) Also, if looking at dev.c verbosity, see the two sets of identical outputs
+ *     one from radclock, one from the sniffer.
  *    */
 int
 main (int argc, char *argv[])
@@ -394,18 +396,18 @@ main (int argc, char *argv[])
 								tv.tv_sec, (long long unsigned)tv.tv_usec,
 								currtime, cdiff, 1e6*frac, 1e9*frac,
 								gen);
-			/* Repeat with old SMS to see if get a match there if spot a problem */
-//			if ( fabs(1e9*frac) > 1 ) {		// 1ns trigger
-			if ( fabs(1e6*frac) > 1 ) {		// 1mus trigger
-					//count_err_ns++;
-					read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
-					cdiff = (currtime - tvdouble);
-					frac = cdiff - (int) cdiff;
-					fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) \n",
-							(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
-							tv.tv_sec, (long long unsigned)tv.tv_usec,
-							currtime, cdiff, 1e6*frac, 1e9*frac);
-			}
+//			/* Repeat with old SMS to see if get a match there if spot a problem */
+////			if ( fabs(1e9*frac) > 1 ) {		// 1ns trigger
+//			if ( fabs(1e6*frac) > 1 ) {		// 1mus trigger
+//					//count_err_ns++;
+//					read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
+//					cdiff = (currtime - tvdouble);
+//					frac = cdiff - (int) cdiff;
+//					fprintf(stdout, "(%llu) [%ld %1.4lf %ld] %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus %3.3Lf ns) \n",
+//							(long long unsigned) vcount, update_gap, update_gap_sec, gen_diff,
+//							tv.tv_sec, (long long unsigned)tv.tv_usec,
+//							currtime, cdiff, 1e6*frac, 1e9*frac);
+//			}
 		}
 		
 		/* Collect some statistics */

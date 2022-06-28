@@ -26,7 +26,7 @@
 
 lib_LTLIBRARIES = libradclock.la
 include_HEADERS = radclock.h
-noinst_HEADERS = local-genetlink.h logger.h radclock-private.h kclock.h
+noinst_HEADERS = logger.h radclock-private.h kclock.h
 
 libradclock_la_SOURCES = \
 		radapi-base.c \
@@ -34,8 +34,7 @@ libradclock_la_SOURCES = \
 		radapi-time.c \
 		radapi-pcap.c \
 		radclock-read.c \
-		logger.c \
-		local-genetlink.h
+		logger.c
 
 if MK_FFKERNEL_FBSD
 libradclock_la_SOURCES += \

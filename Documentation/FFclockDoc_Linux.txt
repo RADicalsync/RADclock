@@ -95,7 +95,7 @@ struct clocksource	   	struct timecounter		abstraction of a hardware counter
 # timekeeper_internal.h    kern_tc.c
 struct timekeeper				struct timehands			tk/th state variable to track different forms
                                                    of time using a cs/tc as a basis
-# timekeeper.c					kern_tc.c
+# timekeepering.c				kern_tc.c
 tk_core	                  *timehands              main extern accessing the current tk/th `clock`
 
 clocksource_delta()        tc_delta()					read the current cs/tc and rtn # counter ticks since
@@ -104,12 +104,9 @@ clocksource_delta()        tc_delta()					read the current cs/tc and rtn # count
 
 timekeeping_advance        tc_windup					the main fn that advances time from one
                                                    `tc-tick` to the next
-
 -------------------------------------------------------------------------------
 
-
-Key differences include:
-
+The differences are many and are described in the next section.
 
 
 
@@ -125,7 +122,7 @@ to the strategic placement of key FFclock code within the existing structure.
 This also enables the Linux FF code to parallel that of FreeBSD as much as possible
 in a natural way, as most of it refers to the same FF-specific variables and
 functions, with the same names. Bintime is not used in Linux. Needed definitions
-are supplied in radclock.h .
+are supplied in ffclock.h .
 
 The FreeBSD timehands (th) system for timekeeping was rigidly tc-tick based, with all
 updates mediated via tc_windup, enabling the FFcode to stay synchronous with it
@@ -154,7 +151,7 @@ The commonalities are :
 
 Linux				  FreeBSD				role
 -------------------------------------------------------------------------------
-# timekeeper.c	  kern_tc.c
+# timekeeping.c  kern_tc.c
 ffclock_windup	  ffclock_windup    advances to next tick using the cs/tc delta already
 											  calculated for tk/th use, ensuring a common base,
 											  updates managed in a separate fftimehands (ffth) cyclic buffer
@@ -262,7 +259,7 @@ Notes:
  - all of these functions have a critical section, covering all the lines quoted above,
 	protected by  timekeeper_lock.  Thus the ffclock code is also under this protection,
 	so it need not worry about tk changing during its operations.
- - logarithmic_accumulation  is a more sophisticated from of timekeeping_forward_now
+ - logarithmic_accumulation  is a more sophisticated form of timekeeping_forward_now
  - timekeeping_advance  operates on a shadow tk before pointer-swapping with current tk
     this is Linux`s version of the fftimehands cyclic buffer.  Other fns dont do this,
     thus they modify the current tk.
@@ -277,8 +274,9 @@ Notes:
 Timekeeper (tk) Mechanism: Overview
 ======================================
 
-In linux ns plays a key role as a kind of equivalent to BSDs bintime: a high resultion format to ease
-integer arithmetic. Many variables hold ns, in particular ktime variables  ( linux/ktime.h )
+In linux ns plays a key role as a kind of equivalent to FreeBSD`s bintime: a
+high resultion format to ease integer arithmetic.
+Many variables hold ns, in particular ktime variables  ( linux/ktime.h )
 	/* Nanosecond scalar representation for kernel time values */
 	typedef s64	ktime_t;
 are designed to work with absolute time measured in [ns] natively. Some simple operations are
@@ -307,8 +305,6 @@ negative ns into the matching sec field.  These normalised (sec,ns) pairs are no
 same struct, like a timespec, sometimes they are in separate variables! it gets complicated!
 This design creates a lot of complexity, bintime is clearly superior as the most natural
 form of integer arithmetic one could imagine, which maximizes available resolution.
-
-
 
 
 # In clocksource.h:
@@ -344,8 +340,6 @@ struct clocksource {
 #endif
 	struct module *owner;
 };
-
-
 
 
 # In linux/include/linux/timekeeper_internal.h
@@ -438,7 +432,7 @@ The fundamental objective of the core timing component is to implement a
 FF counter in the kernel, and to synthesize a number of FFclocks based on it.
 The FFcounter, and with it these FFclocks, will be advanced frequently enough
 so that the underlying cs used in the FFcounter will not overflow.
-We rely on the structure of the underling timekeeper code to ensure this, by
+We rely on the structure of the underlying timekeeper code to ensure this, by
 exploiting the same cs reads made by it.
 
 The fundamental tasks required to establish the FFclock system are:
@@ -449,8 +443,8 @@ The fundamental tasks required to establish the FFclock system are:
  advancement  (nominally per-tick)
  counter change management
  UTC reset management
- suspend managment
- integration into tk code with appropriate
+ suspend management
+ integration into tk code
 
 The ffclock core files are:
 
@@ -458,7 +452,7 @@ Linux						FreeBSD				role
 -------------------------------------------------------------------------------
 ffclock.h				timeff.c				distribute FF types and varibles
 ffclock.c				kern_ffclock.c		FF-only code not requiring tk access
-timekeeper.c			kern_tc.c			tk code, and integrated FFcode
+timekeeping.c			kern_tc.c			tk code, and integrated FFcode
 
 We now describe these via contrasting with FreeBSD. We ignore minor variable
 name changes, and very minor code changes, though in many cases they are
@@ -477,7 +471,7 @@ Differences :
 
 Contains netlink support allowing  FFclock <--> daemon FFdata transfer.
 FreeBSD does not use netlink
-Contains bintime support (struct bintime, and bintime_{add,addx,sub,mul,clear,isset,cmp}
+Contains bintime support (struct bintime, and bintime_{add,addx,sub,mul,clear,isset,cmp})
 FreeBSD has this natively
 
 Does not have any of the sysclock support, and associated internal ffclock reading
@@ -499,13 +493,13 @@ static int ffclock_version = 2;
 
 Differences :
 
-Most of ffclock.c concerns netlink support which is absent in FreeBSD
+Most of ffclock.c concerns netlink support which is absent in FreeBSD.
 Most of kern_ffclock.c concerns the internal ffclock reading functions, and
 callbacks for sysclock and counter reading syscalls.
 
 
 -------------
-# timekeeper.c
+# timekeeping.c
 Similarities :
 
 struct ffclock_estimate ffclock_estimate;
@@ -606,19 +600,19 @@ IOCTL:    for KV>1
 The only use of ioctl is via the packet capture access mediated through pcap.
 The related functions are in pcap-linux.c :
 
-#define SIOCSRADCLOCKTSMODE 	0x8908		// defined in uapi/asm-generic/sockios.h
-#define SIOCGRADCLOCKTSMODE 	0x8909		// defined in uapi/asm-generic/sockios.h
-#define SIOCGRADCLOCKSTAMP 	0x89b2		// defined in uapi/linux/sockios.h
+#define SIOCSFFCLOCKTSMODE 	0x8908		// defined in uapi/asm-generic/sockios.h
+#define SIOCGFFCLOCKTSMODE 	0x8909		// defined in uapi/asm-generic/sockios.h
+#define SIOCGFFCLOCKSTAMP 		0x89b2		// defined in uapi/linux/sockios.h
 
 Getting and setting the tsmode		[ note these can also be get/set using sysfs, see below ]
  descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_int custom)
- 		if (ioctl(pcap_fileno(p_handle), SIOCSRADCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
+ 		if (ioctl(pcap_fileno(p_handle), SIOCSFFCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
  descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
-		if (ioctl(pcap_fileno(p_handle), SIOCGRADCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
+		if (ioctl(pcap_fileno(p_handle), SIOCGFFCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
 
 Obtaining the packet data:
  extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
-		if (ioctl(pcap_fileno(p_handle), SIOCGRADCLOCKSTAMP, (caddr_t)vcount) == -1) {
+		if (ioctl(pcap_fileno(p_handle), SIOCGFFCLOCKSTAMP, (caddr_t)vcount) == -1) {
 
 
 
@@ -639,7 +633,7 @@ the daemon are summarized in RADclockDoc_library, repeated here:
 
 syscall (kernel: time.c) 	userspace calling method					 			OS-dep wrapper kclock-linux.c
 ---------------------------------------------------------------------------------------------------
-sys_ffclock_getcounter  			syscall(LINUX_SYSCALL_ffclock_getcounter,vc)  			radclock_ffclock_getcounter_syscall(clock,vc)
+sys_ffclock_getcounter  			syscall(LINUX_SYSCALL_ffclock_getcounter,vc)  			ffclock_getcounter_syscall(clock,vc)
 sys_ffclock_getcounter_latency	syscall(LINUX_SYSCALL_ffclock_getcounter_LATENCY,vc)  N/A (not used)
 
 File involved files and their roles are as follows :
@@ -649,8 +643,8 @@ time.c		//  SYSCALL_DEFINEx macros are in syscalls.h ;  they add a sys_ prefixed
 
 For amd64 architectures, the files  asm/unistd_{32,64}.h  are auto-generated from the specification in:
 syscall_64.tbl    [ syscall number defined and ABI family ]
-	335	64	ffclock_getcounter				__x64_sys_ffclock_getcounter
-	336	64	ffclock_getcounter_latency		__x64_sys_ffclock_getcounter_latency
+	335	64	ffclock_getcounter				sys_ffclock_getcounter
+	336	64	ffclock_getcounter_latency		sys_ffclock_getcounter_latency
 syscall_32.tbl    [ syscall number defined and ABI family specified for i386 support on amd64 arch? ]
 	i386	ffclock_getcounter			sys_ffclock_getcounter				sys_ffclock_getcounter
 	i386	ffclock_getcounter_latency	sys_ffclock_getcounter_latency	sys_ffclock_getcounter_latency
@@ -666,7 +660,7 @@ syscalls.h		[ placed under entry for kernel/time.c where the fns are defined ]
 SYSFS:
 ======================================
 
-The SYSFS device tree associated with FF components is defined in clocksource.{h,c}  and radclock.{h,c}
+The SYSFS device tree associated with FF components is defined in clocksource.{h,c}  and ffclock.{h,c}
 The provided controls are cs level controls that can impact the FF clock and the FF daemon,
 such as a change of cs.
 
@@ -802,7 +796,7 @@ The tsmode specifies the timestamping type requested.
 #define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
 
 In linux, the FORMAT values BPF_T_NONE and BPF_T_NANOTIME only are respected.
-Use of FAST is not recommended, as it behaviour under linux is not as originally intended.
+Use of FAST is not recommended, as its behaviour under linux is not as originally intended.
 This is a consequence of creating FFclock timestamps only as needed via
 ffclock_fill_timestamps, rather than more deeply integrated in the pkt timestamping system.
 

@@ -1,6 +1,8 @@
 #!/bin/bash
 # #!/usr/local/bin/bash
 
+# This script not yet earthly compatible
+#
 # Best to run this in V4 directory, but not essential
 
 V='new'      # select on new locations (≥4.19) or old
@@ -14,7 +16,8 @@ fi
 # When running in the VM to initialize the CurrentSource dir, run from /root/FFkernel_Work
 if [ `uname -s` == "Linux" ]; then
 	cd /root/FFkernel_Work
-	LinuxDir="/usr/src/linux-source-4.19"
+	OSv=`uname -r | cut -d'.' -f1-2`
+	LinuxDir="/usr/src/linux-source-$OSv"
 	FlatDir="CurrentSource"
 else
 # When running on Icaro to flatten files from a downloaded tree, run from V4
@@ -38,16 +41,17 @@ else
 fi
 
 # Determine naming of RADclock components: old radclock, or newer ffclock
-if [ -e "$LinuxDir/drivers/radclock" ]; then
-	RAD="ffclock"
-else
-	RAD="radclock"	# default even if no files there: symlinks will be created anyway, cp will fail
-fi
+RAD="ffclock"		# now the default, dropping backward compat
+#if [ -e "$LinuxDir/drivers/radclock" ]; then
+#	RAD="ffclock"
+#else
+#	RAD="ffclock"	# default even if no files there: symlinks will be created anyway, cp will fail
+#fi
 
 $CMD $LinuxDir/drivers/Kconfig  	drivers_Kconfig
 $CMD $LinuxDir/drivers/Makefile  	drivers_Makefile
 $CMD $LinuxDir/drivers/$RAD/{Kconfig,Makefile,$RAD.c}	.
-$CMD $LinuxDir/include/linux/{clocksource,$RAD,skbuff,syscalls}.h	.
+$CMD $LinuxDir/include/linux/{$RAD,skbuff,syscalls}.h	.
 if [ $V == "old" ]; then
 	$CMD $LinuxDir/kernel/time.c	.
 	$CMD $LinuxDir/include/linux/sockios.h	.
@@ -63,19 +67,23 @@ if [ $V == "old" ]; then
 else
 	$CMD $LinuxDir/kernel/time/time.c	.
 	$CMD $LinuxDir/include/uapi/linux/sockios.h	.
-	$CMD $LinuxDir/include/uapi/asm-generic/sockios.h	asm-generic_sockios.h	
-	# $CMD $LinuxDir/include/uapi/asm-generic/unistd.h	unistd.h	# not used # in non-raspbian cases 
+	$CMD $LinuxDir/include/uapi/asm-generic/sockios.h	asm-generic_sockios.h
+	## AMD64 specific
 	$CMD $LinuxDir/arch/x86/entry/syscalls/syscall_{32,64}.tbl .
-	# $CMD $LinuxDir/arch/x86/entry/vsyscall/vsyscall_64.c	.	# vsyscall deprecated in favour of vdso, so won't use
-	$CMD $LinuxDir/arch/x86/entry/vdso/vclock_gettime.c	.
+	## ARM specific
+	# $CMD $LinuxDir/include/uapi/asm-generic/unistd.h	unistd.h
+	## Drop VDSO for now
+	# $CMD $LinuxDir/arch/x86/entry/vsyscall/vsyscall_64.c	# vsyscall deprecated in favour of vdso, so won't use
+	# $CMD $LinuxDir/arch/x86/entry/vdso/vclock_gettime.c	.
 fi
 $CMD $LinuxDir/include/net/sock.h	.
-$CMD $LinuxDir/kernel/time/{clocksource,timekeeping}.c	.
+$CMD $LinuxDir/kernel/time/timekeeping.c	.
 $CMD $LinuxDir/net/core/{skbuff,sock,dev}.c	.
 $CMD $LinuxDir/net/socket.c	.
 $CMD $LinuxDir/net/ipv4/af_inet.c	.
 $CMD $LinuxDir/net/packet/af_packet.c	.
-$CMD $LinuxDir/arch/x86/include/asm/vgtod.h	.
+## Drop VDSO for now
+#$CMD $LinuxDir/arch/x86/include/asm/vgtod.h	.
 
 #echo
 #echo " Now extra files patched in raspbian 3.2.27 patch, not yet included above. "

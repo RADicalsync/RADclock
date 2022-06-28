@@ -14,55 +14,55 @@ typedef u64 ffcounter;	// perhaps put in a _ffcounter.h
  */
 
 struct bintime {
-	time_t sec;
+	int64_t sec;
 	__u64 frac;
 };
 
 static __inline void
 bintime_addx(struct bintime *_bt, uint64_t _x)
 {
-        uint64_t _u;
+	uint64_t _u;
 
-        _u = _bt->frac;
-        _bt->frac += _x;
-        if (_u > _bt->frac)
-                _bt->sec++;
+	_u = _bt->frac;
+	_bt->frac += _x;
+	if (_u > _bt->frac)
+		_bt->sec++;
 }
 
 static __inline void
 bintime_add(struct bintime *_bt, const struct bintime *_bt2)
 {
-        uint64_t _u;
+	uint64_t _u;
 
-        _u = _bt->frac;
-        _bt->frac += _bt2->frac;
-        if (_u > _bt->frac)
-                _bt->sec++;
-        _bt->sec += _bt2->sec;
+	_u = _bt->frac;
+	_bt->frac += _bt2->frac;
+	if (_u > _bt->frac)
+		_bt->sec++;
+	_bt->sec += _bt2->sec;
 }
 
 static __inline void
 bintime_sub(struct bintime *_bt, const struct bintime *_bt2)
 {
-        uint64_t _u;
+	uint64_t _u;
 
-        _u = _bt->frac;
-        _bt->frac -= _bt2->frac;
-        if (_u < _bt->frac)
-                _bt->sec--;
-        _bt->sec -= _bt2->sec;
+	_u = _bt->frac;
+	_bt->frac -= _bt2->frac;
+	if (_u < _bt->frac)
+		_bt->sec--;
+	_bt->sec -= _bt2->sec;
 }
 
 static __inline void
 bintime_mul(struct bintime *_bt, u_int _x)
 {
-        uint64_t _p1, _p2;
+	uint64_t _p1, _p2;
 
-        _p1 = (_bt->frac & 0xffffffffull) * _x;
-        _p2 = (_bt->frac >> 32) * _x + (_p1 >> 32);
-        _bt->sec *= _x;
-        _bt->sec += (_p2 >> 32);
-        _bt->frac = (_p2 << 32) | (_p1 & 0xffffffffull);
+	_p1 = (_bt->frac & 0xffffffffull) * _x;
+	_p2 = (_bt->frac >> 32) * _x + (_p1 >> 32);
+	_bt->sec *= _x;
+	_bt->sec += (_p2 >> 32);
+	_bt->frac = (_p2 << 32) | (_p1 & 0xffffffffull);
 }
 
 #define bintime_clear(a)        ((a)->sec = (a)->frac = 0)
@@ -159,7 +159,6 @@ extern int ffclock_tsmode;		// needed in sock.c
 /* Read the FFclocks (both raw and normal timestamps) according to the
  * BPT_T_ based specification in tsmode */
 void ffclock_fill_timestamps(ffcounter ffc, long tsmode, ffcounter *rawts, ktime_t *ts);
-//void radclock_fill_ktime(ffcounter ffcount, ktime_t *ktime);
 
 /* Return the current value of the feed-forward clock counter. */
 void ffclock_read_counter(ffcounter *ffcount);

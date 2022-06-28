@@ -47,18 +47,20 @@ fi
 # Get thelatest packages
 cd /usr/src
 echo "** Grabbing packages from $PkgDir"
-scp $PkgDir/* .
+scp $PkgDir/*5.10* .    # hack
+# scp $PkgDir/* .
 ls -ltr |tail -6
 Kname=`ls -tr |tail -3 |grep  linux-image | cut -d'_' -f1 |cut -d'-' -f3-`
 NewSUBLEVEL=`echo $Kname |cut -d'.' -f3`
 echo "Earthly packages are of version $Kname"
 echo
 
+exit
 
 # If sublevel of packages is different, source and config actions needed
 if [ $OnPi != "Yes" ]; then
 	echo "=============================================================="
-	update_linuxSource -d
+	#update_linuxSource -d
 	echo "=============================================================="
  	echo "*********** Returning, now in `pwd` *************"
 fi

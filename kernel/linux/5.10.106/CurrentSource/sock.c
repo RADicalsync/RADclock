@@ -139,6 +139,10 @@
 #include <net/tcp.h>
 #include <net/busy_poll.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>		// for ffclock_tsmode
+#endif
+
 static DEFINE_MUTEX(proto_list_mutex);
 static LIST_HEAD(proto_list);
 
@@ -3023,6 +3027,11 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 	sk->sk_sndtimeo		=	MAX_SCHEDULE_TIMEOUT;
 
 	sk->sk_stamp = SK_DEFAULT_STAMP;
+#ifdef CONFIG_FFCLOCK
+	sk->sk_ffclock_ffc = 0;
+	sk->sk_ffclock_tsmode = ffclock_tsmode;
+#endif
+
 #if BITS_PER_LONG==32
 	seqlock_init(&sk->sk_stamp_seq);
 #endif

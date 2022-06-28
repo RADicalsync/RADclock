@@ -930,6 +930,21 @@ int inet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 	struct rtentry rt;
 
 	switch (cmd) {
+#ifdef CONFIG_FFCLOCK
+		case SIOCGFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Get FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+			break;
+		case SIOCSFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Set FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+			break;
+#endif
+/* The 4.19 code ( here ported to 5.10) covered these cases, but 5.10 drops them..) */
+//	case SIOCGSTAMP:
+//		err = sock_gettstamp(sock, (struct timeval __user *)arg, 1, false);
+//		break;
+//	case SIOCGSTAMPNS:
+//		err = sock_gettstamp(sock, (struct timeval __user *)arg, 0, false);
+//		break;
 	case SIOCADDRT:
 	case SIOCDELRT:
 		if (copy_from_user(&rt, p, sizeof(struct rtentry)))

@@ -1,5 +1,4 @@
 #!/bin/bash
-
 echo Updating working FF Source
 
 OS=`uname -s`
@@ -12,15 +11,29 @@ case $OS in
 		FFsource=$Based/$MountPoint/RADclock_mycurrent/kernel/freebsd/FreeBSD-$OSv/CurrentSource;;
 	Linux)
 		OSfullv=`uname -r` # VERSION.PATCHLEVEL.SUBLEVEL current running
-	 	OSv=`echo $OSfullv | cut -d'.' -f1-2`  	 # VERSION.PATCHLEVEL
+		OSv=`echo $OSfullv | cut -d'.' -f1-2`  	 # VERSION.PATCHLEVEL = point release
 		#OSfullv=$OSv".0"		# did this before changed dir names
-		FFsource=$Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSfullv/CurrentSource
+		if [[ -e $Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSfullv ]]; then
+			$OSusing=$OSfullv
+		else
+			if [[ "$1" == "" ]]; then
+				echo "Don't know what you what, $OSfullv dir not available in repo, try specifying on CMDline"
+				exit
+			else
+				OSusing=$1
+				if [[ ! -e $Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSusing ]]; then
+					echo "Version $OSusing does not exist in the repo"
+					exit
+				fi
+			fi
+		fi
+		FFsource=$Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSusing/CurrentSource
 
 		# Optionally replace entire source tree before patching 
-        if [[ "$1" == "-s" ]]; then
+		if [[ "$1" == "-s" ]]; then
 			#Kname=$OSv.235				# should read desired SUBLEVEL from command line option 
 			Installd="/usr/src/linux-source-$OSv"		# dirname always VERSION.PATCHLEVEL, regardless of SUBLEVEL
-			FullSrcDir="$Based/$MountPoint/RADclock_mycurrent/artifacts/kernelsourcefiles/deb-$OSfullv/linux-source"
+			FullSrcDir="$Based/$MountPoint/RADclock_mycurrent/artifacts/kernelsourcefiles/deb-$OSusing/linux-source"
 			echo " **before patching, Copying full source tree at $FullSrcDir to $Installd -- could take a while"
 			scp -r $FullSrcDir $Installd 
 			ls -ltr /usr/src |tail -3
@@ -42,15 +55,15 @@ rsync  -aic $FFsource/*	$FFtarget  --delete
 #rsync $1  -aic $FFsource/{kern_{ffclock,tc}.c,subr_rtc.c,timeffc.h,bpf.{c,h},_ffcounter.h,if_*.c}	$FFtarget
 
 case $OS in
-    FreeBSD)
+	FreeBSD)
 		Included="/usr/include"
 		echo "  Also copying header files into $Included"
 		\cp $FFtarget/{timeffc,_ffcounter}.h	$Included/sys/
 		\cp $FFtarget/bpf.h			$Included/net/;;
 	Linux)
 		Included="/usr/include"
-		echo "  Also copying header files into $Included"
-		\cp $FFtarget/ffclock.h	$Included/linux/
+#		echo "  Also copying header files into $Included"
+#		\cp $FFtarget/ffclock.h	$Included/linux/
 		#Included="/usr/src/linux-source-$OSv/include/"
 		#echo "  On Linux, not yet copying header files into $Included or anywhere else"
 esac

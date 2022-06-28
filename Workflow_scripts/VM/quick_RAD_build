@@ -23,8 +23,8 @@ if [ $? -eq 0 ]; then
 	make -s install
 	
 	echo
-echo "*** Making check programs as well ***"
-make -s check
+	echo "*** Making check programs as well ***"
+	make -s check
 else
 	echo
 	echo "*** Radclock build failed (see RADbuild.log), skipping installation ***"
