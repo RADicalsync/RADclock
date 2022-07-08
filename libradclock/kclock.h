@@ -36,7 +36,7 @@
 #include <sys/time.h>
 #else
 struct bintime {
-	time_t sec;
+	int64_t sec;
 	uint64_t frac;
 };
 #endif

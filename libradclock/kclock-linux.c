@@ -59,11 +59,11 @@
 
 enum {
 	RADCLOCK_ATTR_DUMMY,
-	RADCLOCK_ATTR_DATA,
+	RADCLOCK_ATTR_DATA,			// first attribute starts at 1 as required
 	RADCLOCK_ATTR_FIXEDPOINT,
 	__RADCLOCK_ATTR_MAX,
 };
-#define RADCLOCK_ATTR_MAX (__RADCLOCK_ATTR_MAX - 1)
+#define RADCLOCK_ATTR_MAX (__RADCLOCK_ATTR_MAX - 1)	// number of attributes
 enum {
 	RADCLOCK_CMD_UNSPEC,
 	RADCLOCK_CMD_GETATTR,
@@ -104,6 +104,10 @@ init_kernel_clock(struct radclock *clock)
 	}
 
 	logger(RADLOG_NOTICE, "FFclock netlink is up, with genl ID = %d", id);
+//	logger(RADLOG_NOTICE, "RADCLOCK_ATTR_DATA (%d) set to size %d (actual is %d)",
+//									RADCLOCK_ATTR_DATA,
+//									radclock_attr_policy[RADCLOCK_ATTR_DATA].minlen,
+//									sizeof(struct ffclock_estimate));
 	PRIV_DATA(clock)->radclock_gnl_id = id;
 
 	return (0);
@@ -196,10 +200,13 @@ static int radclock_gnl_get_attr(int radclock_gnl_id, int attrib_id, void *into)
 	struct genlmsghdr generic_header = {
 		.cmd = RADCLOCK_CMD_GETATTR,
 		.version = 0,
-		.reserved =0,
+		.reserved = 0,
 	};
 
 	//logger(RADLOG_NOTICE, "Entering radclock_gnl_get_attr");
+	/* Track the message composition by printing to file */
+//	FILE* fd;
+//	fd = fopen("/root/FFkernel_Work/netlink_Getmsg.out", "w");
 
 	/* Allocate a msg suitable for an ack'd request */
 	struct nl_msg *msg;
@@ -224,8 +231,10 @@ static int radclock_gnl_get_attr(int radclock_gnl_id, int attrib_id, void *into)
 		logger(RADLOG_ERR, "Error sending to generic netlink socket");
 		goto close_errout;
 	}
+//	nl_msg_dump(msg,fd);		// Dump message in human readable format
+//	fclose(fd);
 
-	/* Obtain pointer to waiting message stream, interate over waiting
+	/* Obtain pointer to waiting message stream, iterate over waiting
 	 * messages to find the first acceptable one */
 	recv_len = nl_recv(sk, &peer, &buf, NULL);		// allocates memory to buf
 	if (recv_len >=0) {
@@ -272,6 +281,10 @@ radclock_gnl_set_attr(int radclock_gnl_id, int attrib_id, void *data)
 		.reserved = 0,
 	};
 
+	/* Track the message composition by printing to file */
+//	FILE* fd;
+//	fd = fopen("/root/FFkernel_Work/netlink_Setmsg.out", "w");
+
 	/* Allocate a msg with a header for an ack'd request, and append payload hdr */
 	struct nl_msg *msg;
 	msg = nlmsg_alloc_simple(radclock_gnl_id, NLM_F_REQUEST | NLM_F_ACK);
@@ -280,6 +293,7 @@ radclock_gnl_set_attr(int radclock_gnl_id, int attrib_id, void *data)
 		goto errout;
 	}
 	nlmsg_append(msg, &generic_header, GENL_HDRLEN, 0);
+//	nl_msg_dump(msg,fd);		// Dump message in human readable format
 
 	/* Create and bind socket for the request */
 	sk = nl_socket_alloc();
@@ -304,15 +318,19 @@ radclock_gnl_set_attr(int radclock_gnl_id, int attrib_id, void *data)
 			goto close_errout;
 		}
 	}
+//	nl_msg_dump(msg,fd);		// Dump message in human readable format
 
 	/* Complete and send the message, wait for ACK */
-	if (nl_send_auto(sk, msg) < 0) {
-		logger(RADLOG_ERR, "Error sending to generic netlink socket");
+	if (ret = nl_send_auto(sk, msg) < 0) {
+		logger(RADLOG_ERR, "Error sending to generic netlink socket, ret = %d (%s)",
+								ret, nl_geterror(-ret));
 		goto close_errout;
 	}
-	nl_wait_for_ack(sk);
-	ret = 0;		// success
-
+//	nl_msg_dump(msg,fd);		// Dump message in human readable format
+//	fclose(fd);
+	if (ret = nl_wait_for_ack(sk))
+		logger(RADLOG_ERR, "Failure on ack wait in radclock_gnl_set_attr, ret = %d (%s)",
+								ret, nl_geterror(-ret));
 
 close_errout:
 	nl_close(sk);
@@ -332,7 +350,7 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 	int err;
 
 	if (clock->kernel_version < 2) {
-		logger(RADLOG_ERR, "calling get_kernel_ffclock with unfit kernel!");
+		logger(RADLOG_ERR, "Calling get_kernel_ffclock with unfit kernel!");
 		return (1);
 	}
 
@@ -365,71 +383,12 @@ set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 	}
 
 	if (err < 0) {
-		logger(RADLOG_ERR, "error when setting FFdata in kernel");
+		logger(RADLOG_ERR, "Error when setting FFdata in kernel");
 		return (1);
 	}
 
 	return (0);
 }
-
-/* Early version of code for filling that was in  set_kernel_ffclock (both fill and set) */
-
-//	JDEBUG
-//	int err;
-//	struct ffclock_data fdata;
-//	vcounter_t vcount;
-//	long double time;
-//	uint64_t period;
-//	uint64_t period_shortterm;
-//	uint64_t frac;
-//
-//	/*
-//	 * Build the data structure to pass to the kernel
-//	 */
-//	vcount = RAD_DATA(clock)->last_changed;
-//
-//	/* Convert vcount to long double time and to bintime */
-//	if (radclock_vcount_to_abstime_fp(clock, &vcount, &time))
-//		logger(RADLOG_ERR, "Error calculating time");
-//
-//	/* What I would like to do is:
-//	 * fdata->time.frac = (time - (time_t) time) * (1LLU << 64);
-//	 * but cannot push '1' by 64 bits, does not fit in LLU. So push 63 bits,
-//	 * multiply for best resolution and loose resolution of 1/2^64.
-//	 * Same for phat.
-//	 */
-//	fdata.time.sec = (time_t) time;
-//	frac = (time - (time_t) time) * (1LLU << 63);
-//	fdata.time.frac = frac << 1;
-//
-//	period = ((long double) RAD_DATA(clock)->phat) * (1LLU << 63);
-//	fdata.period = period << 1;
-//
-//	period_shortterm = ((long double) RAD_DATA(clock)->phat_local) * (1LLU << 63);
-//	fdata.period_shortterm = period_shortterm << 1;
-//
-//	fdata.last_update = vcount;
-//	fdata.status = RAD_DATA(clock)->status;
-//	fdata.error_bound_avg = (uint32_t) RAD_ERROR(clock)->error_bound_avg * 1e9;
-//
-//
-//	/* Push */
-//	err = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &fdata);
-//	if ( err < 0 ) {
-//		logger(RADLOG_ERR, "error on syscall set_ffclock: %s", strerror(errno));
-//		return (1);
-//	}
-
-
-
-
-
-
-
-
-
-
-
 
 
 

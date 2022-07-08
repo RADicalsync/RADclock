@@ -1047,9 +1047,9 @@ process_stamp(struct radclock_handle *handle)
 				}
 
 				if (handle->conf->adjust_FFclock == BOOL_ON) {
-					set_kernel_ffclock(handle->clock, &cest);
-					//stamp_firstpush = stamp_i;
-					verbose(VERB_DEBUG, "FF kernel data has been updated.");
+					if (!set_kernel_ffclock(handle->clock, &cest))
+						//stamp_firstpush = stamp_i;
+						verbose(VERB_DEBUG, "FF kernel data has been updated.");
 				}
 
 				/* Check FFclock data in the kernel now */

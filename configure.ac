@@ -38,7 +38,7 @@ dnl This should set the target_cpu, target_os and target_vendor variables
 AC_CANONICAL_TARGET
 
 dnl Init and check for automake version
-AM_INIT_AUTOMAKE(1.8)
+AM_INIT_AUTOMAKE([1.8 foreign])
 
 dnl Init libtool magic
 dnl TODO: see if we need to activate this or not
@@ -545,6 +545,18 @@ case "$target_os" in
 					aarch64 | arm64)
 						syscall_get_vcounter_number=294
 						syscall_get_vcounter_latency_number=295
+					;;
+				esac
+			;;
+			5.10.*)
+				case "$target_cpu" in
+					i386 | i486 | i586 | i686)
+						syscall_get_vcounter_number=441
+						syscall_get_vcounter_latency_number=442
+					;;
+					x86_64)
+						syscall_get_vcounter_number=441
+						syscall_get_vcounter_latency_number=442
 					;;
 				esac
 			;;
