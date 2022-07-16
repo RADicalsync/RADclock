@@ -1,87 +1,20 @@
-#!/bin/sh
-### BEGIN INIT INFO
-# Provides:          radclock
-# Required-Start:    mountvirtfs ifupdown $local_fs
-# Default-Start:     S
-# Default-Stop:      0 6
-# Short-Description: RADclock clock synchronization daemon
-# Description: RADclock (Robust Absolute and Difference Clock) feedforward
-#	clock synchronization daemon. It requires CONFIG_FFCLOCK kernel providing
-#	a feedforward counter, and dual (raw,normal) packet timestamping using the
-#	FFclock (based on RADclock).
-### END INIT INFO
+[Unit]
+Description=RADClock Service
+After=network.target timers.target
 
-PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
-NAME=radclock
-DAEMON=`which $NAME`
-DESC="$NAME daemon"
-DAEMON_OPTS="-d"
-PIDFILE="/var/run/$NAME/$NAME.pid"
+[Service]
+#The daemon forks off the parent process
+Type=forking
+#PID file of the main child process
+PIDFile=/var/run/radclock/radclock.pid
+ExecStart=/usr/local/bin/radclock -d
+ExecStop=/usr/bin/pkill -SIGTERM -F /var/run/radclock/radclock.pid radclock
+KillSignal=SIGTERM
+#Send the SIGHUP signal
+ExecReload=/usr/bin/pkill -SIGHUP -F /var/run/radclock/radclock.pid radclock
+#Restart the service after 5 seconds on-failure
+RestartSec=5
+Restart=on-failure
 
-test -x $DAEMON || exit 0
-
-# Must include this to be LSB compliant
-. /lib/lsb/init-functions
-
-# Include radclock defaults if available
-if [ -f /etc/default/$NAME ] ; then
-	. /etc/default/$NAME
-fi
-
-set -e
-
-case "$1" in
-  start)
-	log_daemon_msg "Starting $DESC: "
-	start-stop-daemon --start --quiet --pidfile $PIDFILE \
-		--exec $DAEMON -- $DAEMON_OPTS
-	log_end_msg "done."
-	;;
-  stop)
-	log_daemon_msg "Stopping $DESC: "
-	start-stop-daemon --stop --quiet --retry TERM/2/TERM/forever/TERM \
-		--pidfile $PIDFILE --exec $DAEMON
-	log_end_msg "done."
-	;;
-  restart)
-	log_daemon_msg "Restarting $DESC: "
-	start-stop-daemon --stop --quiet --retry TERM/2/TERM/forever/TERM \
-		--pidfile $PIDFILE --exec $DAEMON
-	sleep 2
-	start-stop-daemon --start --quiet --pidfile $PIDFILE \
-		--exec $DAEMON -- $DAEMON_OPTS
-	log_end_msg "done."
-	;;
-  reload)
-	log_daemon_msg "Reloading $DESC configuration files."
-	start-stop-daemon --stop --signal HUP --quiet --pidfile $PIDFILE \
-		--exec $DAEMON
-	log_end_msg "done."
-	;;
-  rotate)
-	log_daemon_msg "Rotating $DESC log file (will reopen)."
-	start-stop-daemon --stop --signal USR1 --quiet --pidfile $PIDFILE \
-		--exec $DAEMON
-	log_end_msg "done."
-	;;
-  status)
-	log_daemon_msg "$DESC status:  "
-	if [ ! -r "$PIDFILE" ]; then
-		log_end_msg "is not running."
-		exit 3 
-	fi
-	if read pid < "$PIDFILE" && ps -p "$pid" > /dev/null 2>&1; then
-		log_end_msg "is running with pid $pid."
-		exit 0
-	else
-		log_end_msg "is not running but $PIDFILE exists."
-		exit 1
-	fi
-	;;
-  *)
-	echo "Usage: ${0} {start|stop|restart|reload|rotate|status}" >&2
-	exit 1
-	;;
-esac
-
-exit 0
+[Install]
+WantedBy=multi-user.target
