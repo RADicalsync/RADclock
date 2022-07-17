@@ -1,5 +1,5 @@
 [Unit]
-Description=RADClock Service
+Description=RADclock Service
 After=network.target timers.target
 
 [Service]

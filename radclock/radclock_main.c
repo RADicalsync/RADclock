@@ -96,7 +96,6 @@ struct rusage jdbg_rusage;
 
 
 
-
 /*************************** Helper Routines ******************************/
 
 /*** Guide to input parameters of radclock ***/
@@ -125,10 +124,6 @@ static void usage(void) {
 		);
 	exit(EXIT_SUCCESS);
 }
-
-
-
-
 
 
 
@@ -357,7 +352,7 @@ signal_handler(int sig)
 
 
 /*
- * Function that fork the process and creates the running daemon
+ * Function that forks the process and creates the running daemon
  */
 static int
 daemonize(const char* lockfile, int *daemon_pid_fd)
@@ -373,13 +368,13 @@ daemonize(const char* lockfile, int *daemon_pid_fd)
 	/* If already a daemon */
 	/* This is not needed. If the child process (daemon) has already been forked,
 	 * the program doesn't return to this point. If already a daemon, the init system
-	 * (e.g. systemd) handles it and prevents starting as daemon again. 
+	 * (e.g. systemd) handles it and prevents starting as daemon again.
 	 * In Linux, systemd, which has PID=1, starts this daemon as it's child. So, the
 	 * daemon always has PPID=1. This condition is thus invalid.
 	if( getppid() == 1 ) {
 		verbose(LOG_NOTICE, "Already a daemon");
 		return (0);
-	}*/
+	}
 
 	/* Fork off the parent process */
 	pid = fork();

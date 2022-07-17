@@ -255,6 +255,9 @@ To set this up, execute
 which provides access to the service interface, and ensures the daemon will
 start after boot.
 
+--
+FreedBSD
+
 Apart from the standard commands of stop, start, restart and status understood
 by the service command, the radclock script supports:
 
@@ -262,6 +265,15 @@ by the service command, the radclock script supports:
 	service radclock rotate		# send a USR1 signal to close the logfile (see below)
 The status command will display a line for each daemon thread.
 
+---
+Linux
+
+Here systemctl is used instead of service (some support still exists for the sysV interface).
+The supported commands are the same with the exception of rotate, with syntax :
+
+	systemctl {status,start,stop,restart,reload} radclock 
+	
+	
 
 #### Configuration file
 When running as a daemon, radclock uses the configuration file

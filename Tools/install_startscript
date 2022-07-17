@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 if [ `id -u` -ne 0 ]; then
-        echo "Sorry `id -un`, this must be run as root"
-        exit 0
+	echo "Sorry `id -un`, this must be run as root"
+	exit 0
 fi
 
 OS=`uname -s`
@@ -32,7 +32,7 @@ echo "Installing $Scriptdir/$Name for $OS as $rcDir/$NewName"
 cp $Scriptdir/$Name $rcDir/$NewName
 ls -l  $rcDir/$NewName
 
-# Prompt the system initialization `service' system to recognise the new script
+# Prompt the initialization `service' system to recognise the new script
 case $OS in
 	FreeBSD)
 		service $NewName status;;
@@ -43,5 +43,3 @@ case $OS in
 		systemctl enable $NewName
 		echo "RADclock service is enabled and will start on next boot.";;
 esac
-
-
