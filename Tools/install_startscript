@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 
 if [ `id -u` -ne 0 ]; then
-        echo "Sorry `id -un`, this must be run as root"
-        exit 0
+	echo "Sorry `id -un`, this must be run as root"
+	exit 0
 fi
 
 OS=`uname -s`
@@ -13,30 +13,33 @@ Name="daemon_startup_script";
 case $OS in
 	FreeBSD)
 		Scriptdir=FreeBSD;
-		rcDir="/etc/rc.d";;
+		rcDir="/etc/rc.d"
+		NewName=radclock;;
 	Linux)
 		Scriptdir=debian
 		distro=`grep ID /etc/*-release  |tail -1 |cut -d'='  -f2`
 		if [ $distro != "debian" ]; then
 			echo "The startup script is written for debian, your distro is $distro, trying it anyway."
 		fi
-		rcDir="/etc/init.d";;
+		rcDir="/etc/systemd/system"
+		NewName=radclock.service;;
 	*)
 		echo "This script only supports FreeBSD and Debian Linux currently, you are on $OS! sorry.";
 		exit;;
 esac
 
-echo "Installing $Scriptdir/$Name for $OS as $rcDir/radclock"
-cp $Scriptdir/$Name $rcDir/radclock
-ls -l  $rcDir/radclock
+echo "Installing $Scriptdir/$Name for $OS as $rcDir/$NewName"
+cp $Scriptdir/$Name $rcDir/$NewName
+ls -l  $rcDir/$NewName
 
-# Prompt the system initialization `service' system to recognise the new script
+# Prompt the initialization `service' system to recognise the new script
 case $OS in
 	FreeBSD)
-		;;
+		service $NewName status;;
 	Linux)
+		# reload the service unit files
 		systemctl daemon-reload
-		#service --status-all > \dev\null;;
+		# enable the service to start on the next boot
+		systemctl enable $NewName
+		echo "RADclock service is enabled and will start on next boot.";;
 esac
-
-service radclock status		# test it
