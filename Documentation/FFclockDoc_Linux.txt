@@ -1,10 +1,10 @@
 /*
- * Copyright (C) 2021, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2021 The RADclock Project (see AUTHORS file)
  *
  * This file is part of the radclock program.
  */
 
-FFclock Linux V4 documentation.
+FFclock Linux documentation.
 Written by Darryl Veitch
 ================================
 
@@ -529,7 +529,6 @@ earlier.
 
 
 
-
 ==============================================================
 FF algo data kernel <--> daemon translation
 ======================================
@@ -539,8 +538,6 @@ The same fftimehands structure is used as in FreeBSD, see the other docs for det
 ==============================================================
 Setting of FFclock data
 ======================================
-
-
 
 
 ==============================================================
@@ -554,12 +551,9 @@ Timecounter structure and hardware counters
 This section describes the existing mechanism: no changes were made.
 
 
-
 ==============================================================
 Timecounter (tc) Mechanism:  Changing Timecounters
 ======================================
-
-
 
 
 ==============================================================

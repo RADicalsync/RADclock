@@ -1,4 +1,4 @@
-Copyright (C) 2022, Darryl Veitch <darryl.veitch@uts.edu.au>
+Copyright (C) 2022 The RADclock Project (see AUTHORS file)
 This file is part of the RADclock program.
 
 Overview
@@ -33,7 +33,7 @@ directory is mounted in the VM, so that access to the repo, and workflow scripts
 immediate. Another advantage is any VM snapshots will benefit from the latest generation of
 scripts whenever reloaded. 
 On the whole, the scripts are FreeBSD/Linux `universal', ie they detect the OS and react 
-accordingly.
+accordingly.  Some of the scripts have command line options that can be useful.
 
 ### Initial setup and testing
 setupVM                    setup everything from scratch, including creating and seeding useful 
@@ -43,7 +43,8 @@ collect_FFfiles_Linux  get the files to be FF-patched from the linux source tree
 setupRAD                   configure RAD build scripts for the first time, or rebuild them if needed
 
 ### Setup a new FF kernel
-update_workingFFsource   grab the latest from the repo (autodetects correct version)
+update_workingFFsource   grab the version you ask for from the repo, or an exact match to,
+                                           the running system, or if not grab the latest.
 move_into_srctree              copies those files into the sourcetree
 quick_FF_build                   compile and install (option for original unpatched kernel)
 

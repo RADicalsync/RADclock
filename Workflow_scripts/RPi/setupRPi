@@ -42,7 +42,7 @@ else
 fi
 
 # Prepare microSD with base image
-diskutil  unmountDisk /dev/disk3
+diskutil  unmountDisk /dev/disk3		# ensure the correct diskname for your system!
 sudo dd   if=$BaseImage   of=/dev/rdisk3  bs=32m 
 
 # Enable one-time headless access over ssh

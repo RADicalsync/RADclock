@@ -1,10 +1,10 @@
 /*
- * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2019 The RADclock Project (see AUTHORS file)
  *
  * This file is part of the radclock program.
  */
 
-FFclock FreeBSD V4 documentation.
+FFclock FreeBSD documentation.
 Written by Darryl Veitch
 ================================
 

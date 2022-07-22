@@ -7,6 +7,15 @@ fi
 
 Arch=`uname -m`
 OS=`uname -s`
+
+# Pi detection
+OnPi="No"
+if [[ $Arch == "aarch64" && $OS == "Linux" ]]; then
+	echo "I see $OS on $Arch, I infer you are on a Pi."
+	OnPi="Yes"
+fi
+
+# Determine install dir
 Based="$HOME/FFkernel_Work"
 case $OS in
 	FreeBSD)
@@ -18,6 +27,7 @@ case $OS in
 		SUBLEVEL=`grep "SUBLEVEL =" $Installd/Makefile | cut -d' ' -f3`;;  # SUBLEVEL of target
 esac
 
+# Determine source dir
 if [ "$1" == "-o" ]; then
 	FFsource=$Based/OriginalSource_$OSv	# when preparing a patch: move Original back in
 	echo "Reinstating Original kernel files into $Installd (for arch $Arch)" 
@@ -25,6 +35,7 @@ else
 	FFsource=$Based/FFclock_working		# default: install latest version
 	echo "Installing Current kernel files into $Installd (for arch $Arch)" 
 fi
+
 
 ## Copy into source tree
 echo "  Copying from  $FFsource  -->  source tree rooted at $Installd"
@@ -79,9 +90,11 @@ if [ $OS == "Linux" ]; then
 #	$CMD $FFsource/vclock_gettime.c	$Installd/arch/x86/entry/vdso/
 #	$CMD $FFsource/vdso*					$Installd/arch/x86/entry/vdso/
 #	$CMD $FFsource/vdso32.lds.S		$Installd/arch/x86/entry/vdso/vdso32/
-# AMD specific
-	$CMD $FFsource/syscall_{32,64}.tbl	$Installd/arch/x86/entry/syscalls/
-# ARM specific
-#	$CMD $FFsource/unistd.h				$Installd/include/uapi/asm-generic/
-
+	if [ $OnPi == "No" ]; then
+		# AMD specific
+		$CMD $FFsource/syscall_{32,64}.tbl	$Installd/arch/x86/entry/syscalls/
+	else
+		# ARM specific
+		$CMD $FFsource/unistd.h				$Installd/include/uapi/asm-generic/
+	fi
 fi

@@ -1,9 +1,18 @@
+/* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * FFclock data support:		The code is chiefly to define
+ *		struct ffclock_estimate, and to define the timestamping mode BPF_T_
+ *		codes ported from the FreeBSD FFclock code.
+ *
+ * Written by Darryl Veitch <darryl.veitch@uts.edu.au>
+ */
+
 #ifndef __LINUX_FFCLOCK_H
 #define __LINUX_FFCLOCK_H
 
 #include <linux/types.h>
 
-typedef u64 ffcounter;	// perhaps put in a _ffcounter.h
+typedef u64 ffcounter;
 
 
 /* The following code block provides needed support for the bintime format.
@@ -71,7 +80,7 @@ bintime_mul(struct bintime *_bt, u_int _x)
         (((a)->sec == (b)->sec) ?                                       \
             ((a)->frac cmp (b)->frac) :                                 \
             ((a)->sec cmp (b)->sec))
-
+/* --------------------------------------------------------------------------*/
 
 /*
  * Feed-forward clock estimate

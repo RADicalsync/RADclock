@@ -2,35 +2,49 @@
 ## RADclock authors and contributors
 ##
 
-Conception and Algorithm design
+The RADclock algorithm and project was launched by Darryl Veitch in 2003.
+It consists of a research effort into network timekeeping and associated
+software. For completeness, all contributors in the broad sense are given here.
+This repo is focussed on the C codebase and associated support for the running
+of the RADclock daemon live in an operating system with compatible FFclock
+components.
 
-Darryl Veitch         <darryl.veitch@uts.edu.au>
 
-Core contributors to the RADclock software:
+Contributors to the RADclock Project or codebase, UTS (2015-)
+[ rough chronological order, most recent first ]
 
-Darryl Veitch         <darryl.veitch@uts.edu.au>
-Julien Ridoux         <julien@synclab.org>
-
-Past contributors to the RADclock software (rough chronological order):
-
-Rohan Saha Turai
-Jason Traish
-Peter Membrey
+Rohan Saha Turai      <rohansahaturai@gmail.com>
+Jason Traish          <narsue@hotmail.com>
+Peter Membrey         <peter@membrey.hk>
 Yi Cao                <yc833@uowmail.edu.au>
+Darryl Veitch         <darryl.veitch@uts.edu.au>
+
+
+Contributors to the RADclock Project or codebase, UniMelb (2006-2015)
+[ rough chronological order, most recent first ]
+
+Kanthaiah Vijayalayan
 Matt Davis
-Timothy Broomhead
+Anne-Cecile Orgerie
 Benjamin Villain      <benjamin.villain@gmail.com>
 Laurence Cremean
 Cameron Chambers      <camchambers@gmail.com>
+Timothy Broomhead     <timothybroomhead@gmail.com>
 Thomas Young          <tfyoung@gmail.com>
+Julien Ridoux         <julien@synclab.org>    [main codebase author 2006-2012]
+Darryl Veitch
+
+
+Early contributors to the RADclock project, prior to current codebase (2003-2006)
+[ rough chronological order, most recent first ]
+
+Tao Ye
 Julien Ridoux
+Bartek Wydrowski
 Erik Corell
 Philip Saxholm
 Mark Santcroos
+Satish Babu
 Michael Dwyer
+Attila Pasztor
 Darryl Veitch
-
-Contributors to early kernel-side ideas and design:
-
-Bartek Wydrowski
-Tao Ye

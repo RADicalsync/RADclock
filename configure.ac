@@ -1,7 +1,5 @@
 dnl
-dnl Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
-dnl Copyright (C) 2013-2021, Darryl Veitch <darryl.veitch@uts.edu.au>
-dnl All rights reserved.
+dnl Copyright (C) 2006 The RADclock Project (see AUTHORS file)
 dnl
 dnl Redistribution and use in source and binary forms, with or without
 dnl modification, are permitted provided that the following conditions are met:

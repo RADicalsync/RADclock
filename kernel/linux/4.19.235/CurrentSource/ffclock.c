@@ -1,28 +1,15 @@
-/*
- * FFclock data
+/* SPDX-License-Identifier: BSD-2-Clause
+ *
+ * FFclock data support:		Support for the kernel form (ffclock_estimate) of
+ *		the FeedForward clock daemon state data used as the synchronization
+ *		update input to the FFclock code defined in timekeeping.c .
+ *
+ * The code is chiefly to support netlink based communication with the daemon
+ * to allow get/set of FFdata, and sysfs support.
  *
  * Written by Thomas Young <tfyoung@orcon.net.nz>
  * Modified by Julien Ridoux <julien@synclab.org>
- *
- * Store FFclock data in the kernel for the purpose of absolute time
- * timestamping in timeval format. Requires updated synchronization data
- * and "fixed point" data to compute  (vcount * phat + Ca).
- *
- * Use a generic netlink socket to allow user space and kernel to access it.
- * In future other access methods could also be made available such as procfs
- *
- * FFclock data is protected by the ffclock_mtx rw mutex. If global
- * data ever needs to be read from the interupt context, then this will have
- * to change.
- *
- * FFclock fixedpoint data is protected by the radclock_fixedpoint_mtx rw
- * mutex.
- *
- * Since using an old version isn't a complete disaster, it wouldn't be a bad
- * idea to use a wheel and to use lighter locking.
- *
- * Things needed:
- *	Bounds checking on input
+ * Modified by Darryl Veitch <darryl.veitch@uts.edu.au>
  */
 
 #include <linux/bootmem.h>

@@ -1,4 +1,4 @@
-Copyright (C) 2021, Darryl Veitch <darryl.veitch@uts.edu.au>
+Copyright (C) 2020 The RADclock Project (see AUTHORS file)
 This file is part of the RADclock program.
 
 RADclock and FFclock documentation.  
@@ -64,7 +64,10 @@ This guide has the following sections and subsections
 **Introduction to RADclock**  
 **Installation FreeBSD**  
 #### -- FFCLOCK kernel
-	Patching, Compiling, Installing  
+	Patching, Compiling, Installing (FreeBSD)
+	Patching, Compiling, Installing (Linux amd64
+	Patching, Compiling, Installing (Linux arm64, Raspberry Pi)
+	Building with Earthly
 	TSC versus TSC-low   
 	Bypass mode
 #### -- RADclock daemon  
@@ -129,7 +132,7 @@ The kernel patch is provided with the radclock source tarball.
 
 ### FFCLOCK kernel
 
-#### Patching, Compiling, Installing
+#### Patching, Compiling, Installing  (FreeBSD)
 Imagine you have downloaded radclock-0.4.0.tar.gz into /tmp .
 
 	cd /tmp
@@ -171,6 +174,35 @@ the new one fails:
 	sudo make installkernel KERNCONF=FFCLOCK KODIR=/boot/FFtest
 	nextboot -k FFtest   # try to boot /boot/FFtest, reverts to /boot/kernel if fails
 
+#### Patching, Compiling, Installing  (Linux amd64)
+For Linux the instructions as above mainly apply. However patches are not provided,
+so we recommend the use of the scripts  Tools/{update_FFkernelsource,compile_FFkernel},
+which detect the OS and work for each of FreeBSD and Linux.
+To use these a compatible linux version must already have been installed.
+If needed use :
+
+	apt install linux-source-(version)
+	cd /usr/src
+	make localmodconfig
+
+#### Patching, Compiling, Installing  (Linux arm64, Raspberry Pi)
+The scripts above also work in the RPi case. The available FFclock is essentially
+the same as for amd64 for 64bit kernels. It has been tested on a RPi 4B.
+Compilation however on the Pi itself is slow. Instead Earthly can be used to
+generate .deb package files.  Though not in the tarball, in the repo scripts are
+provided to support the headless installation of such packages on a Pi, and to
+get radclock running.
+
+#### Building with Earthly
+Earthly is a containerised build system that leverages Docker to create repeatable and
+isolated builds, based on targets defined in "Earthfile".
+For example, assuming Earthly is installed (and docker running), you can build the
+amd64 Debian packages for a FF-capable kernel needed by RADclock with :
+```
+earthly +deb-kernel-build-patched
+```
+from the main repo directly. Targets are also available to compile for the Pi, and
+for the radclock daemon. More detail is given in RADclock_guide.txt .
 
 
 #### TSC versus TSC-low		[ advanced topic, can be skipped! ]
@@ -309,7 +341,7 @@ event by sending a SIGUSR1 signal:
 	pkill -USR1 radclock
 
 ---
-FreedBSD
+FreeBSD
 
 To exploit this for automatic log file rotation, add the following line to /etc/newsyslog.conf
 
@@ -322,13 +354,6 @@ Here 30 is the value of SIGUSR1 on FreeBSD. To check the value on your system, u
 Linux
 Put in a dedicated entry into /etc/logrotate.conf
 
-
-
-## RADclock installation Linux & Raspian
-
-These distributions are out of date and so will not be detailed here.
-Watch this space.  They will benefit immediately from the current version of
-RADclock on the daemon side.
 
 
 

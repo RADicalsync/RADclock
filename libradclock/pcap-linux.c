@@ -1,8 +1,5 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2006-2007, Thomas Young <tfyoung@gmail.com>
- * Copyright (C) 2013-2021, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:

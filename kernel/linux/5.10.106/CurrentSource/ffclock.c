@@ -1,16 +1,15 @@
-/*
- * FFclock data support
+/* SPDX-License-Identifier: BSD-2-Clause
  *
- * Written by Thomas Young, modified by Julien Ridoux.
- * Rewritten and maintained by Darryl Veitch
+ * FFclock data support:		Support for the kernel form (ffclock_estimate) of
+ *		the FeedForward clock daemon state data used as the synchronization
+ *		update input to the FFclock code defined in timekeeping.c .
  *
- * Support for the kernel form (FFdata) of the FeedForward clock daemon state
- * data (RADdata) used as the synchronization input to the FFclock code defined
- * in timekeeping.c .
+ * The code is chiefly to support netlink based communication with the daemon
+ * to allow get/set of FFdata, and sysfs support.
  *
- * The code is chiefly support for netlink based communication with the
- * daemon to allow get/set of FFdata, and sysfs support.
- *
+ * Written by Thomas Young <tfyoung@orcon.net.nz>
+ * Modified by Julien Ridoux <julien@synclab.org>
+ * Modified by Darryl Veitch <darryl.veitch@uts.edu.au>
  */
 
 #include <linux/fcntl.h>
@@ -42,7 +41,6 @@ static struct nla_policy ffclock_policy[FFCLOCK_ATTR_MAX +1] __read_mostly = {
 static struct genl_family ffclock_genl = {
 	.name = FFCLOCK_NAME,
 	.version = 0x1,
-//	.hdrsize = 0,
 	.maxattr = FFCLOCK_ATTR_MAX,
 	.policy = ffclock_policy,
 	.module = THIS_MODULE,

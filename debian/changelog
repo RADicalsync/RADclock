@@ -1,7 +1,0 @@
-radclock (_RADCLOCK_VERSION_) unstable; urgency=low
-
-  * Initial package 
-  * See the upstream changelog for details
-
- -- Julien Ridoux <julien@synclab.org>  Wed, 18 Jul 2007 14:09:47 +1000
-

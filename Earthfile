@@ -1,3 +1,5 @@
+# Copyright (C) 2021 The RADclock Project (see AUTHORS file)
+#
 # Earthfile to build the RADclock app and library, and the FFkernel on both
 # amd64 and arm64 for the Raspberry Pi (RPi).
 

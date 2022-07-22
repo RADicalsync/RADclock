@@ -1,44 +1,81 @@
 #!/bin/bash
+
+# Take an optional parameter specifying the full version you want
+#   if absent, will try to find a version which exactly matches running system
+#   if that fails:
+#       FreeBSD:  gives up
+#       Linux:    tries to find the closest match, gives up if fails
+
 echo Updating working FF Source
 
-OS=`uname -s`
+# Target dir
 Based="$HOME/FFkernel_Work"
+FFtarget="$Based/FFclock_working"
+# Source dir
 MountPoint="V4_mountedfrom_Icaro"
-FFtarget=$Based/FFclock_working
+Repo="$Based/$MountPoint/RADclock_mycurrent"
+KernDir="$Repo/kernel"
+
+## Select the source directory FFsource from the repo
+#FFsource=`findSourceDir $KernDir | tail -1`   # if wrote as a fn, rtn via final echo
+
+## Select the source directory FFsource from the repo
+OS=`uname -s`
+
 case $OS in
+
 	FreeBSD)
-		OSv=`uname -r | cut -d'-' -f1`
-		FFsource=$Based/$MountPoint/RADclock_mycurrent/kernel/freebsd/FreeBSD-$OSv/CurrentSource;;
+		if [[ "$1" != "" ]]; then
+			OSv=$1
+		else
+			OSv=`uname -r | cut -d'-' -f1`
+		fi
+		FFsource=$KernDir/freebsd/FreeBSD-$OSv/CurrentSource
+
+		if [[ ! -e $FFsource ]]; then
+			echo "$FFsource dir not available in repo"
+			exit
+		fi;;
+
 	Linux)
-		OSfullv=`uname -r` # VERSION.PATCHLEVEL.SUBLEVEL current running
+		OSfullv=`uname -r`			# VERSION.PATCHLEVEL.SUBLEVEL current running
 		OSv=`echo $OSfullv | cut -d'.' -f1-2`  	 # VERSION.PATCHLEVEL = point release
 		#OSfullv=$OSv".0"		# did this before changed dir names
-		if [[ -e $Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSfullv ]]; then
-			$OSusing=$OSfullv
-		else
-			if [[ "$1" == "" ]]; then
-				echo "Don't know what you what, $OSfullv dir not available in repo, try specifying on CMDline"
+		if [[ "$1" != "" && "$1" != "-s" ]]; then
+			OSusing=$1
+			if [[ ! -e $KernDir/linux/$OSusing ]]; then
+				echo "Version $OSusing does not exist in the repo"
 				exit
+			fi
+		else
+			if [[ -e $KernDir/linux/$OSfullv ]]; then
+				OSusing=$OSfullv		# Found exact match to current system, will use
 			else
-				OSusing=$1
-				if [[ ! -e $Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSusing ]]; then
-					echo "Version $OSusing does not exist in the repo"
+				echo -n "Couldn't find running version $OSfullv directory in repo"
+				OSusing=`ls $KernDir/linux/ |grep "$OSv" |tail -1 |cut -d'.' -f1-3 |tr -d '/'`
+				if [[ ! -e $KernDir/linux/$OSusing ]]; then
+					echo
+					echo -n "Looked for a close $OSv match but didn't find one - "
+					echo "don't know what you what, giving up"
 					exit
+				else
+					echo " - trying $OSusing instead"
 				fi
 			fi
 		fi
-		FFsource=$Based/$MountPoint/RADclock_mycurrent/kernel/linux/$OSusing/CurrentSource
+		FFsource=$KernDir/linux/$OSusing/CurrentSource
 
 		# Optionally replace entire source tree before patching 
 		if [[ "$1" == "-s" ]]; then
 			#Kname=$OSv.235				# should read desired SUBLEVEL from command line option 
 			Installd="/usr/src/linux-source-$OSv"		# dirname always VERSION.PATCHLEVEL, regardless of SUBLEVEL
-			FullSrcDir="$Based/$MountPoint/RADclock_mycurrent/artifacts/kernelsourcefiles/deb-$OSusing/linux-source"
+			FullSrcDir="$Repo/artifacts/kernelsourcefiles/deb-$OSusing/linux-source"
 			echo " **before patching, Copying full source tree at $FullSrcDir to $Installd -- could take a while"
 			scp -r $FullSrcDir $Installd 
 			ls -ltr /usr/src |tail -3
 		fi;;
 esac
+
 
 echo "  Differences with current repo version before the update :"
 echo " ----------------------------------------------------------------------------------"
@@ -46,14 +83,17 @@ diff $FFsource  $FFtarget	| grep -v Only
 echo " ----------------------------------------------------------------------------------"
 echo
 
-# Copy over All files present:  
-#   new files:  futureproof,  must modify  move_into_srctree to `activate'
+
+## Copy over All files present from the source directory to the local working copy
+#   new files:  futureproof,  must modify move_into_srctree to `activate' any changes
 #   old files:  must be removed manually on VM, or made impotent by modifying  move_into_srctree
 echo "  rSyncing from  $FFsource  -->  "
 echo "                 $FFtarget"
 rsync  -aic $FFsource/*	$FFtarget  --delete
 #rsync $1  -aic $FFsource/{kern_{ffclock,tc}.c,subr_rtc.c,timeffc.h,bpf.{c,h},_ffcounter.h,if_*.c}	$FFtarget
 
+
+## Copy over some include header files
 case $OS in
 	FreeBSD)
 		Included="/usr/include"

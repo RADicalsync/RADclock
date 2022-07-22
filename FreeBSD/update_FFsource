@@ -1,11 +1,13 @@
 #!/usr/local/bin/bash
 
-Arch=`uname -p`
+## Now superceded by the OS-generic Tools/update_FFkernelsource script
+
+Arch=`uname -m`
 OS=`uname -s`
 OSv=`uname -r | cut -d'-' -f1`
 Installd="/usr/src"
 
-FFsource=kernel-patches/freebsd/$OS-$OSv/CurrentSource  # reference versions now in repo
+FFsource=kernel-source/freebsd/$OS-$OSv/CurrentSource  # reference versions now in repo
 
 echo "You are on $OS-$OSv, updating corresponding kernel files into $Installd (for arch $Arch)"
 

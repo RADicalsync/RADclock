@@ -2,6 +2,9 @@
 ## RADCLOCK NEWS
 ##
 
-After being dormant for a number of years, RADclock is back with V0.4,
-incorporating many bug fixes and new features, building on and fully
-compatible with improved and corrected FFclock kernel support in FreeBSD.
+After being reactivated in recent years in V0.4 with completed and enhanced
+FreeBSD FFclock support, RADclock has now jumped ahead to V0.8, covering a
+number of significant advances including the move to mRADclock (multiple
+servers), and a completely new FFclock implementation for modern Linux including
+for the Raspberry Pi, together with an Earthly based build system.
+See the RAD_0.8 tag commit and ChangeLog for more details.

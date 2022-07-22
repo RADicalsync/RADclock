@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2011 Julien Ridoux and Darryl Veitch
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
  *
  * This file is part of the radclock program.
  *
