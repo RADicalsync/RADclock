@@ -5,14 +5,13 @@
  * Copyright (c) 1982, 1990, 1993
  *	The Regents of the University of California.
  * Copyright (c) 2011 The FreeBSD Foundation
- * All rights reserved.
  *
  * This code is derived from software contributed to Berkeley by
  * the Systems Programming Group of the University of Utah Computer
  * Science Department.
  *
- * Portions of this software were developed by Julien Ridoux at the University
- * of Melbourne under sponsorship from the FreeBSD Foundation.
+ * Portions of this software were developed by Julien Ridoux and Darryl Veitch
+ * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,7 +54,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/12.3/sys/kern/subr_rtc.c 367699 2020-11-14 20:45:12Z kevans $");
+__FBSDID("$FreeBSD: releng/12.1/sys/kern/subr_rtc.c 338435 2018-09-02 20:17:51Z kib $");
 
 #include "opt_ffclock.h"
 
@@ -164,7 +163,7 @@ clock_dbgprint_hdr(device_t dev, int rw)
 	getnanotime(&now);
 	device_printf(dev, "%s at ", (rw & CLOCK_DBG_READ) ? "read " : "write");
 	clock_print_ts(&now, 9);
-	printf(": ");
+	printf(": "); 
 }
 
 void
@@ -241,7 +240,7 @@ clock_register_flags(device_t clockdev, long resolution, int flags)
 	}
 	sx_xunlock(&rtc_list_lock);
 
-	device_printf(clockdev,
+	device_printf(clockdev, 
 	    "registered as a time-of-day clock, resolution %d.%6.6ds\n",
 	    newrtc->resolution / 1000000, newrtc->resolution % 1000000);
 }
@@ -360,12 +359,9 @@ inittodr(time_t base)
 		ts.tv_nsec = 0;
 	}
 
-	if (ts.tv_sec >= 0) {
+	if (ts.tv_sec >= 0)
 		tc_setclock(&ts);
-#ifdef FFCLOCK
-		ffclock_reset_clock(&ts);
-#endif
-	}
+
 }
 
 /*
