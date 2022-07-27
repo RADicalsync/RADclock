@@ -30,7 +30,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/12.1/sys/kern/kern_ffclock.c 326271 2017-11-27 15:20:12Z pfg $");
+__FBSDID("$FreeBSD: releng/12.3/sys/kern/kern_ffclock.c 326271 2017-11-27 15:20:12Z pfg $");
 
 #include "opt_ffclock.h"
 

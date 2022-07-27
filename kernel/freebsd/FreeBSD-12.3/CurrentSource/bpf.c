@@ -37,7 +37,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/12.1/sys/net/bpf.c 345794 2019-04-02 09:31:38Z ae $");
+__FBSDID("$FreeBSD: releng/12.3/sys/net/bpf.c 370264 2021-08-02 15:06:16Z kp $");
 
 #include "opt_bpf.h"
 #include "opt_ddb.h"
@@ -76,6 +76,7 @@ __FBSDID("$FreeBSD: releng/12.1/sys/net/bpf.c 345794 2019-04-02 09:31:38Z ae $")
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_vlan_var.h>
 #include <net/if_dl.h>
 #include <net/bpf.h>
 #include <net/bpf_buffer.h>
@@ -125,6 +126,7 @@ CTASSERT(offsetof(struct bpf_if, bif_ext) == 0);
 #if defined(DEV_BPF) || defined(NETGRAPH_BPF)
 
 #define PRINET  26			/* interruptible */
+#define BPF_PRIO_MAX	7
 
 #define	SIZEOF_BPF_HDR(type)	\
     (offsetof(type, bh_hdrlen) + sizeof(((type *)0)->bh_hdrlen))
@@ -927,6 +929,9 @@ bpfopen(struct cdev *dev, int flags, int fmt, struct thread *td)
 	callout_init_mtx(&d->bd_callout, &d->bd_lock, 0);
 	knlist_init_mtx(&d->bd_sel.si_note, &d->bd_lock);
 
+	/* Disable VLAN pcp tagging. */
+	d->bd_pcp = 0;
+
 	return (0);
 }
 
@@ -1194,6 +1199,9 @@ bpfwrite(struct cdev *dev, struct uio *uio, int ioflag)
 		ro.ro_flags = RT_HAS_HEADER;
 	}
 
+	if (d->bd_pcp != 0)
+		vlan_set_pcp(m, d->bd_pcp);
+
 	error = (*ifp->if_output)(ifp, m, &dst, &ro);
 	if (error)
 		counter_u64_add(d->bd_wdcount, 1);
@@ -1273,6 +1281,7 @@ reset_d(struct bpf_d *d)
  *  BIOCROTZBUF		Force rotation of zero-copy buffer
  *  BIOCSETBUFMODE	Set buffer mode.
  *  BIOCGETBUFMODE	Get current buffer mode.
+ *  BIOCSETVLANPCP	Set VLAN PCP tag.
  */
 /* ARGSUSED */
 static	int
@@ -1824,6 +1833,19 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	case BIOCROTZBUF:
 		error = bpf_ioctl_rotzbuf(td, d, (struct bpf_zbuf *)addr);
 		break;
+
+	case BIOCSETVLANPCP:
+		{
+			u_int pcp;
+
+			pcp = *(u_int *)addr;
+			if (pcp > BPF_PRIO_MAX || pcp < 0) {
+				error = EINVAL;
+				break;
+			}
+			d->bd_pcp = pcp;
+			break;
+		}
 	}
 	CURVNET_RESTORE();
 	return (error);
