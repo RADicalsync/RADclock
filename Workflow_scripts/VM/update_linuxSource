@@ -1,4 +1,5 @@
 #!/bin/bash
+#
 # This script regenerates a kernel config file, and source if needed.  
 # Typically needed because of a bump in SUBLEVEL. 
 # Can be run from anywhere.

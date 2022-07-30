@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# #!/bin/bash
 
 # Take an optional parameter specifying the full version you want
 #   if absent, will try to find a version which exactly matches running system
@@ -86,10 +87,13 @@ echo
 
 ## Copy over All files present from the source directory to the local working copy
 #   new files:  futureproof,  must modify move_into_srctree to `activate' any changes
-#   old files:  must be removed manually on VM, or made impotent by modifying  move_into_srctree
+#   old files:  must be removed manually on VM, or made impotent by modifying  move_into_srctree,
+#     since --delete doesn't work on files send individually, only those in entire directories.
+#     To exploit --delete would have to transfer "CurrentSource" as a dir into "FFtarget" and modify
+#     move_into_srctree  to match.
 echo "  rSyncing from  $FFsource  -->  "
 echo "                 $FFtarget"
-rsync  -aic $FFsource/*	$FFtarget  --delete
+rsync  -aic $FFsource/*	$FFtarget
 #rsync $1  -aic $FFsource/{kern_{ffclock,tc}.c,subr_rtc.c,timeffc.h,bpf.{c,h},_ffcounter.h,if_*.c}	$FFtarget
 
 

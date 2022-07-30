@@ -1,5 +1,5 @@
-#!/bin/bash
-# #!/usr/bin/env bash
+#!/usr/bin/env bash
+# #!/bin/bash
 
 ## Options
 # use $1 $2 to pass up to two options, most important are -n for safe testing, --delete to clean

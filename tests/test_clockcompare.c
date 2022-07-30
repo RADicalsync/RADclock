@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * test_FFclocks -i ens33 -o test.out  -v	-f icmp
  *
  * This file is part of the radclock program.
  *
