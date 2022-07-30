@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# #!/bin/bash
 
 ## Creates a tree-form of the Current FF code, and creates a patch against the Original tree code (ie Original --> Current).
 ## With the -c option, creates a patch against the source currently in the tree [probably an older patched version

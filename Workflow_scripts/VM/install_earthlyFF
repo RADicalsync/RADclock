@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# #!/bin/bash
 
 # This script takes deb packages for a new kernel and installs them.
 # Currently packages built by  earthly +{deb,arm}-kernel-build-patched  in the RADclock repo.

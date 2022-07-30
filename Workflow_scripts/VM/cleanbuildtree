@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# #!/bin/bash
 
 Based="$HOME/FFkernel_Work"
 RADsource=$Based/RADclock_working

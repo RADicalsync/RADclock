@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# #!/bin/bash
 
 Based="$HOME/FFkernel_Work"
 RADsource=$Based/V4_mountedfrom_Icaro/RADclock_mycurrent

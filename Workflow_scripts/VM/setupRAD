@@ -1,5 +1,5 @@
-#!/bin/bash
-# #!/usr/bin/env bash
+#!/usr/bin/env bash
+# #!/bin/bash
 
 # Pi detection 
 Arch=`uname -m`
