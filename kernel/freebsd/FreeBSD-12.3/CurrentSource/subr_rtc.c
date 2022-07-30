@@ -54,7 +54,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/12.1/sys/kern/subr_rtc.c 338435 2018-09-02 20:17:51Z kib $");
+__FBSDID("$FreeBSD: releng/12.3/sys/kern/subr_rtc.c 367699 2020-11-14 20:45:12Z kevans $");
 
 #include "opt_ffclock.h"
 
@@ -163,7 +163,7 @@ clock_dbgprint_hdr(device_t dev, int rw)
 	getnanotime(&now);
 	device_printf(dev, "%s at ", (rw & CLOCK_DBG_READ) ? "read " : "write");
 	clock_print_ts(&now, 9);
-	printf(": "); 
+	printf(": ");
 }
 
 void
@@ -240,7 +240,7 @@ clock_register_flags(device_t clockdev, long resolution, int flags)
 	}
 	sx_xunlock(&rtc_list_lock);
 
-	device_printf(clockdev, 
+	device_printf(clockdev,
 	    "registered as a time-of-day clock, resolution %d.%6.6ds\n",
 	    newrtc->resolution / 1000000, newrtc->resolution % 1000000);
 }

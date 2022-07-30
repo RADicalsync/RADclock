@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
+.\" $FreeBSD: releng/12.3/share/man/man4/ffclock.4 294116 2016-01-16 00:43:10Z imp $
 .\"
 .Dd October 24, 2020
 .Dt FFCLOCK 4
@@ -89,7 +89,7 @@ in order to change the default active system clock families.
 .It Va kern.sysclock.available
 Lists the names of available system clocks
 .Po
-read only
+read-only
 .Pc .
 .El
 .Pp
@@ -107,7 +107,7 @@ sysctl tree which provides the following variables:
 .It Va kern.sysclock.ffclock.version
 Feed-forward clock kernel version
 .Po
-read only
+read-only
 .Pc .
 .It Va kern.sysclock.ffclock.ffcounter_bypass
 Use direct reads of the chosen hardware timecounter when timestamping for
@@ -122,6 +122,7 @@ guaranteed to align.
 .Xr clock_gettime 2 ,
 .Xr ffclock 2 ,
 .Xr bpf 4 ,
+.Xr timecounters 4 ,
 .Xr sysctl 8
 .Sh HISTORY
 Feed-forward clock support first appeared in
@@ -129,9 +130,9 @@ Feed-forward clock support first appeared in
 .Sh AUTHORS
 .An -nosplit
 The feed-forward clock support was written by
-.An Julien Ridoux Aq jridoux@unimelb.edu.au
+.An Julien Ridoux Aq Mt jridoux@unimelb.edu.au
 in collaboration with
-.An Darryl Veitch Aq dveitch@unimelb.edu.au
+.An Darryl Veitch Aq Mt dveitch@unimelb.edu.au
 at the University of Melbourne under sponsorship from the FreeBSD Foundation.
 It was later revised and extended by Darryl Veitch at the University of
 Technology Sydney.
@@ -139,6 +140,6 @@ Technology Sydney.
 This manual page was written by
 .An Julien Ridoux
 and
-.An Lawrence Stewart Aq lstewart@FreeBSD.org ,
+.An Lawrence Stewart Aq Mt lstewart@FreeBSD.org ,
 and updated by
-.An Darryl Veitch Aq darryl.veitch@uts.edu.au .
+.An Darryl Veitch Aq Mt darryl.veitch@uts.edu.au .

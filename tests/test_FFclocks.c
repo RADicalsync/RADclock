@@ -251,7 +251,7 @@ main (int argc, char *argv[])
 
 	radclock_register_pcap(clock, pcap_handle);
 	
-	/* tsmode is typically set by use of the pktcap_tsmode presets described in
+	/* The bpf tstype is typically set by use of the pktcap_tsmode presets described in
 	 * radclock.h   The classic choice is PKTCAP_TSMODE_FFNATIVECLOCK, which
 	 * uses the native FFclock.  This is the normal radclock, which is the most
 	 * accurate, but has small jumps after radlock daemon updates and so is not
@@ -270,6 +270,11 @@ main (int argc, char *argv[])
 	//custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;	// emulated PKTCAP_TSMODE_FFNATIVECLOCK
 	//custom = BPF_T_NANOTIME  | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // same but upping to ns resolution
 	pktcap_set_tsmode(clock, pcap_handle, tsmode, custom);
+	// Reuse custom as a tstype argument for  ts_format_to_double  below
+	if (tsmode == PKTCAP_TSMODE_FFNATIVECLOCK)
+		custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;
+
+
 	
 	printf("------------------- Checking what it was finally set to ---------\n");
 	pktcap_get_tsmode(clock, pcap_handle, &tsmode);
@@ -375,8 +380,8 @@ main (int argc, char *argv[])
 //		fprintf(output_fd,  "%ld.%.6d %llu %.9Lf\n", tv.tv_sec, (int)tv.tv_usec,
 //				(long long unsigned)vcount, currtime);
 		/* Repeat with old SMS to see if get a match there if spot a problem, note gen missed at end so u can c it*/
-//		if ( fabs(1e9*frac) > 1 ) {		// 1ns trigger
-		if ( fabs(1e6*frac) > 1 ) {		// 1mus trigger
+		if ( fabs(1e9*frac) > 1 ) {		// 1ns trigger
+//		if ( fabs(1e6*frac) > 1 ) {		// 1mus trigger hack
 			count_err_ns++;
 			read_RADabs_UTC(SMS_DATAold(sms), &vcount, &currtime, PLOCAL_ACTIVE);
 			cdiff = (currtime - tvdouble);

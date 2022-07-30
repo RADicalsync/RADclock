@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/12.3/sys/kern/kern_ffclock.c July 2022 $");
 
 #include "opt_ffclock.h"
 
@@ -104,10 +104,10 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 	if ((flags & FFCLOCK_UPTIME) == FFCLOCK_UPTIME) {
 		if ( bintime_cmp(&ffclock_boottime, bt, >) ) {	// would go -ve !
 			printf("** Uptime going -ve !  bt:  %llu.%lu  ffclock_boottime: %llu.%lu\n",
-					(unsigned long long)bt->sec,
-					(long unsigned)(bt->frac / MUS_AS_BINFRAC),
-					(unsigned long long)ffclock_boottime.sec,
-					(long unsigned)(ffclock_boottime.frac / MUS_AS_BINFRAC) );
+			   (unsigned long long)bt->sec,
+			   (long unsigned)(bt->frac / MUS_AS_BINFRAC),
+			   (unsigned long long)ffclock_boottime.sec,
+			   (long unsigned)(ffclock_boottime.frac / MUS_AS_BINFRAC) );
 			bt->sec = 1;				// ensure Uptime >= 1 second
 			bt->frac = 0;
 		}
@@ -232,7 +232,7 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 	}
 	if (sysclock_active != origclk)
 		printf("Active sysclock changed to %s \n", sysclocks[sysclock_active] );
-	
+
 	return (error);
 }
 
@@ -251,6 +251,7 @@ SYSCTL_INT(_kern_sysclock_ffclock, OID_AUTO, ffcounter_bypass, CTLFLAG_RW,
 void
 ffclock_bintime(struct bintime *bt)
 {
+
 	ffclock_abstime(NULL, bt, NULL, FFCLOCK_LERP | FFCLOCK_LEAPSEC);
 }
 
@@ -275,6 +276,7 @@ ffclock_microtime(struct timeval *tvp)
 void
 ffclock_getbintime(struct bintime *bt)
 {
+
 	ffclock_abstime(NULL, bt, NULL,
 	    FFCLOCK_LERP | FFCLOCK_LEAPSEC | FFCLOCK_FAST);
 }
