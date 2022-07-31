@@ -5,14 +5,13 @@
  * Copyright (c) 1982, 1990, 1993
  *	The Regents of the University of California.
  * Copyright (c) 2011 The FreeBSD Foundation
- * All rights reserved.
  *
  * This code is derived from software contributed to Berkeley by
  * the Systems Programming Group of the University of Utah Computer
  * Science Department.
  *
- * Portions of this software were developed by Julien Ridoux at the University
- * of Melbourne under sponsorship from the FreeBSD Foundation.
+ * Portions of this software were developed by Julien Ridoux and Darryl Veitch
+ * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -55,7 +54,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+__FBSDID("$FreeBSD: releng/12.3/sys/kern/subr_rtc.c 367699 2020-11-14 20:45:12Z kevans $");
 
 #include "opt_ffclock.h"
 
@@ -81,8 +80,8 @@ SYSCTL_INT(_debug, OID_AUTO, clock_show_io, CTLFLAG_RWTUN, &show_io, 0,
     "Enable debug printing of RTC clock I/O; 1=reads, 2=writes, 3=both.");
 
 static int sysctl_clock_do_io(SYSCTL_HANDLER_ARGS);
-SYSCTL_PROC(_debug, OID_AUTO, clock_do_io,
-    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, 0, 0, sysctl_clock_do_io, "I",
+SYSCTL_PROC(_debug, OID_AUTO, clock_do_io, CTLTYPE_INT | CTLFLAG_RW,
+    0, 0, sysctl_clock_do_io, "I",
     "Trigger one-time IO on RTC clocks; 1=read (and discard), 2=write");
 
 /* XXX: should be kern. now, it's no longer machdep.  */
@@ -360,12 +359,9 @@ inittodr(time_t base)
 		ts.tv_nsec = 0;
 	}
 
-	if (ts.tv_sec >= 0) {
+	if (ts.tv_sec >= 0)
 		tc_setclock(&ts);
-#ifdef FFCLOCK
-		ffclock_reset_clock(&ts);
-#endif
-	}
+
 }
 
 /*
