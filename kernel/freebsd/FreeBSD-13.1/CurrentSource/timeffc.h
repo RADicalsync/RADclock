@@ -27,7 +27,7 @@
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
  *
- * $FreeBSD: releng/12.3/sys/sys/timeffc.h 326256 2017-11-27 15:01:59Z pfg $
+ * $FreeBSD$
  */
 
 #ifndef _SYS_TIMEFF_H_
@@ -46,23 +46,23 @@
  * Provides time of last daemon update, clock status and bound on error.
  */
 struct ffclock_estimate {
-	struct bintime	update_time;	/* FFclock time of last update, ie Ca(tlast) */
-	ffcounter	update_ffcount;	/* Counter value at last update */
-	ffcounter	leapsec_expected;	/* Estimated counter value of next leap sec */
-	uint64_t	period;				/* Estimate of current counter period [2^-64 s] */
-	uint32_t	errb_abs;				/* Bound on absolute clock error [ns] */
-	uint32_t	errb_rate;			/* Bound on relative counter period err [ps/s] */
-	uint32_t	status;					/* Clock status */
-	uint16_t	secs_to_nextupdate;	/* Estimated wait til next update [s] */
-	int8_t	leapsec_total;			/* Sum of leap secs seen since clock start */
-	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
+	struct bintime	update_time; /* FFclock time of last update, ie Ca(tlast) */
+	ffcounter	update_ffcount;	 /* Counter value at last update */
+	ffcounter	leapsec_expected;/* Estimated counter value of next leap sec */
+	uint64_t	period;	         /* Estimate of current counter period [2^-64 s] */
+	uint32_t	errb_abs;	     /* Bound on absolute clock error [ns] */
+	uint32_t	errb_rate;	     /* Bound on relative counter period err [ps/s] */
+	uint32_t	status;	         /* Clock status */
+	uint16_t	secs_to_nextupdate; /* Estimated wait til next update [s] */
+	int8_t	leapsec_total;	     /* Sum of leap secs seen since clock start */
+	int8_t	leapsec_next;	     /* Next leap second (in {-1,0,1}) */
 };
 
 /* Constants to hold errors and error rates in 64bit binary fraction fields */
 #define	MS_AS_BINFRAC	(uint64_t)18446744073709551ULL	// floor(2^64/1e3)
-#define	MUS_AS_BINFRAC	(uint64_t)18446744073709ULL		// floor(2^64/1e6)
-#define	NS_AS_BINFRAC	(uint64_t)18446744073ULL			// floor(2^64/1e9)
-#define	PS_AS_BINFRAC	(uint64_t)18446744ULL				// floor(2^64/1e12)
+#define	MUS_AS_BINFRAC	(uint64_t)18446744073709ULL	   // floor(2^64/1e6)
+#define	NS_AS_BINFRAC	(uint64_t)18446744073ULL	      // floor(2^64/1e9)
+#define	PS_AS_BINFRAC	(uint64_t)18446744ULL	         // floor(2^64/1e12)
 
 
 /* Declare the kern.sysclock sysctl tree. */
@@ -126,10 +126,10 @@ extern int sysclock_active;
  * is determined by the userland daemon.
  */
 struct fbclock_info {
-	struct bintime		error;
-	struct bintime		tick_time;
-	uint64_t		th_scale;
-	int			status;
+	struct bintime	error;
+	struct bintime	tick_time;
+	uint64_t	th_scale;
+	int		status;
 };
 
 /*
@@ -139,14 +139,14 @@ struct fbclock_info {
  * is determined by the userland daemon.
  */
 struct ffclock_info {
-	struct bintime		error;
-	struct bintime		tick_time;
-	struct bintime		tick_time_diff;
-	struct bintime		tick_time_lerp;
-	uint64_t		period;
-	uint64_t		period_lerp;
-	int			leapsec_adjustment;
-	int			status;
+	struct bintime	error;
+	struct bintime	tick_time;
+	struct bintime	tick_time_diff;
+	struct bintime	tick_time_lerp;
+	uint64_t	period;
+	uint64_t	period_lerp;
+	int		leapsec_adjustment;
+	int		status;
 };
 
 /*
@@ -159,7 +159,7 @@ struct sysclock_snap {
 	struct fbclock_info	fb_info;
 	struct ffclock_info	ff_info;
 	ffcounter		ffcount;
-	unsigned int		delta;
+	unsigned int	delta;
 	int			sysclock_active;
 };
 

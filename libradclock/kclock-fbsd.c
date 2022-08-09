@@ -29,6 +29,7 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>		// needed for module.h
 #include <sys/module.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -41,7 +42,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <stddef.h>	// offesetof macro
+#include <stddef.h>		// offesetof macro
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

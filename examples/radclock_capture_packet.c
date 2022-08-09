@@ -45,14 +45,14 @@
 #include <arpa/inet.h>
  
 #include <pcap.h>			// includes <net/bpf.h>
-//#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
+//#include <net/bpf.h>		// not needed if just using tsmode presets in radclock.h
 
 /* RADclock API and RADclock packet capture API */
 #include <radclock.h>		// includes <pcap.h>
 
 /* For testing, but is outside the library, don't need for basic use */
 #include <radclock-private.h>
-#include "kclock.h"              // struct ffclock_estimate, get_kernel_ffclock
+#include "kclock.h"			// struct ffclock_estimate, get_kernel_ffclock
 
 #define BPF_PACKET_SIZE   108
 
@@ -61,8 +61,7 @@ void
 usage(char *progname)
 {
 	fprintf(stdout, "%s: [-v] [-L] [-i <interface>] -o <filename> [-t <tsmode preset>]"
-	" [-c <custom tsmode code>] [-f <pkt filter string>] \n"
-					, progname);
+	" [-c <custom tsmode code>] [-f <pkt filter string>] \n", progname);
 	fflush(stdout);
 	exit(-1);
 }
@@ -127,12 +126,12 @@ main (int argc, char *argv[])
 	radclock_local_period_t	 lpm = RADCLOCK_LOCAL_PERIOD_OFF;
 
 	/* Pcap */
-	pcap_t *pcap_handle = NULL; /* pcap handle for interface */
-	char *network_device = NULL; /* points to physical device, eg xl0, em0, eth0 */
+	pcap_t *pcap_handle = NULL;		/* pcap handle for interface */
+	char *network_device = NULL;	/* points to physical device, eg em0 */
 
 	/* Captured packet */
-	struct pcap_pkthdr header;           /* The header that pcap gives us */
-	const u_char *packet;                /* The actual packet */
+	struct pcap_pkthdr header;		/* The header that pcap gives us */
+	const u_char *packet;			/* The actual packet */
 	vcounter_t vcount;
 	struct timeval tv;
 	long double currtime;
@@ -210,9 +209,9 @@ main (int argc, char *argv[])
 	printf("----------------------------------------------------------------\n");
 
 	radclock_register_pcap(clock, pcap_handle);
-	
-	
-	
+
+
+
 	/* tsmode is typically set by use of the pktcap_tsmode presets described in
 	 * radclock.h   The classic choice is PKTCAP_TSMODE_FFNATIVECLOCK, which
 	 * uses the native FFclock.  This is the normal radclock, which is the most
@@ -232,13 +231,17 @@ main (int argc, char *argv[])
 	//custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;	// this is PKTCAP_TSMODE_FFNATIVECLOCK
 	//custom = BPF_T_NANOTIME  | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // same but upping to ns resolution
 	pktcap_set_tsmode(clock, pcap_handle, tsmode, custom);
+	// Reuse custom as a tstype argument for  ts_format_to_double  below
+	if (tsmode == PKTCAP_TSMODE_FFNATIVECLOCK)
+		custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;
+
 	
 	printf("------------------- Checking what it was finally set to ---------\n");
 	pktcap_get_tsmode(clock, pcap_handle, &tsmode);
 	printf("----------------------------------------------------------------\n");
 
 
-	
+
 
 	/* Open output file to store output */
 	if ((output_fd = fopen(output_file,"w")) == NULL) {
@@ -269,8 +272,8 @@ main (int argc, char *argv[])
 
 		/* Block until the next packet, return the raw and ts timestmaps */
 		ret = radclock_get_packet(clock, pcap_handle, &header,
-				(unsigned char **) &packet, &vcount, &tv);
-				
+		    (unsigned char **) &packet, &vcount, &tv);
+
 		if (ret) {
 			fprintf(stderr, "WARNING: problem getting packet\n");
 			return 0;
@@ -282,8 +285,8 @@ main (int argc, char *argv[])
 			gen = sms->gen;
 		else
 			fprintf(stderr," Warning, SMS is down.\n");
-			
-			
+
+
 		/* Read the corresponding UTC time (with maximum resolution as a long
 		 * double `currtime'), based on the given vcount raw timestamp, from
 		 * your radclock.
@@ -291,30 +294,30 @@ main (int argc, char *argv[])
 		radclock_vcount_to_abstime(clock, &vcount, &currtime);
 
 		/* Convert tv to double for comparison */
-		ts_format_to_double(&tv, custom, &tvdouble);
+		ts_format_to_double(&tv, custom, &tvdouble);		// custom currently ignored if Linux
 		cdiff = (currtime - tvdouble);
 		frac = cdiff - (int) cdiff;
-		
+
 		/* Output the kernel's absolute timestamp, the raw, radclocks's abs time */
 		fprintf(output_fd, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
-							(long long unsigned) vcount,
-							tv.tv_sec, (long long unsigned)tv.tv_usec,
-							currtime,
-							cdiff, 1e6*frac,
-							gen);
-							
+				(long long unsigned) vcount,
+				tv.tv_sec, (long long unsigned)tv.tv_usec,
+				currtime,
+				cdiff, 1e6*frac,
+				gen);
+
 		fflush(output_fd);
 		
 		
 		if (verbose_flag) {
 			fprintf(stdout, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
-							(long long unsigned) vcount,
-							tv.tv_sec, (long long unsigned)tv.tv_usec,
-							currtime,
-							cdiff, 1e6*frac,
-							gen);
+					(long long unsigned) vcount,
+					tv.tv_sec, (long long unsigned)tv.tv_usec,
+					currtime,
+					cdiff, 1e6*frac,
+					gen);
 		}
-		
+
 		/* Collect some statistics */
 		count_pkt++;
 		if ( fabs(1e9*frac) > 1 ) count_err_ns++;		// keep track of #errors worse than 1ns
@@ -322,12 +325,12 @@ main (int argc, char *argv[])
 		if (verbose_flag) {
 			if ( count_pkt%4 == 0 ) {
 				fprintf(stdout, "Number of packets sniffed : %ld  \t #(null, ns-err) = (%ld %ld) \n",
-									count_pkt, count_pkt_null, count_err_ns);
+				    count_pkt, count_pkt_null, count_err_ns);
 				fflush(stdout);
 			}
 		} else {
 			fprintf(stdout, "\r Number of packets sniffed : %ld  \t #(null, ns-err) = (%ld %ld)",
-									count_pkt, count_pkt_null, count_err_ns);
+			    count_pkt, count_pkt_null, count_err_ns);
 			fflush(stdout);
 		}
 	}

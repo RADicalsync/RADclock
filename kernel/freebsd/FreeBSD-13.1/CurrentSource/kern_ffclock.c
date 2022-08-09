@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD: releng/12.3/sys/kern/kern_ffclock.c July 2022 $");
+__FBSDID("$FreeBSD$ 13.1 Aug 2022");
 
 #include "opt_ffclock.h"
 
@@ -158,9 +158,9 @@ ffclock_difftime(ffcounter ffdelta, struct bintime *bt,
  * live under the ffclock subnode.
  */
 
-SYSCTL_NODE(_kern, OID_AUTO, sysclock, CTLFLAG_RW, 0,
+SYSCTL_NODE(_kern, OID_AUTO, sysclock, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "System clock related configuration");
-SYSCTL_NODE(_kern_sysclock, OID_AUTO, ffclock, CTLFLAG_RW, 0,
+SYSCTL_NODE(_kern_sysclock, OID_AUTO, ffclock, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "Feed-forward clock configuration");
 
 static char *sysclocks[] = {"FBclock", "FFclock"};
@@ -194,8 +194,9 @@ sysctl_kern_sysclock_available(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-SYSCTL_PROC(_kern_sysclock, OID_AUTO, available, CTLTYPE_STRING | CTLFLAG_RD,
-    0, 0, sysctl_kern_sysclock_available, "A",
+SYSCTL_PROC(_kern_sysclock, OID_AUTO, available,
+    CTLTYPE_STRING | CTLFLAG_RD | CTLFLAG_NEEDGIANT, 0, 0,
+    sysctl_kern_sysclock_available, "A",
     "List of available system clocks");
 
 /*
@@ -236,8 +237,9 @@ sysctl_kern_sysclock_active(SYSCTL_HANDLER_ARGS)
 	return (error);
 }
 
-SYSCTL_PROC(_kern_sysclock, OID_AUTO, active, CTLTYPE_STRING | CTLFLAG_RW,
-    0, 0, sysctl_kern_sysclock_active, "A",
+SYSCTL_PROC(_kern_sysclock, OID_AUTO, active,
+    CTLTYPE_STRING | CTLFLAG_RW | CTLFLAG_NEEDGIANT, 0, 0,
+    sysctl_kern_sysclock_active, "A",
     "Name of the active system clock which is currently serving time");
 
 int sysctl_kern_ffclock_ffcounter_bypass=0;
@@ -405,9 +407,9 @@ sys_ffclock_getcounter(struct thread *td, struct ffclock_getcounter_args *uap)
 }
 
 /*
- * System call allowing the synchronisation daemon to push new feed-foward clock
- * estimates to the kernel. Acquire ffclock_mtx to prevent concurrent updates
- * and ensure data consistency.
+ * System call allowing the synchronisation daemon to push new feed-forward
+ * clock estimates to the kernel. Acquire ffclock_mtx to prevent concurrent
+ * updates and ensure data consistency.
  * NOTE: ffclock_updated signals the fftimehands that new estimates are
  * available. The updated estimates are picked up by the fftimehands on next
  * tick, which could take as long as 1/hz seconds (if ticks are not missed).

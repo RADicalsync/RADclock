@@ -29,6 +29,7 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>		// needed for module.h
 #include <sys/module.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -134,7 +135,7 @@ has_vm_vcounter(struct radclock *clock)
 	case 2:
 		size_ctl = sizeof(passthrough_counter);
 		ret = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",
-				&passthrough_counter, &size_ctl, NULL, 0);
+		    &passthrough_counter, &size_ctl, NULL, 0);
 		if (ret == -1) {
 			logger(RADLOG_ERR, "Cannot find kern.sysclock.ffclock.ffcounter_bypass in sysctl");
 			return (0);
@@ -144,7 +145,7 @@ has_vm_vcounter(struct radclock *clock)
 	case 1:
 		size_ctl = sizeof(passthrough_counter);
 		ret = sysctlbyname("kern.timecounter.passthrough", &passthrough_counter,
-				&size_ctl, NULL, 0);
+		    &size_ctl, NULL, 0);
 		if (ret == -1) {
 			logger(RADLOG_ERR, "Cannot find kern.timecounter.passthrough in sysctl");
 			return (0);
@@ -164,7 +165,7 @@ has_vm_vcounter(struct radclock *clock)
 
 	size_ctl = sizeof(timecounter);
 	ret = sysctlbyname("kern.timecounter.hardware", &timecounter[0],
-			&size_ctl, NULL, 0);
+	    &size_ctl, NULL, 0);
 	if (ret == -1) {
 		logger(LOG_ERR, "Cannot find kern.timecounter.hardware in sysctl");
 		return (0);
@@ -221,7 +222,7 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 {
 	struct module_stat stat;
 	int err;
-	
+
 	switch (clock->kernel_version) {
 	case 0:
 	case 1:
@@ -307,7 +308,7 @@ int get_currentcounter(struct radclock *clock)
 			strcpy(clock->hw_counter, hw_counter);
 		}	else {
 			logger(RADLOG_WARNING, "Hardware counter has changed : (%s -> %s)",
-									clock->hw_counter, hw_counter);
+			    clock->hw_counter, hw_counter);
 			strcpy(clock->hw_counter, hw_counter);
 			return (1);
 		}
@@ -464,7 +465,7 @@ radclock_init_vcounter(struct radclock *clock)
 //	}
 //
 //	} // HAVE_RDTSC
-	
+
 
 	return (0);
 }

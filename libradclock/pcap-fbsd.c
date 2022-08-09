@@ -29,6 +29,7 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>		// needed for module.h
 #include <sys/module.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
@@ -80,20 +81,20 @@
 /* Ensure definition of symbols in common to both KV=2 and 3, using KV2 values */
 #ifndef	BPF_T_MICROTIME
 #define	BPF_T_MICROTIME		0x0000
-#define	BPF_T_NANOTIME			0x0001
-#define	BPF_T_BINTIME			0x0002
-#define	BPF_T_NONE				0x0003
-#define	BPF_T_FORMAT_MASK		0x0007
-#define	BPF_T_NORMAL			0x0000
+#define	BPF_T_NANOTIME		0x0001
+#define	BPF_T_BINTIME		0x0002
+#define	BPF_T_NONE			0x0003
+#define	BPF_T_FORMAT_MASK	0x0007
+#define	BPF_T_NORMAL		0x0000
 #define	BPF_T_MONOTONIC		0x0100
-#define	BPF_T_SYSCLOCK			0x0000
-#define	BPF_T_FBCLOCK			0x1000
-#define	BPF_T_FFCLOCK			0x2000
-#define	BPF_T_CLOCK_MASK		0x3000
+#define	BPF_T_SYSCLOCK		0x0000
+#define	BPF_T_FBCLOCK		0x1000
+#define	BPF_T_FFCLOCK		0x2000
+#define	BPF_T_CLOCK_MASK	0x3000
 #define	BPF_T_FLAG_MASK		0x0300
 #define	BPF_T_FORMAT(t)		((t) & BPF_T_FORMAT_MASK)
-#define	BPF_T_FLAG(t)			((t) & BPF_T_FLAG_MASK)
-#define	BPF_T_CLOCK(t)			((t) & BPF_T_CLOCK_MASK)
+#define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
+#define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
 #define	BIOCGTSTAMP	_IOR('B', 131, u_int)
 #define	BIOCSTSTAMP	_IOW('B', 132, u_int)
 #endif
@@ -101,25 +102,25 @@
 /* Ensure definition of symbols unique to KV=2 */
 #ifndef	BPF_T_FFCOUNTER
 #define	BPF_T_FFCOUNTER		0x0004
-#define	BPF_T_FORMAT_MAX		0x0004
+#define	BPF_T_FORMAT_MAX	0x0004
 #define	BPF_T_CLOCK_MAX		0x2000
 #endif
-	
+
 
 /* Ensure definition of symbols unique to KV=3 */
 #ifndef	BPF_T_NOFFC
-#define	BPF_T_NOFFC				0x0000   // no FFcount
-#define	BPF_T_FFC				0x0010   // want FFcount
-#define	BPF_T_FFRAW_MASK		0x0010
-#define	BPF_T_FAST				0x0100   // UTC,  FAST
+#define	BPF_T_NOFFC			0x0000   // no FFcount
+#define	BPF_T_FFC			0x0010   // want FFcount
+#define	BPF_T_FFRAW_MASK	0x0010
+#define	BPF_T_FAST			0x0100   // UTC,  FAST
 #define	BPF_T_MONOTONIC		0x0200	// UPTIME, !FAST Exception, redefined to allow compile
 #define	BPF_T_MONOTONIC_FAST	0x0300	// UPTIME,  FAST
-//#define	BPF_T_FLAVOR_MASK		0x0300
+//#define	BPF_T_FLAVOR_MASK	0x0300
 #define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
-#define	BPF_T_FFDIFFCLOCK		0x4000	// read FF difference clock
-#define	BPF_T_FFRAW(t)			((t) & BPF_T_FFRAW_MASK)
-//#define	BPF_T_FLAVOR(t)		((t) & BPF_T_FLAVOR_MASK)
-#define	BPF_T_CLOCK_MASK		0x7000	// shouldnt be needed..
+#define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
+#define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
+//#define	BPF_T_FLAVOR(t)	((t) & BPF_T_FLAVOR_MASK)
+#define	BPF_T_CLOCK_MASK	0x7000	// shouldnt be needed..
 #endif
 
 
@@ -132,9 +133,9 @@ static void
 decode_bpf_tsflags_KV2(long bd_tstamp)
 {
 		logger(RADLOG_NOTICE, "Decoding bpf timestamp type _T_ flags (bd_tstamp = %ld (0x%04x))",
-				 bd_tstamp, bd_tstamp);
+		    bd_tstamp, bd_tstamp);
 
-	 	switch (BPF_T_FORMAT(bd_tstamp)) {
+		switch (BPF_T_FORMAT(bd_tstamp)) {
 		case BPF_T_MICROTIME:
 			logger(RADLOG_NOTICE, "     FORMAT = MICROTIME");
 			break;
@@ -151,7 +152,7 @@ decode_bpf_tsflags_KV2(long bd_tstamp)
 			logger(RADLOG_NOTICE, "     FORMAT = FFCOUNTER");
 			break;
 		}
-		
+
 		switch (BPF_T_FLAG(bd_tstamp)) {
 		case BPF_T_MONOTONIC:
 			logger(RADLOG_NOTICE, "     FLAG = MONOTONIC [uptime]");
@@ -159,12 +160,12 @@ decode_bpf_tsflags_KV2(long bd_tstamp)
 		default:
 			logger(RADLOG_NOTICE, "     FLAG = not MONOTONIC [UTC]");
 		}
-		
+
 		switch (BPF_T_CLOCK(bd_tstamp)) {
 		case BPF_T_SYSCLOCK:
 			logger(RADLOG_NOTICE, "     CLOCK = SYSCLOCK");
 			break;
-	 	case BPF_T_FBCLOCK:
+		case BPF_T_FBCLOCK:
 			logger(RADLOG_NOTICE, "     CLOCK = FBCLOCK");
 			break;
 		case BPF_T_FFCLOCK:
@@ -179,7 +180,7 @@ decode_bpf_tsflags_KV3(long bd_tstamp)
 		logger(RADLOG_NOTICE, "Decoding bpf timestamp type _T_ flags (bd_tstamp = 0x%04x)",
 				 bd_tstamp);
 				 
-	 	switch (BPF_T_FORMAT(bd_tstamp)) {
+		switch (BPF_T_FORMAT(bd_tstamp)) {
 		case BPF_T_MICROTIME:
 			logger(RADLOG_NOTICE, "     FORMAT = MICROTIME");
 			break;
@@ -219,7 +220,7 @@ decode_bpf_tsflags_KV3(long bd_tstamp)
 		case BPF_T_SYSCLOCK:
 			logger(RADLOG_NOTICE, "     CLOCK = SYSCLOCK");
 			break;
-	 	case BPF_T_FBCLOCK:
+		case BPF_T_FBCLOCK:
 			logger(RADLOG_NOTICE, "     CLOCK = FBCLOCK");
 			break;
 		case BPF_T_FFCLOCK:
@@ -473,7 +474,7 @@ struct bpf_hdr_hack_v1 {
 // FIXME should convert to void, make these tests once and not on each packet
 static inline int
 extract_vcount_stamp_v1(pcap_t *p_handle, const struct pcap_pkthdr *header,
-		const unsigned char *packet, vcounter_t *vcount)
+    const unsigned char *packet, vcounter_t *vcount)
 {
 	struct bpf_hdr_hack_v1 *hack;
 
@@ -515,19 +516,19 @@ extract_vcount_stamp_v1(pcap_t *p_handle, const struct pcap_pkthdr *header,
 
 static void
 ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
-		const unsigned char *packet, vcounter_t *vcount);
+    const unsigned char *packet, vcounter_t *vcount);
 
 // FIXME inline should be in a header file, d'oh...
 // FIXME should convert to void, make these tests once and not on each packet to
 // improve perfs  DV:  indeed, stupid !
 static inline int
 extract_vcount_stamp_v2(pcap_t *p_handle, const struct pcap_pkthdr *header,
-		const unsigned char *packet, vcounter_t *vcount)
+    const unsigned char *packet, vcounter_t *vcount)
 {
 	vcounter_t *hack;
-	
+
 	ts_extraction_tester(p_handle, header, packet, vcount);
-	
+
 	// Note:  hack will point to the sec field, as it appears first in the timeval layout
 	//       If ts is 2*8 bytes, then the vcount will appear only in the sec field
 	hack = (vcounter_t*) &(header->ts);
@@ -623,7 +624,7 @@ static int dlt_header_size[] = {
  */
 static void
 ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
-		const unsigned char *packet, vcounter_t *vcount)
+    const unsigned char *packet, vcounter_t *vcount)
 {
 	static int  checkcnt = 0;		// use to trigger checks and verbosity once only
 
@@ -701,8 +702,8 @@ ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
 				
 		checkcnt++;
 	}
-				
-				
+
+
 //	h = (struct bpf_hdr_hack_v3 *)(packet - BPF_HDRLEN(hlen));
 // bh =        (struct bpf_hdr *)(packet - sizeof(struct bpf_hdr));
 //	logger(RADLOG_NOTICE, ">> header sizes:  h = %d, bh = %d", BPF_HDRLEN(hlen), sizeof(struct bpf_hdr));
@@ -734,7 +735,7 @@ ts_extraction_tester(pcap_t *p_handle, const struct pcap_pkthdr *header,
  */
 static void
 header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
-		const unsigned char *packet)
+    const unsigned char *packet)
 {
 	struct bpf_hdr	*h;
 	vcounter_t 	*raw;
@@ -750,7 +751,7 @@ header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
 	/* Error if header fields common to pcap and bpf disagree */
 	int error = 0;
 	error = (h->bh_hdrlen != blen) || (h->bh_caplen  != header->caplen)
-											 || (h->bh_datalen != header->len) ;
+	     || (h->bh_datalen != header->len) ;
 	
 	/* Perfect once-only checks */
 	/* TODO: make these compiler checks, but retain verbosity if fail somehow */
@@ -760,7 +761,7 @@ header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
 		logger(RADLOG_NOTICE, " bpf header sizes:   hdr: %d, xhdr: %d", sizeof(struct bpf_hdr), sizeof(struct bpf_xhdr));
 		logger(RADLOG_NOTICE, " bpf aligned sizes:  hdr: %d, xhdr: %d", blen, BPF_HDRLEN_XHDR(hlen));
 		logger(RADLOG_NOTICE, " pcap:  hdr: %d, ts: %d, timeval: %d",
-				sizeof(struct pcap_pkthdr), sizeof(header->ts), sizeof(struct timeval) );
+		    sizeof(struct pcap_pkthdr), sizeof(header->ts), sizeof(struct timeval) );
 
 		/* Basic consistency check */
 		if (h->bh_hdrlen != blen)
@@ -774,8 +775,8 @@ header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
 			logger(RADLOG_NOTICE, " bpf_hdr crossref checks with pcap_hdr passed: caplen=%d , datalen=%d", h->bh_caplen, h->bh_datalen);
 		else
 			logger(RADLOG_ERR, " bpf_hdr crossref checks failed, inferred: caplen=%d , datalen=%d", h->bh_caplen, h->bh_datalen);
-					
-					
+
+
   /* Examine actual timestamp values, but limit checks to first few packets */
 		logger(RADLOG_NOTICE, "Detailed look at first packets: ");
 
@@ -810,9 +811,9 @@ header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
 		const char *months[12] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
 		logger(RADLOG_NOTICE, " %s %02d %04d, %02d:%02d:%02d", months[t->tm_mon], t->tm_mday,
 				1900+t->tm_year, t->tm_hour, t->tm_min, t->tm_sec);
-				
+
 	}
-				
+
 }
 
 
@@ -831,7 +832,7 @@ header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
  */
 static inline int
 extract_vcount_stamp_v3(pcap_t *p_handle,  const struct pcap_pkthdr *header,
-		const unsigned char *packet, vcounter_t *vcount, struct pcap_pkthdr *rdhdr)
+    const unsigned char *packet, vcounter_t *vcount, struct pcap_pkthdr *rdhdr)
 {
 	struct bpf_hdr_hack_v3 *h;	// use local hdr defn to get a vcounter_t directly
 	int hlen, blen;
@@ -848,7 +849,7 @@ extract_vcount_stamp_v3(pcap_t *p_handle,  const struct pcap_pkthdr *header,
 
 	/* Infer head of bpf_hdr and perform basic consistency check */
 	h = (struct bpf_hdr_hack_v3 *)(packet - blen);
-	
+
 	/* Recover the raw ts from the bpf header */
 	*vcount = h->vcount;
 
@@ -883,7 +884,7 @@ extract_vcount_stamp_v3(pcap_t *p_handle,  const struct pcap_pkthdr *header,
 		/* Could fail if timeval 8 bytes, but shouldnt execute in that case */
 		memcpy(&rdhdr->ts, &h->bh_tstamp, sizeof(struct timeval));
 	}
-	
+
 	return (0);
 }
 
@@ -895,8 +896,8 @@ extract_vcount_stamp_v3(pcap_t *p_handle,  const struct pcap_pkthdr *header,
  */
 int
 extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
-		const struct pcap_pkthdr *header, const unsigned char *packet,
-		vcounter_t *vcount, struct pcap_pkthdr *rdhdr)
+    const struct pcap_pkthdr *header, const unsigned char *packet,
+    vcounter_t *vcount, struct pcap_pkthdr *rdhdr)
 {
 	int err;
 

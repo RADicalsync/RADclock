@@ -2,4 +2,4 @@
 include		GENERIC
 ident		FFCLOCK
 
-options		FFCLOCK
+options 	FFCLOCK		# enable FeedForward system clock components
