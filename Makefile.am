@@ -59,15 +59,15 @@ dist-hook:
 #	cp $(srcdir)/python-gui/tscclock_wallclock.py $(distdir)/python-module/
 #	cp -R $(srcdir)/python-gui/img $(distdir)/python-module/
 	@echo "Copying kernel source and (perhaps) patches into the tarball"
-	mkdir $(distdir)/kernel-source
-	mkdir $(distdir)/kernel-source/freebsd
+	mkdir -p $(distdir)/kernel-source/freebsd
 	cp -r $(srcdir)/kernel/freebsd/FreeBSD-1* $(distdir)/kernel-source/freebsd/
 #	for d in `ls $(srcdir)/kernel/freebsd`; do \
 #		mkdir $(distdir)/kernel-patches/freebsd/$$d; \
 #		cp -r $(srcdir)/kernel/freebsd/$$d/* $(distdir)/kernel-patches/freebsd/$$d/ ; \
 #	done
 	mkdir $(distdir)/kernel-source/linux
-	cp -r $(srcdir)/kernel/linux/{4,5}* $(distdir)/kernel-source/linux/
+	cp -r $(srcdir)/kernel/linux/4* $(distdir)/kernel-source/linux/
+	cp -r $(srcdir)/kernel/linux/5* $(distdir)/kernel-source/linux/
 #	for d in `ls $(srcdir)/kernel/linux`; do \
 #		mkdir $(distdir)/kernel-patches/linux/$$d; \
 #		cp $(srcdir)/kernel/linux/$$d/* $(distdir)/kernel-patches/linux/$$d/ ; \

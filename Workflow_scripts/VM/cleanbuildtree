@@ -20,7 +20,7 @@ NINIT="`ls -al|wc -l`"
 rm -f *.{log,out,raw,conf} *~ tmp
 
 # Remove configure outputs (both object files and scripts, including all Makefiles)
-make -k -s distclean			# -k: exit ok even if fail   -s quiet running
+make -k -s distclean		# -k: exit ok even if fail   -s quiet running
 rm -f tests/.deps/*			# not removed automatically, should find out why!
 
 # Remove automake outputs

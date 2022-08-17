@@ -91,7 +91,7 @@ static struct _key keys[] = {
 	{ "sync_output_ascii",		CONFIG_SYNC_OUT_ASCII},
 	{ "clock_output_ascii",		CONFIG_CLOCK_OUT_ASCII},
 	{ "vm_udp_list",			CONFIG_VM_UDP_LIST},
-	{ "",			 			CONFIG_UNKNOWN} // Must be the last one
+	{ "",						CONFIG_UNKNOWN} // Must be the last one
 };
 
 /* Definition of the options labels
@@ -106,8 +106,7 @@ static char* labels_sync[] = { "spy", "piggy", "ntp", "ieee1588", "pps",
 
 
 /** Modes for the quality of the temperature environment 
- * Must be defined in the same sequence order as the CONFIG_QUALITY_* 
- * values 
+ * Must be defined in the same sequence order as the CONFIG_QUALITY_*  values
  */
 static struct _key temp_quality[] = {
 	{ "poor", 				CONFIG_QUALITY_POOR},
@@ -135,15 +134,15 @@ config_init(struct radclock_config *conf)
 	strcpy(conf->logfile, "");
 	strcpy(conf->radclock_version, PACKAGE_VERSION);
 	conf->server_ipc			= DEFAULT_SERVER_IPC;
-	conf->synchro_type		= DEFAULT_SYNCHRO_TYPE;
+	conf->synchro_type			= DEFAULT_SYNCHRO_TYPE;
 	conf->server_ntp			= DEFAULT_SERVER_NTP;
 	conf->adjust_FFclock		= DEFAULT_ADJUST_FFCLOCK;
 	conf->adjust_FBclock		= DEFAULT_ADJUST_FBCLOCK;
 
 	/* Virtual Machine */
-	conf->server_vm_udp 		= DEFAULT_SERVER_VM_UDP;
-	conf->server_xen 			= DEFAULT_SERVER_XEN;
-	conf->server_vmware 		= DEFAULT_SERVER_VMWARE;
+	conf->server_vm_udp			= DEFAULT_SERVER_VM_UDP;
+	conf->server_xen			= DEFAULT_SERVER_XEN;
+	conf->server_vmware			= DEFAULT_SERVER_VMWARE;
 
 	/* Clock parameters */
 	conf->poll_period			= DEFAULT_NTP_POLL_PERIOD;
@@ -153,8 +152,8 @@ config_init(struct radclock_config *conf)
 	conf->phyparam.BestSKMrate	= BEST_SKM_RATE_GOOD;
 	conf->phyparam.offset_ratio	= OFFSET_RATIO_GOOD;
 	conf->phyparam.plocal_quality	= PLOCAL_QUALITY_GOOD;
-	conf->phat_init			= DEFAULT_PHAT_INIT;
-	conf->asym_host			= DEFAULT_ASYM_HOST;
+	conf->phat_init				= DEFAULT_PHAT_INIT;
+	conf->asym_host				= DEFAULT_ASYM_HOST;
 	conf->asym_net				= DEFAULT_ASYM_NET;
 
 	/* Network level */
@@ -587,19 +586,17 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 }
 
 
-/** Extract the key label and the corresponding value from a line of the parsed
- * configuration file. 
- */
-int extract_key_value (char* c, char* key, char* value) {
+/** Extract the key label and the corresponding value from a line of the parsed configuration file */
+int extract_key_value(char* c, char* key, char* value) {
 
 	char *ch;
-	
+
 	// Look for first character in line
 	while ((*c==' ') || (*c=='\t')) { c++; }
 
 	// Check if character for a config parameter
 	if ((*c=='#') || (*c=='\n') || (*c=='\0')) { return 0; }
-	
+
 	// Identify the separator, copy key and clean end white spaces 
 	strncpy(key, c, strchr(c,'=')-c);
 	ch = key;
@@ -611,11 +608,11 @@ int extract_key_value (char* c, char* key, char* value) {
 	ch = c;
 	while ((*ch=='=') || (*ch==' ') || (*ch=='\t')) { ch++; }
 	c = ch;
-	
+
 	// Remove possible comments in line after the value '#' 
 	while ((*ch!='\0') && (*ch!='#')) {ch++;}
 		*ch = '\0';
-	
+
 	// Remove extra space at the end of the line if any
 	ch = c + strlen(c) - 1 ;
 	while ((*ch==' ') || (*ch=='\t') || (*ch=='\n')) { ch--; }
@@ -626,8 +623,6 @@ int extract_key_value (char* c, char* key, char* value) {
 
 	return 1;
 }
-
-
 
 
 /** Match the key index from the key label */
@@ -677,9 +672,9 @@ update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *va
 	// for the first call to config_parse() after parsing the command line
 	// arguments
 
-	int ival 		= 0;
-	double dval 	= 0.0;
-	int iqual 		= 0;
+	int ival		= 0;
+	double dval		= 0.0;
+	int iqual		= 0;
 	struct _key *quality = temp_quality;
 
 	// Additionnal input checks: codekey and value
@@ -1094,12 +1089,12 @@ switch (codekey) {
 	 * dynamically. If this is called during rehash, more may already be allocated.
 	 * The allocated memory is organised as nf concatenated blocks,
 	 * each of MAXLINE chars, off a common origin pointed to by conf->time_server .
-	 * Here nf tracks the number of servers parsed this time, ns the number
+	 * Here nf tracks the number of servers parsed so far this time, ns the number
 	 * last time (or ns=0 when starting).
 	 */
 	case CONFIG_TIME_SERVER:
 
-		verbose(LOG_DEBUG, " found server nf = %d (ns = %d)", *nf, ns);
+		verbose(VERB_DEBUG, "found server nf = %d (ns = %d)", *nf, ns);
 
 		// If value specified on the command line, replace first server in config
 		if ( *nf == 0 && HAS_UPDATE(*mask, UPDMASK_TIME_SERVER) ) {
@@ -1257,10 +1252,10 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 			umask(027);
 			return 0;
 		}
-		
+
 		write_config_file(fd, keys, NULL, 1);	// single server only
 		*ns = 1;
-		
+
 		fclose(fd);
 		verbose(LOG_NOTICE, "Writing configuration file.");
 		//verbose(LOG_NOTICE, "    Time server          : %s", conf->time_server);
@@ -1269,11 +1264,11 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 		umask(027);
 		return 1;
 	}
-	
+
 	// The configuration file exists, parse it and update default values
 	have_all_tmpqual = 0; // ugly
 	nf = 0;
-	while ((c=fgets(line, MAXLINE, fd))!=NULL) {
+	while ((c=fgets(line, MAXLINE, fd)) != NULL) {
 
 		// Start with a reset of the value to avoid mistakes
 		strcpy(value, "");
@@ -1281,7 +1276,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 		// Extract key and values from the conf file
 		if ( !(extract_key_value(c, key, value) ))
 			continue;
-	
+
 		// Identify the key and update config values
 		codekey = match_key(pkey, key);
 
@@ -1294,7 +1289,8 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 			update_data(conf, mask, codekey, value, &nf, *ns);
 	}
 	fclose(fd);
-	/* Trim any memory containing old servers, and update handle */
+	/* Trim any memory containing old servers, and update handle
+	   TODO: works in rehash case when must remember former ns value, and also servers? to remap databases? */
 	if (nf < *ns)
 		conf->time_server = realloc(conf->time_server, nf*MAXLINE);
 	*ns = nf;
@@ -1335,7 +1331,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 		strcpy(conf->sync_in_ascii,"");
 		strcpy(conf->sync_in_pcap,"");
 	}
-	
+
 	return 1;
 }
 

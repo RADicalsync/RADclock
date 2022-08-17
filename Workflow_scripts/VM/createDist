@@ -2,8 +2,9 @@
 # #!/bin/bash
 
 Based="$HOME/FFkernel_Work"
-RADsource=$Based/V4_mountedfrom_Icaro/RADclock_mycurrent
 RADbuild=$Based/RADclock_working
+RADsource=$Based/V4_mountedfrom_Icaro/RADclock_mycurrent
+TarHome=$Based/V4_mountedfrom_Icaro/DistributionTarballs
 
 echo Creating distribution based on current snapshot	# ensure snapshot at desired commit/tag!
 cd $RADbuild
@@ -11,7 +12,7 @@ cd $RADbuild
 echo
 echo "*** Get current source ***"
 update_workingRADclock	--delete	# contains the current FFclock stuff already, but scripts need more
-update_workingFFsource			# update FF stuff to the expected location for scripts
+update_workingFFsource				# update FF stuff to the expected location for scripts
 
 # regenerate git-dependent M4 version macro   Requires git installed on build machine.
 # Note: the version.sh in the repo is always there and is actually run, the version.sh in the builddir
@@ -20,7 +21,7 @@ update_workingFFsource			# update FF stuff to the expected location for scripts
 echo
 echo "*** Generating distribution version macro ***"
 cd $RADsource
-version.sh 			# must run in repo dir
+version.sh 					# must run in repo dir
 cat version.m4
 mv -f version.m4  $RADbuild	# version.m4 never tracked by git, and not cleaned by cleanbuildtree
 cd $RADbuild
@@ -55,9 +56,13 @@ if [ "$ans" == "y" ]; then
 	echo "*** Making distribution ***"
 	make -s dist
 
-	echo
+	if [ $? -eq 0 ]; then
+		echo
 		echo "*** Copying tar.gz file to $Based/Testpkg to allow testing ***"
-	cp radclock-*.gz $Based/Testpkg
+		cp radclock-*.gz $Based/Testpkg
+		echo "*** Copying tar.gz also to V4 to support push to webpage script ***"
+		cp radclock-*.gz $TarHome/
+	fi
 else
 	echo "Skipping distribution creation."
 fi

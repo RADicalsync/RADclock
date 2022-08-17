@@ -61,32 +61,37 @@ void
 usage(char *progname)
 {
 	fprintf(stdout, "%s: [-v] [-L] [-i <interface>] -o <filename> [-t <tsmode preset>]"
-	" [-c <custom tsmode code>]  [-f <pkt filter string>] \n"
-					, progname);
+	" [-c <custom tsmode code>]  [-f <pkt filter string>] \n", progname);
 	fflush(stdout);
 	exit(-1);
 }
 
 
+/* Use pcap to open a bpf device
+ * If a device not specified by caller, then look for one.
+ */
 pcap_t *
 initialise_pcap_device(char * network_device, char * filtstr)
 {
 	pcap_t * phandle;
 	struct bpf_program filter;
+	pcap_if_t *alldevs = NULL;
 	char errbuf[PCAP_ERRBUF_SIZE];  /* size of error message set in pcap.h */
 
-	/* pcap stuff, need to get access to global RADclock data */
-	/* Use pcap to open a bpf device */
+	/* Look for available device if needed */
 	if (network_device == NULL) {
-		//if network device has not been specified by user
-		if ((network_device = pcap_lookupdev(errbuf)) == NULL) {
-// wrong arguments, must fix		if ((network_device = pcap_findalldevs(&phandle, errbuf)) == NULL) {
-			/* Find free device */
-			fprintf(stderr,"Failed to find free device, pcap says: %s\n",errbuf);
+		//if ((network_device = pcap_lookupdev(errbuf)) == NULL) { // deprecated
+		if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+			printf("Error in pcap_findalldevs: %s\n", errbuf);
 			exit(EXIT_FAILURE);
 		}
-		else
+		if (alldevs == NULL) {
+			fprintf(stderr,"Failed to find free device, pcap says: %s\n", errbuf);
+			exit(EXIT_FAILURE);
+		} else {
+			network_device = alldevs->name;
 			fprintf(stderr, "Found device %s\n", network_device);
+		}
 	}
 
 	/* No promiscuous mode, timeout on BPF = 5ms */
@@ -95,6 +100,9 @@ initialise_pcap_device(char * network_device, char * filtstr)
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		exit(EXIT_FAILURE);
 	}
+	if (alldevs)
+		pcap_freealldevs(alldevs);		// network_device no longer needed
+
 
 	/* No need to test broadcast addresses */
 	if (filtstr == NULL) {
@@ -182,9 +190,9 @@ main (int argc, char *argv[])
 			//custom = (u_int) strtol(optarg,NULL,16);	// base16
 			break;
 		case 'L':    //  local period mode to ON, else the default is OFF
- 			lpm = RADCLOCK_LOCAL_PERIOD_ON;
+			lpm = RADCLOCK_LOCAL_PERIOD_ON;
 			fprintf(stdout, "Activating plocal refinement if available.\n");
- 			break;
+			break;
 		case 'f':    //  bpf filter string to pass to pcap
 			filtstr = optarg;
 			break;
@@ -200,7 +208,7 @@ main (int argc, char *argv[])
 
 	/* Initialize the vector of clocks */
 	for (i=0; i<nc; i++)	{
-	
+
 		printf("--------------- Initializing radclock %d  ----------------\n", i);
 		clock = radclock_create();
 		if (!clock) {
@@ -298,7 +306,7 @@ main (int argc, char *argv[])
 	}
 	if ( ! (v[0] == v[1] && v[2] == v[3] && v[0] == v[3]) )	printf(" raw timestamps differ !! \n");
 	//vi = v[0];
-				
+
 	printf("-------------------------------------------------------\n");
 	fprintf(stdout, " (raw)\t\t   UTC:  FF   FFmono   SYS    FB     (FFmono-FF SYS-FF FB-FF) \t   UP:  FFmono  FB  (FB-FFmono) \n");
 	printf("-------------------------------------------------------\n");
@@ -335,11 +343,10 @@ main (int argc, char *argv[])
 		
 		/* Collect some statistics */
 		count_pkt++;
-		
 		if (!verbose_flag && count_pkt >= 2) {
 			fprintf(stdout, "\r Number of packets sniffed : %ld", count_pkt);
 			fflush(stdout);
 		}
 	}
-	
+
 }

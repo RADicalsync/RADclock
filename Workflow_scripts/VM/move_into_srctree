@@ -55,6 +55,8 @@ if [ $OS == "FreeBSD" ]; then
 	\cp $FFsource/ffclock.4			$Installd/share/man/man4/
 fi
 
+
+
 if [ $OS == "Linux" ]; then
 	echo "  [ existing sublevel in $Installd is $SUBLEVEL ]"
 	CMD="cp "

@@ -50,20 +50,28 @@ main(int argc, char **argv)
 	clock = radclock_create();
 	radclock_init(clock);
 
-	/* Open a PCAP device. Look it up if not specified on the command line */
-	if_name = pcap_lookupdev(errbuf);
-	if (if_name == NULL) {
-		fprintf(stderr, "Cannot find free device, pcap says: %s\n", errbuf);
-		return (1);
+	/* Look for and open a PCAP device */
+	pcap_if_t *alldevs = NULL;
+	if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+		printf("Error in pcap_findalldevs: %s\n", errbuf);
+		exit(EXIT_FAILURE);
 	}
-	else
+	if (alldevs == NULL) {
+		fprintf(stderr, "Failed to find free device, pcap says: %s\n", errbuf);
+		exit(EXIT_FAILURE);
+	} else {
+		if_name = alldevs->name;
 		fprintf(stderr, "Found device %s\n", if_name);
+	}
 
 	/* No promiscuous mode, timeout on BPF = 5ms */
 	if ((phandle = pcap_open_live(if_name, 170, 0, 5, errbuf)) == NULL) {
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		return (1);
 	}
+	pcap_freealldevs(alldevs);		// if_name no longer needed
+
+
 
 	/* No need to test broadcast addresses */
 	err = pcap_compile(phandle, &fp, "port 123", 0, 0);

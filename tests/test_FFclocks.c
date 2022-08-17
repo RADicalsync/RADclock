@@ -69,25 +69,31 @@ usage(char *progname)
 }
 
 
+/* Use pcap to open a bpf device
+ * If a device not specified by caller, then look for one.
+ */
 pcap_t *
 initialise_pcap_device(char * network_device, char * filtstr)
 {
 	pcap_t * phandle;
 	struct bpf_program filter;
+	pcap_if_t *alldevs = NULL;
 	char errbuf[PCAP_ERRBUF_SIZE];  /* size of error message set in pcap.h */
 
-	/* pcap stuff, need to get access to global RADclock data */
-	/* Use pcap to open a bpf device */
+	/* Look for available device if needed */
 	if (network_device == NULL) {
-		//if network device has not been specified by user
-		if ((network_device = pcap_lookupdev(errbuf)) == NULL) {
-// wrong arguments, must fix		if ((network_device = pcap_findalldevs(&phandle, errbuf)) == NULL) {
-			/* Find free device */
-			fprintf(stderr,"Failed to find free device, pcap says: %s\n",errbuf);
+		//if ((network_device = pcap_lookupdev(errbuf)) == NULL) { // deprecated
+		if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+			printf("Error in pcap_findalldevs: %s\n", errbuf);
 			exit(EXIT_FAILURE);
 		}
-		else
+		if (alldevs == NULL) {
+			fprintf(stderr,"Failed to find free device, pcap says: %s\n", errbuf);
+			exit(EXIT_FAILURE);
+		} else {
+			network_device = alldevs->name;
 			fprintf(stderr, "Found device %s\n", network_device);
+		}
 	}
 
 	/* No promiscuous mode, timeout on BPF = 5ms */
@@ -96,6 +102,9 @@ initialise_pcap_device(char * network_device, char * filtstr)
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		exit(EXIT_FAILURE);
 	}
+	if (alldevs)
+		pcap_freealldevs(alldevs);		// network_device no longer needed
+
 
 	/* No need to test broadcast addresses */
 	if (filtstr == NULL) {
@@ -118,6 +127,7 @@ initialise_pcap_device(char * network_device, char * filtstr)
 	}
 	return phandle;
 }
+
 
 
 
