@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+## Script to perfrom low level bootstrap of new machine, sufficient to allow
+#  ansible to take over with  bootstrap_node.yml
+#  Specifically, it must
+#	- enable root access via the given key
+#   - enable root to login remotely
+#  Needs to run on the machine itself !!  chicken and egg, how get the script there?
+
+if [ `id -u` -ne 0 ]; then
+	echo "Sorry `id -un`, this must be run as root"
+	exit 0
+fi
+
+#AnsibleHome="Users/darryl/Papers/TSCclock/Programs/V4/Ansible/Ansible_forRepo"
+
+## Allow root access via Icaro's key
+#  Assume already have this for now: is true to all existing snapshots of all VMs, all OSes
+
+## Allow root login  (regardless of current line, commented or not)
+sed -i "" -E 's/^#?PermitRootLogin [n|y]+.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+
+grep Root /etc/ssh/sshd_config  |grep -v setting
+
+## Make it take effect
+service sshd reload

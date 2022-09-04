@@ -68,10 +68,10 @@ if [ $OS == "Linux" ]; then
 	if [[ "$1" != "-f" ]]; then
 		echo "Now trying to build clean, executing 'make clean; make deb-pkg' "
 		make clean > $Based/build.log
-		make deb-pkg >> $Based/build.log 2>&1			# make the kernel in the form of a package
+		make deb-pkg >> $Based/build.log 2>&1		# make the kernel in the form of a package
 	else
 		echo "Now trying to build fast, executing 'make deb-pkg'"
-		make deb-pkg > $Based/build.log	2>&1			# make the kernel in the form of a package
+		make deb-pkg > $Based/build.log	2>&1		# make the kernel in the form of a package
 		echo
 	fi
 
@@ -176,7 +176,7 @@ if [ $? -eq 0 ]; then    # if previous command exits with success
 		echo "Now trying to build fast, executing 'make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK'"
 		make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK > $Based/build.log
 	fi
-	
+
 	if [ $? -eq 0 ]; then    # if previous command exits with success
 		tail -3 $Based/build.log 
 		#if [ "$1" == "-w" ]; then
