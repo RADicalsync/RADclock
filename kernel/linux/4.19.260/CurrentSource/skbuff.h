@@ -41,6 +41,10 @@
 #include <linux/if_packet.h>
 #include <net/flow.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 /* The interface for checksum offload between the stack and networking drivers
  * is as follows...
  *
@@ -856,6 +860,10 @@ struct sk_buff {
 				*data;
 	unsigned int		truesize;
 	refcount_t		users;
+
+#ifdef CONFIG_FFCLOCK
+	ffcounter	ffclock_ffc;
+#endif
 };
 
 #ifdef __KERNEL__

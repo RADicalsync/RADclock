@@ -218,7 +218,7 @@ int inet_listen(struct socket *sock, int backlog)
 		 * because the socket was in TCP_LISTEN state previously but
 		 * was shutdown() rather than close().
 		 */
-		tcp_fastopen = READ_ONCE(sock_net(sk)->ipv4.sysctl_tcp_fastopen);
+		tcp_fastopen = sock_net(sk)->ipv4.sysctl_tcp_fastopen;
 		if ((tcp_fastopen & TFO_SERVER_WO_SOCKOPT1) &&
 		    (tcp_fastopen & TFO_SERVER_ENABLE) &&
 		    !inet_csk(sk)->icsk_accept_queue.fastopenq.max_qlen) {
@@ -911,6 +911,14 @@ int inet_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
 	struct rtentry rt;
 
 	switch (cmd) {
+#ifdef CONFIG_FFCLOCK
+		case SIOCGFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Get FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+			break;
+		case SIOCSFFCLOCKTSMODE:
+			printk("FFC: processing SIOC Set FFCLOCKTSMODE (%s:%d)\n", __FILE__, __LINE__);
+			break;
+#endif
 	case SIOCGSTAMP:
 		err = sock_get_timestamp(sk, (struct timeval __user *)arg);
 		break;
@@ -1209,7 +1217,7 @@ static int inet_sk_reselect_saddr(struct sock *sk)
 	if (new_saddr == old_saddr)
 		return 0;
 
-	if (READ_ONCE(sock_net(sk)->ipv4.sysctl_ip_dynaddr) > 1) {
+	if (sock_net(sk)->ipv4.sysctl_ip_dynaddr > 1) {
 		pr_info("%s(): shifting inet->saddr from %pI4 to %pI4\n",
 			__func__, &old_saddr, &new_saddr);
 	}
@@ -1264,7 +1272,7 @@ int inet_sk_rebuild_header(struct sock *sk)
 		 * Other protocols have to map its equivalent state to TCP_SYN_SENT.
 		 * DCCP maps its DCCP_REQUESTING state to TCP_SYN_SENT. -acme
 		 */
-		if (!READ_ONCE(sock_net(sk)->ipv4.sysctl_ip_dynaddr) ||
+		if (!sock_net(sk)->ipv4.sysctl_ip_dynaddr ||
 		    sk->sk_state != TCP_SYN_SENT ||
 		    (sk->sk_userlocks & SOCK_BINDADDR_LOCK) ||
 		    (err = inet_sk_reselect_saddr(sk)) != 0)

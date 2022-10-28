@@ -143,6 +143,10 @@
 #include <net/tcp.h>
 #include <net/busy_poll.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>		// for ffclock_tsmode
+#endif
+
 static DEFINE_MUTEX(proto_list_mutex);
 static LIST_HEAD(proto_list);
 
@@ -2207,6 +2211,9 @@ static void sk_leave_memory_pressure(struct sock *sk)
 	}
 }
 
+/* On 32bit arches, an skb frag is limited to 2^15 */
+#define SKB_FRAG_PAGE_ORDER	get_order(32768)
+
 /**
  * skb_page_frag_refill - check that a page_frag contains enough room
  * @sz: minimum size of the fragment we want to get
@@ -2849,6 +2856,11 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 	sk->sk_sndtimeo		=	MAX_SCHEDULE_TIMEOUT;
 
 	sk->sk_stamp = SK_DEFAULT_STAMP;
+#ifdef CONFIG_FFCLOCK
+	sk->sk_ffclock_ffc = 0;
+	sk->sk_ffclock_tsmode = ffclock_tsmode;
+#endif
+
 #if BITS_PER_LONG==32
 	seqlock_init(&sk->sk_stamp_seq);
 #endif
@@ -2856,7 +2868,7 @@ void sock_init_data(struct socket *sock, struct sock *sk)
 
 #ifdef CONFIG_NET_RX_BUSY_POLL
 	sk->sk_napi_id		=	0;
-	sk->sk_ll_usec		=	READ_ONCE(sysctl_net_busy_read);
+	sk->sk_ll_usec		=	sysctl_net_busy_read;
 #endif
 
 	sk->sk_max_pacing_rate = ~0U;

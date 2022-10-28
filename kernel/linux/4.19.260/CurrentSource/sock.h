@@ -74,6 +74,10 @@
 #include <net/smc.h>
 #include <net/l3mdev.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -511,6 +515,10 @@ struct sock {
 	void                    (*sk_destruct)(struct sock *sk);
 	struct sock_reuseport __rcu	*sk_reuseport_cb;
 	struct rcu_head		sk_rcu;
+#ifdef CONFIG_FFCLOCK
+	ffcounter		sk_ffclock_ffc;
+	long			sk_ffclock_tsmode;
+#endif
 };
 
 enum sk_pacing {
@@ -1381,7 +1389,7 @@ void __sk_mem_reclaim(struct sock *sk, int amount);
 /* sysctl_mem values are in pages, we convert them in SK_MEM_QUANTUM units */
 static inline long sk_prot_mem_limits(const struct sock *sk, int index)
 {
-	long val = READ_ONCE(sk->sk_prot->sysctl_mem[index]);
+	long val = sk->sk_prot->sysctl_mem[index];
 
 #if PAGE_SIZE > SK_MEM_QUANTUM
 	val <<= PAGE_SHIFT - SK_MEM_QUANTUM_SHIFT;
@@ -2400,37 +2408,20 @@ static inline void sock_recv_ts_and_drops(struct msghdr *msg, struct sock *sk,
 void __sock_tx_timestamp(__u16 tsflags, __u8 *tx_flags);
 
 /**
- * _sock_tx_timestamp - checks whether the outgoing packet is to be time stamped
+ * sock_tx_timestamp - checks whether the outgoing packet is to be time stamped
  * @sk:		socket sending this packet
  * @tsflags:	timestamping flags to use
  * @tx_flags:	completed with instructions for time stamping
- * @tskey:      filled in with next sk_tskey (not for TCP, which uses seqno)
  *
  * Note: callers should take care of initial ``*tx_flags`` value (usually 0)
  */
-static inline void _sock_tx_timestamp(struct sock *sk, __u16 tsflags,
-				      __u8 *tx_flags, __u32 *tskey)
-{
-	if (unlikely(tsflags)) {
-		__sock_tx_timestamp(tsflags, tx_flags);
-		if (tsflags & SOF_TIMESTAMPING_OPT_ID && tskey &&
-		    tsflags & SOF_TIMESTAMPING_TX_RECORD_MASK)
-			*tskey = sk->sk_tskey++;
-	}
-	if (unlikely(sock_flag(sk, SOCK_WIFI_STATUS)))
-		*tx_flags |= SKBTX_WIFI_STATUS;
-}
-
-static inline void sock_tx_timestamp(struct sock *sk, __u16 tsflags,
+static inline void sock_tx_timestamp(const struct sock *sk, __u16 tsflags,
 				     __u8 *tx_flags)
 {
-	_sock_tx_timestamp(sk, tsflags, tx_flags, NULL);
-}
-
-static inline void skb_setup_tx_timestamp(struct sk_buff *skb, __u16 tsflags)
-{
-	_sock_tx_timestamp(skb->sk, tsflags, &skb_shinfo(skb)->tx_flags,
-			   &skb_shinfo(skb)->tskey);
+	if (unlikely(tsflags))
+		__sock_tx_timestamp(tsflags, tx_flags);
+	if (unlikely(sock_flag(sk, SOCK_WIFI_STATUS)))
+		*tx_flags |= SKBTX_WIFI_STATUS;
 }
 
 /**
@@ -2534,9 +2525,6 @@ extern int sysctl_optmem_max;
 
 extern __u32 sysctl_wmem_default;
 extern __u32 sysctl_rmem_default;
-
-/* On 32bit arches, an skb frag is limited to 2^15 */
-#define SKB_FRAG_PAGE_ORDER	get_order(32768)
 
 static inline int sk_get_wmem0(const struct sock *sk, const struct proto *proto)
 {
