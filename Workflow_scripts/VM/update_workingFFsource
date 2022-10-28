@@ -1,20 +1,28 @@
 #!/usr/bin/env bash
 # #!/bin/bash
 
-# Take an optional parameter specifying the full version you want
+# options  -s  :  replace entire source tree from earthly artifacts, not just FFfiles
+#          version string
+#   Takes an optional parameter specifying the full version you want
 #   if absent, will try to find a version which exactly matches running system
 #   if that fails:
 #       FreeBSD:  gives up
 #       Linux:    tries to find the closest match, gives up if fails
 
-echo Updating working FF Source
+echo -e "${BLU}==== Updating working FF Source ====${CLE}"
 
 # Target dir
 Based="$HOME/FFkernel_Work"
 FFtarget="$Based/FFclock_working"
-# Source dir
+
+## Source dir
 MountPoint="V4_mountedfrom_Icaro"
-Repo="$Based/$MountPoint/RADclock_mycurrent"
+RealRepo="$Based/$MountPoint/RADclock_mycurrent"
+TestRepo="$Based/$MountPoint/TestingGround/PortloopRepo"	# alternative for tesing port drafts
+Repo=$RealRepo
+read -p "** Repo is set to $Repo, continue [Yn] ? " ans
+[[ "$ans" == "n" ]] && exit
+
 KernDir="$Repo/kernel"
 
 ## Select the source directory FFsource from the repo
@@ -25,56 +33,55 @@ OS=`uname -s`
 
 case $OS in
 
-	FreeBSD)
-		if [[ "$1" != "" ]]; then
-			OSv=$1
-		else
-			OSv=`uname -r | cut -d'-' -f1`
-		fi
-		FFsource=$KernDir/freebsd/FreeBSD-$OSv/CurrentSource
+FreeBSD)
+	if [[ "$1" != "" ]]; then
+		OSv=$1
+	else
+		OSv=`uname -r | cut -d'-' -f1`
+	fi
+	FFsource=$KernDir/freebsd/FreeBSD-$OSv/CurrentSource
 
-		if [[ ! -e $FFsource ]]; then
-			echo "$FFsource dir not available in repo"
+	if [[ ! -e $FFsource ]]; then
+		echo "$FFsource dir not available in repo"
+		exit
+	fi;;
+
+Linux)
+	OSfullv=`uname -r`						# VERSION.PATCHLEVEL.SUBLEVEL current running
+	OSv=`echo $OSfullv | cut -d'.' -f1-2`  	# VERSION.PATCHLEVEL = point release
+	if [[ "$1" != "" && "$1" != "-s" ]]; then
+		OSusing=$1
+		if [[ ! -e $KernDir/linux/$OSusing ]]; then
+			echo "Version $OSusing does not exist in the repo"
 			exit
-		fi;;
-
-	Linux)
-		OSfullv=`uname -r`			# VERSION.PATCHLEVEL.SUBLEVEL current running
-		OSv=`echo $OSfullv | cut -d'.' -f1-2`  	 # VERSION.PATCHLEVEL = point release
-		#OSfullv=$OSv".0"		# did this before changed dir names
-		if [[ "$1" != "" && "$1" != "-s" ]]; then
-			OSusing=$1
-			if [[ ! -e $KernDir/linux/$OSusing ]]; then
-				echo "Version $OSusing does not exist in the repo"
-				exit
-			fi
+		fi
+	else
+		if [[ -e $KernDir/linux/$OSfullv ]]; then
+			OSusing=$OSfullv		# Found exact match to current system, will use
 		else
-			if [[ -e $KernDir/linux/$OSfullv ]]; then
-				OSusing=$OSfullv		# Found exact match to current system, will use
+			echo -n "Couldn't find running version $OSfullv directory in repo"
+			OSusing=`ls $KernDir/linux/ |grep "$OSv" |tail -1 |cut -d'.' -f1-3 |tr -d '/'`
+			if [[ ! -e $KernDir/linux/$OSusing ]]; then
+				echo
+				echo -n "Looked for a close $OSv match but didn't find one - "
+				echo "don't know what you what, giving up"
+				exit
 			else
-				echo -n "Couldn't find running version $OSfullv directory in repo"
-				OSusing=`ls $KernDir/linux/ |grep "$OSv" |tail -1 |cut -d'.' -f1-3 |tr -d '/'`
-				if [[ ! -e $KernDir/linux/$OSusing ]]; then
-					echo
-					echo -n "Looked for a close $OSv match but didn't find one - "
-					echo "don't know what you what, giving up"
-					exit
-				else
-					echo " - trying $OSusing instead"
-				fi
+				echo " - trying $OSusing instead"
 			fi
 		fi
-		FFsource=$KernDir/linux/$OSusing/CurrentSource
+	fi
+	FFsource=$KernDir/linux/$OSusing/CurrentSource
 
-		# Optionally replace entire source tree before patching 
-		if [[ "$1" == "-s" ]]; then
-			#Kname=$OSv.235				# should read desired SUBLEVEL from command line option 
-			Installd="/usr/src/linux-source-$OSv"		# dirname always VERSION.PATCHLEVEL, regardless of SUBLEVEL
-			FullSrcDir="$Repo/artifacts/kernelsourcefiles/deb-$OSusing/linux-source"
-			echo " **before patching, Copying full source tree at $FullSrcDir to $Installd -- could take a while"
-			scp -r $FullSrcDir $Installd 
-			ls -ltr /usr/src |tail -3
-		fi;;
+	# Optionally replace entire source tree before patching
+	if [[ "$1" == "-s" ]]; then
+		Installd="/usr/src/linux-source-$OSv"	# dirname always VERSION.PATCHLEVEL, regardless of SUBLEVEL
+		FullSrcDir="$Repo/artifacts/kernelsourcefiles/deb-$OSusing/linux-source"
+		echo " **before patching, Copying full source tree at $FullSrcDir to $Installd -- could take a while"
+		scp -r $FullSrcDir $Installd
+		ls -ltr /usr/src |tail -3
+	fi;;
+
 esac
 
 
@@ -109,5 +116,5 @@ case $OS in
 #		echo "  Also copying header files into $Included"
 #		\cp $FFtarget/ffclock.h	$Included/linux/
 		#Included="/usr/src/linux-source-$OSv/include/"
-		#echo "  On Linux, not yet copying header files into $Included or anywhere else"
+		echo "  On Linux, not yet copying header files into $Included or anywhere else"
 esac

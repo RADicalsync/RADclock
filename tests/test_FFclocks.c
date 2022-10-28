@@ -282,7 +282,8 @@ main (int argc, char *argv[])
 	pktcap_set_tsmode(clock, pcap_handle, tsmode, custom);
 	// Reuse custom as a tstype argument for  ts_format_to_double  below
 	if (tsmode == PKTCAP_TSMODE_FFNATIVECLOCK)
-		custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;
+		custom = 0x3010;
+//		custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;	// not available in any .h
 
 
 	

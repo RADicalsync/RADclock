@@ -16,12 +16,12 @@ fi
 OnPi="No"
 Arch=`uname -m`
 if [ $Arch == "aarch64" ]; then
-        if [ $OS == "Linux" ]; then
-                OnPi="Yes"
-                ServerHome="darryl@192.168.1.104"
-                Repo="Papers/TSCclock/Programs/V4/RADclock_mycurrent"
-                echo "I see $OS on $Arch, I infer you are on a Pi. Expecting repo at $ServerHome"
-        fi
+	if [ $OS == "Linux" ]; then
+		OnPi="Yes"
+		ServerHome="darryl@192.168.1.104"
+		Repo="Papers/TSCclock/Programs/V4/RADclock_mycurrent"
+		echo "I see $OS on $Arch, I infer you are on a Pi. Expecting repo at $ServerHome"
+	fi
 fi
 
 # Get the location of the package
@@ -31,7 +31,7 @@ if [ $OnPi == "Yes" ]; then
 	RADdir="$ServerHome:$Repo"
 	PkgDir="$RADdir/artifacts/radclock-with-kernel/arm64/$BuildDir"
 else
-    RADdir="$Based/V4_mountedfrom_Icaro/RADclock_mycurrent"
+	RADdir="$Based/V4_mountedfrom_Icaro/RADclock_mycurrent"
 	PkgDir="$RADdir/artifacts/radclock-with-kernel/amd64/$BuildDir"
 fi
 

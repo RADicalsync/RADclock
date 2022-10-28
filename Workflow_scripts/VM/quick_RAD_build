@@ -2,7 +2,7 @@
 # #!/bin/bash
 
 Based="$HOME/FFkernel_Work"
-RADbuild=$Based/RADclock_working
+RADbuild="$Based/RADclock_working"
 
 echo Updating and re-making RADclock
 

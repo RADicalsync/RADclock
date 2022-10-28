@@ -6,6 +6,8 @@ if [ `id -u` -ne 0 ]; then
 	exit 0
 fi
 
+echo -e "${BLU}==== Moving Source into Source Tree ====${CLE}"
+
 Arch=`uname -m`
 OS=`uname -s`
 
@@ -23,6 +25,7 @@ case $OS in
 		OSv=`uname -r | cut -d'-' -f1`
 		Installd="/usr/src";;
 	Linux)
+		OSmajor=`uname -r | cut -d'.' -f1`	# eg  4     if  4.19.235
 		OSv=`uname -r | cut -d'.' -f1-2`	# VERSION.PATCHLEVEL currently running, assumed same as target
 		Installd="/usr/src/linux-source-$OSv"
 		SUBLEVEL=`grep "SUBLEVEL =" $Installd/Makefile | cut -d' ' -f3`;;  # SUBLEVEL of target
@@ -71,28 +74,30 @@ if [ $OS == "Linux" ]; then
 		$CMD $FFsource/radclock.h 			$Installd/include/linux/
 	fi
 	if [ -e "$FFsource/ffclock.c" ]; then
-		echo "  [detected ffclock dir]"
+#		echo "  [detected ffclock dir]"
 		mkdir -pv  $Installd/drivers/ffclock
 		$CMD $FFsource/{Kconfig,Makefile,ffclock.c}	$Installd/drivers/ffclock/
 		$CMD $FFsource/ffclock.h 			$Installd/include/linux/
 	fi
 #	$CMD $FFsource/{clocksource,timekeeper_internal,skbuff,syscalls}.h $Installd/include/linux/
-	$CMD $FFsource/{skbuff,syscalls}.h	$Installd/include/linux/
+	$CMD $FFsource/{skbuff,syscalls}.h		$Installd/include/linux/
 	$CMD $FFsource/time.c					$Installd/kernel/time/
 	$CMD $FFsource/sockios.h				$Installd/include/uapi/linux/
-#	$CMD $FFsource/asm-generic_sockios.h	$Installd/include/uapi/asm-generic/sockios.h
+	if [ $OSmajor -le 4 ]; then		# is absent in repo for ≥ 4.19.235 anyway, so no harm there
+		$CMD $FFsource/asm-generic_sockios.h	$Installd/include/uapi/asm-generic/sockios.h
+	fi
 	$CMD $FFsource/sock.h					$Installd/include/net/
 #	$CMD $FFsource/{clocksource,timekeeping}.c	$Installd/kernel/time/
 	$CMD $FFsource/timekeeping.c			$Installd/kernel/time/
-	$CMD $FFsource/{skbuff,sock,dev}.c	$Installd/net/core/
+	$CMD $FFsource/{skbuff,sock,dev}.c		$Installd/net/core/
 	$CMD $FFsource/socket.c					$Installd/net/
 	$CMD $FFsource/af_inet.c				$Installd/net/ipv4/
 	$CMD $FFsource/af_packet.c				$Installd/net/packet/
 # VDSO stuff dropped for now
-#	$CMD $FFsource/vgtod.h				$Installd/arch/x86/include/asm/
-#	$CMD $FFsource/vclock_gettime.c	$Installd/arch/x86/entry/vdso/
+#	$CMD $FFsource/vgtod.h					$Installd/arch/x86/include/asm/
+#	$CMD $FFsource/vclock_gettime.c			$Installd/arch/x86/entry/vdso/
 #	$CMD $FFsource/vdso*					$Installd/arch/x86/entry/vdso/
-#	$CMD $FFsource/vdso32.lds.S		$Installd/arch/x86/entry/vdso/vdso32/
+#	$CMD $FFsource/vdso32.lds.S				$Installd/arch/x86/entry/vdso/vdso32/
 	if [ $OnPi == "No" ]; then
 		# AMD specific
 		$CMD $FFsource/syscall_{32,64}.tbl	$Installd/arch/x86/entry/syscalls/

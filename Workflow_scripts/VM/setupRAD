@@ -6,24 +6,24 @@ Arch=`uname -m`
 OS=`uname -s`
 OnPi="No"
 if [ $Arch == "aarch64" ]; then
-        if [ $OS == "Linux" ]; then
-                OnPi="Yes"
-                ServerHome="darryl@192.168.1.104"
-                Repo="Papers/TSCclock/Programs/V4/RADclock_mycurrent"
-                echo "I see $OS on $Arch, I infer you are on a Pi. Expecting repo at $ServerHome"
-        fi
+	if [ $OS == "Linux" ]; then
+		OnPi="Yes"
+		ServerHome="darryl@192.168.1.104"
+		Repo="Papers/TSCclock/Programs/V4/RADclock_mycurrent"
+		echo "I see $OS on $Arch, I infer you are on a Pi. Expecting repo at $ServerHome"
+	fi
 fi
 
 Based="$HOME/FFkernel_Work"
-RADbuild=$Based/RADclock_working
-echo Configuring RADclock for the first time, assuming build directory $RADbuild exists
+RADbuild="$Based/RADclock_working"
+echo -e "${BLE}Configuring RADclock for the first time, assuming build directory $RADbuild exists{CLE}$"
 
 echo
 echo "*** Get current source ***"
-update_workingRADclock --delete	
+update_workingRADclock --delete			# delete may not do everything you want..
 
 
-# regenerate git-dependent M4 version macro.  Requires git installed on source machine.
+# Regenerate git-dependent M4 version macro.  Requires git installed on source machine.
 echo
 echo "*** Generating distribution version macro from repo dir [needed for m4 for configure] ***"
 if [ $OnPi == "Yes" ]; then
@@ -32,11 +32,11 @@ if [ $OnPi == "Yes" ]; then
 	scp $RADsource/version.m4 $RADbuild 
 	#ssh $ServerHome "cd $Repo; \rm version.m4"
 else
-	RADsource=$Based/V4_mountedfrom_Icaro/RADclock_mycurrent
+	RADsource="$Based/V4_mountedfrom_Icaro/RADclock_mycurrent"
 	cd $RADsource
-	version.sh 				# must run in repo dir, has git command executed on build machine
+	version.sh 						# must run in repo dir, has git command executed on build machine
 	cat version.m4
-	mv -f version.m4  $RADbuild		# version.m4 never tracked by git, and not cleaned by cleanbuildtree
+	mv -f version.m4  $RADbuild		# version.m4 never tracked by git, not cleaned by cleanbuildtree
 fi
 
 
@@ -63,10 +63,10 @@ if [ $? -eq 0 ]; then
 	echo "*** Installing radclock  ***"
 	sudo make -s install
 	echo
-	ls -al `which radclock`
+	ls -al `which -a radclock`
 else
 	echo
-	echo "*** Radclock build failed (see RADbuild.log), skipping installation ***"
+	echo -e "${RED}*** Radclock build failed (see RADbuild.log), skipping installation ***${CLE}"
 fi
 
 echo "------------------------------------------------------------------------------"

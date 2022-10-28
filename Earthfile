@@ -4,7 +4,7 @@
 # amd64 and arm64 for the Raspberry Pi (RPi).
 
 # Select the distribution we want
-#ARG DIST=buster
+# ARG DIST=buster
 ARG DIST=bullseye
 #ARG DIST=bookworm
 #ARG DIST=11.3
@@ -109,19 +109,19 @@ COPY_IN_FFFILES:
 
 	COPY $SRC/ffclock.c						$DEST/drivers/ffclock/
 	COPY $SRC/ffclock.h						$DEST/include/linux/
-	COPY $SRC/Kconfig							$DEST/drivers/ffclock/
+	COPY $SRC/Kconfig						$DEST/drivers/ffclock/
 	COPY $SRC/Makefile						$DEST/drivers/ffclock/
 
 	COPY $SRC/skbuff.c						$DEST/net/core/
 	COPY $SRC/skbuff.h						$DEST/include/linux/
-	COPY $SRC/sock.c							$DEST/net/core/
+	COPY $SRC/sock.c						$DEST/net/core/
 	COPY $SRC/socket.c						$DEST/net/
-	COPY $SRC/sock.h							$DEST/include/net/
+	COPY $SRC/sock.h						$DEST/include/net/
 	COPY $SRC/sockios.h						$DEST/include/uapi/linux/
-	COPY $SRC/syscalls.h						$DEST/include/linux/
-	COPY $SRC/time.c							$DEST/kernel/time/
+	COPY $SRC/syscalls.h					$DEST/include/linux/
+	COPY $SRC/time.c						$DEST/kernel/time/
 	COPY $SRC/timekeeping.c					$DEST/kernel/time/
-	#COPY $SRC/vclock_gettime.c			$DEST/arch/x86/entry/vdso/
+	#COPY $SRC/vclock_gettime.c				$DEST/arch/x86/entry/vdso/
 	#COPY $SRC/vgtod.h						$DEST/arch/x86/include/asm/
 
 	# ARCH specific files (related to syscall numbers only)
@@ -276,33 +276,33 @@ COLLECT_FFFILES:
 	ARG DEST="./artifacts/kernelsourcefiles/$SUBDIR/"
 
 	# If want entire source
-	SAVE ARTIFACT .							AS LOCAL $DEST/"linux-source"
+#	SAVE ARTIFACT .							AS LOCAL $DEST/"linux-source"
 
 	#RUN ls -altr
-	SAVE ARTIFACT net/ipv4/af_inet.c							AS LOCAL $DEST
-	SAVE ARTIFACT net/packet/af_packet.c					AS LOCAL $DEST
+	SAVE ARTIFACT net/ipv4/af_inet.c					AS LOCAL $DEST
+	SAVE ARTIFACT net/packet/af_packet.c				AS LOCAL $DEST
 #	SAVE ARTIFACT include/uapi/asm-generic/sockios.h	AS LOCAL $DEST"asm-generic_sockios.h"
-	SAVE ARTIFACT net/core/dev.c								AS LOCAL $DEST
-	SAVE ARTIFACT drivers/Kconfig								AS LOCAL $DEST"drivers_Kconfig"
-	SAVE ARTIFACT drivers/Makefile							AS LOCAL $DEST"drivers_Makefile"
+	SAVE ARTIFACT net/core/dev.c						AS LOCAL $DEST
+	SAVE ARTIFACT drivers/Kconfig						AS LOCAL $DEST"drivers_Kconfig"
+	SAVE ARTIFACT drivers/Makefile						AS LOCAL $DEST"drivers_Makefile"
 
 	# Not present in non-FF source
 	SAVE ARTIFACT --if-exists  drivers/ffclock			AS LOCAL $DEST
 	SAVE ARTIFACT --if-exists  include/linux/ffclock.h	AS LOCAL $DEST
 
-	SAVE ARTIFACT net/core/skbuff.c							AS LOCAL $DEST
-	SAVE ARTIFACT include/linux/skbuff.h					AS LOCAL $DEST
-	SAVE ARTIFACT include/net/sock.h							AS LOCAL $DEST
-	SAVE ARTIFACT net/core/sock.c								AS LOCAL $DEST
-	SAVE ARTIFACT net/socket.c									AS LOCAL $DEST
+	SAVE ARTIFACT net/core/skbuff.c						AS LOCAL $DEST
+	SAVE ARTIFACT include/linux/skbuff.h				AS LOCAL $DEST
+	SAVE ARTIFACT include/net/sock.h					AS LOCAL $DEST
+	SAVE ARTIFACT net/core/sock.c						AS LOCAL $DEST
+	SAVE ARTIFACT net/socket.c							AS LOCAL $DEST
 	SAVE ARTIFACT include/uapi/linux/sockios.h			AS LOCAL $DEST
-	SAVE ARTIFACT include/linux/syscalls.h					AS LOCAL $DEST
-	SAVE ARTIFACT kernel/time/time.c							AS LOCAL $DEST
+	SAVE ARTIFACT include/linux/syscalls.h				AS LOCAL $DEST
+	SAVE ARTIFACT kernel/time/time.c					AS LOCAL $DEST
 	SAVE ARTIFACT kernel/time/timekeeping.c				AS LOCAL $DEST
 
 	# VSDO files  ** Giving up on VSDO for now, complicated and not essential **
 	# SAVE ARTIFACT arch/x86/entry/vdso/vclock_gettime.c	AS LOCAL $DEST
-	# SAVE ARTIFACT arch/x86/include/asm/vgtod.h				AS LOCAL $DEST
+	# SAVE ARTIFACT arch/x86/include/asm/vgtod.h			AS LOCAL $DEST
 	# Dropping additional files for VDSO attempt for now, find them in 4.19.235/CurrentSource
 
 	# AMD specific files

@@ -5,10 +5,10 @@
 # use $1 $2 to pass up to two options, most important are -n for safe testing, --delete to clean
 # TODO Add switch to include version.sh 
 
-echo Updating working RADclock with repo source  [leaving all non-source files]
+echo -e "${BLU}Updating working RADclock with repo source  [leaving all non-source files]${CLE}"
 
 
-# Pi detection 
+## Pi detection
 Arch=`uname -m`
 OS=`uname -s`
 OnPi="No"
@@ -43,11 +43,11 @@ echo "  rSyncing from  $RADsource  -->  $RADtarget"
 rsync $1 $2 -aci --no-owner --no-group	 $RADsource/   $RADtarget   \
 				--exclude='.git'      --exclude='version.sh'  --exclude='artifacts' \
 				--exclude='.DS_Store' --exclude='*/.DS_Store' --exclude='*/*/.DS_Store'	\
-				
-# Original itemized sets 
-#rsync $1  -aci $RADsource/libradclock/*.{c,h}	$RADtarget/libradclock/
-#rsync $1  -aci $RADsource/radclock/*.{c,h}	$RADtarget/radclock/
-#rsync $1  -aci $RADsource/examples/*.c		$RADtarget/examples
-#rsync $1  -aci $RADsource/tests/*.c		$RADtarget/tests
+
+## Original itemized sets
+#rsync $1  -aci $RADsource/libradclock/*.{c,h}		$RADtarget/libradclock/
+#rsync $1  -aci $RADsource/radclock/*.{c,h}			$RADtarget/radclock/
+#rsync $1  -aci $RADsource/examples/*.c				$RADtarget/examples
+#rsync $1  -aci $RADsource/tests/*.c				$RADtarget/tests
 #rsync $1  -aci $RADsource/{Makefile.am,configure.ac}	$RADtarget
 #rsync $1  -aci $RADsource/{ChangeLog,NEWS,README}	$RADtarget

@@ -22,9 +22,15 @@ The repo is not cloned into the target machine. Instead source and/or executable
 from the repo into the target as required.  This is convenient, for example it allows WIP 
 changes to the code, not yet committed, to be tried out just by running a script. 
 
-For the FF patched kernel, the approach is to directly use the FF-modified files stored in 
+For the FF patched kernel, the approach is to directly use the FF-modified "FFfiles" stored in 
 OS and version specific CurrentSource directories under repo/kernel/, rather than patches.
 
+
+## 
+portloop                 largely-automates the "port-loop" process for detailed generation of the 
+ git commits supporting the porting of FFfiles from an Old OS version with an exising port,
+ to a new one.  Works for Linux or FreeBSD.  Is run on the host  machine (not a VM).  
+ See header for usage.
 
 ## VM  
 This directory holds scripts suitable for development within an amd64 Virtual Machine, though
@@ -58,12 +64,19 @@ update_workingRADclock    grab the latest from the repo
 quick_RAD_build                  compile and install
 
 ### Linux only
-update_linuxSource         update source to a new/desired SUBLEVEL
-install_earthlyFF               install amd64 kernel already built by earthly, stored in repo **NOT WORKING**
+update_linuxSource         update source to a new/desired SUBLEVEL.  Is somewhat smart
+                                        but requires supervision. Run with "-i"  to get risk free information.
+save_linuxSource            save and recover files in /usr/src to/from the host OS, sufficient to 
+                                        enable recovery of the system (debs files) or an ability to compile it.
+                                        See header for useful workflows including other scripts.
+install_earthlyFF              install amd64 kernel already built by earthly, stored in repo 
+                                        Can also be used to install .debs take from other source, eg 
+                                        existing ones in /usr/src with  "-e"
 install_earthlyRAD            install a radclock already built by earthly, stored in repo
 
 ### Typical workflow once set up
-quick_FF_build			gets the latest FF source, compiles, installs, ready to reboot
+quick_FF_build                gets the latest FF source, compiles, installs, ready to reboot
+                                        Just compiles the current source with "-n"
 quick_RAD_build             gets the latest RAD source, compiles, installs, tests, ready to run
 
 
@@ -87,7 +100,7 @@ setupRPi        sets up a given standard kernel and the initial headless connect
 
 ### On the PI:  bootstrap the workflow 
 setup-onPi     creates directories, installs scripts into position, and sets up symlinks to scripts.
-				Sets up ongoing headless operation.
+                       Sets up ongoing headless operation.
 
 ###  Typical workflow once set up
 install_earthlyFF                   install a new kernel already built by earthly, stored in repo

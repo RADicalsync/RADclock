@@ -24,6 +24,44 @@ PAGER="less"
 #LSCOLORS="gxfxcxdxbxegedabagacad"
 
 
+## ANSI escape code Colour definitions
+# must use -e option to echo to enable bashslash chars
+# \e = \033
+CLE='\e[0m'			# must use to return to normal
+BOLD='\e[1m'
+## attribute control codes  (number after the "[")
+#0	normal
+#1  bold
+#2  dim
+#3  italic
+#4  underline
+#5,6  flashing
+#7  invert text and background?
+#8  invisible ?
+#9  strike through
+#21 double underline
+# chars
+RED='\e[0;31m' ;   lRED='\e[1;31m'
+GRE='\e[0;32m' ;   lGRE='\e[1;32m'		# green
+YEL='\e[0;33m' ;   lYEL='\e[1;33m'
+BLU='\e[0;34m' ;   lBLU='\e[1;34m'
+MAG='\e[0;35m' ;   lMAG='\e[1;35m'
+CYA='\e[0;36m' ;   lCYA='\e[1;36m'
+GRY='\e[0;37m' ;   dGRY='\e[1;30m'		# grey
+WHI='\e[1;37m'
+# background
+bg_RED='\e[0;41m'
+bg_GRE='\e[0;42m'
+bg_YEL='\e[0;43m'
+bg_BLU='\e[0;44m'
+bg_MAG='\e[0;45m'
+bg_CYA='\e[0;46m'
+
+export CLE BOLD WHI
+export  RED  GRE  YEL  BLU  MAG  CYA  GRY
+export lRED lGRE lYEL lBLU lMAG lCYA dGRY
+
+
 export MANPATH PAGER LSCOLORS
 ##############################################################################
 
@@ -78,7 +116,7 @@ case $OS in
 		alias relocate='sudo /usr/libexec/locate.updatedb -e /root/FFkernel_Work/V4_mountedfrom_Icaro/';
 		alias clocate='llt /private/var/db/locate.database';;
 	Linux)
-		if [ $OnPi == "Yes" ]; then
+		if [ "$OnPi" == "Yes" ]; then
 			alias relocate='/bin/updatedb'
 		else
 			alias relocate='sudo /usr/bin/updatedb -e /root/FFkernel_Work/V4_mountedfrom_Icaro/'
