@@ -89,6 +89,10 @@
 #include <linux/bpf.h>
 #include <net/compat.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 #include "internal.h"
 
 /*
@@ -2198,6 +2202,9 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	unsigned int netoff;
 	struct sk_buff *copy_skb = NULL;
 	struct timespec64 ts;
+#ifdef CONFIG_FFCLOCK
+	unsigned short ffc_off;
+#endif
 	__u32 ts_status;
 	bool is_drop_n_account = false;
 	unsigned int slot_id = 0;
@@ -2251,13 +2258,31 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 		snaplen = res;
 
 	if (sk->sk_type == SOCK_DGRAM) {
+#ifdef CONFIG_FFCLOCK
+/* We would prefer to push the timestamp in the tpacket header instead of
+ * hiding it into the gap between the sockaddr_ll and the mac/net header.
+ * But this needs a new libpcap, so simply ensure we make enough space
+ * for libpcap to play with all of this without it stepping on our
+ * timestamp. Due to the 16bit alignment, in most cases we should not
+ * use more memory.
+ */
+		macoff = netoff = TPACKET_ALIGN(po->tp_hdrlen + 16 + sizeof(ffcounter)) +
+				po->tp_reserve;
+#else
 		macoff = netoff = TPACKET_ALIGN(po->tp_hdrlen) + 16 +
 				  po->tp_reserve;
+#endif
 	} else {
 		unsigned int maclen = skb_network_offset(skb);
+#ifdef CONFIG_FFCLOCK
+		netoff = TPACKET_ALIGN(po->tp_hdrlen +
+				       (maclen < 16 ? 16 : maclen) + sizeof(ffcounter)) +
+						 po->tp_reserve;
+#else
 		netoff = TPACKET_ALIGN(po->tp_hdrlen +
 				       (maclen < 16 ? 16 : maclen)) +
 				       po->tp_reserve;
+#endif
 		if (po->has_vnet_hdr) {
 			netoff += sizeof(struct virtio_net_hdr);
 			do_vnet = true;
@@ -2278,11 +2303,8 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 					copy_skb = skb_get(skb);
 					skb_head = skb->data;
 				}
-				if (copy_skb) {
-					memset(&PACKET_SKB_CB(copy_skb)->sa.ll, 0,
-					       sizeof(PACKET_SKB_CB(copy_skb)->sa.ll));
+				if (copy_skb)
 					skb_set_owner_r(copy_skb, sk);
-				}
 			}
 			snaplen = po->rx_ring.frame_size - macoff;
 			if ((int)snaplen < 0) {
@@ -2346,6 +2368,18 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 	spin_unlock(&sk->sk_receive_queue.lock);
 
 	skb_copy_bits(skb, 0, h.raw + macoff, snaplen);
+
+#ifdef CONFIG_FFCLOCK
+	/* If requested by tsmode, pass the raw skb timestamp to sk, and convert the
+	 * raw to a normal timestamp to populate/overwrite that in skb. */
+//	printk("FFC tpacket_rcv:  skb->ffclock_ffc = %llu\n", skb->ffclock_ffc);
+//	printk("FFC tpacket_rcv: BEFORE skb->tstamp = %lld,  &sk->..._ffc = %llu \n",
+//			skb->tstamp, sk->sk_ffclock_ffc);
+	ffclock_fill_timestamps(skb->ffclock_ffc, sk->sk_ffclock_tsmode,
+					&sk->sk_ffclock_ffc, &skb->tstamp);
+//	printk("FFC tpacket_rcv: AFTER  skb->tstamp = %lld,  &sk->..._ffc = %llu \n",
+//			skb->tstamp, sk->sk_ffclock_ffc);
+#endif
 
 	/* Always timestamp; prefer an existing software timestamp taken
 	 * closer to the time of capture.
@@ -2413,6 +2447,43 @@ static int tpacket_rcv(struct sk_buff *skb, struct net_device *dev,
 		sll->sll_ifindex = orig_dev->ifindex;
 	else
 		sll->sll_ifindex = dev->ifindex;
+
+#ifdef CONFIG_FFCLOCK
+	/* Insert vcount timestamp in here. It has to be inserted in front of the
+	 * pointer libpcap passes to the user callback. Because libpcap does write
+	 * in the gap between the SLL header and tp_mac, things are a bit messy.
+	 * Mimic libpcap logic in here, which will hopefully not change ...
+	 * Clearly this code depends on libpcap design, a poor feature, but no
+	 * other choice so far.
+	 */
+	ffc_off = macoff;
+
+	/* If the socket has been open in mode DGRAM, libpcap will add a
+	 * sll_header (16bytes) (cooked interface)
+	 */
+	if (sk->sk_type == SOCK_DGRAM)
+		ffc_off -= 16;
+
+	/* If packet of type 2 or 3, and vlan and enough data, libpcap will rebuild
+	 * the vlan tag in the header
+	 */
+	if ( po->tp_version == TPACKET_V2 &&
+		h.h2->tp_vlan_tci && h.h2->tp_snaplen >= 2 * 6 /* ETH_ALEN=6 */)
+	{
+		ffc_off -= 4 /* VLAN_TAG_LEN=4 */;
+		printk("adjusting VLAN offset for TPACKET_V2 (%s:%d)\n", __FILE__, __LINE__);
+	}
+	if (po->tp_version == TPACKET_V3 &&
+		h.h3->hv1.tp_vlan_tci && h.h3->tp_snaplen >= 2 * 6 /* ETH_ALEN=6 */)
+	{
+		ffc_off -= 4 /* VLAN_TAG_LEN=4 */;
+		printk("adjusting VLAN offset for TPACKET_V3 (%s:%d)\n", __FILE__, __LINE__);
+	}
+
+	/* Copy the vcount stamp just before where the mac/sll header wil be */
+	ffc_off -= sizeof(ffcounter);
+	memcpy(h.raw + ffc_off, &(skb->ffclock_ffc), sizeof(ffcounter));
+#endif
 
 	smp_mb();
 
@@ -2811,15 +2882,18 @@ tpacket_error:
 			virtio_net_hdr_set_proto(skb, vnet_hdr);
 		}
 
+#ifdef CONFIG_FFCLOCK
+//		printk("=====>FFC tpacket_snd: skb->ffclock_ffc = %llu\n", skb->ffclock_ffc);
+#endif
+
 		skb->destructor = tpacket_destruct_skb;
 		__packet_set_status(po, ph, TP_STATUS_SENDING);
 		packet_inc_pending(&po->tx_ring);
 
 		status = TP_STATUS_SEND_REQUEST;
 		err = po->xmit(skb);
-		if (unlikely(err != 0)) {
-			if (err > 0)
-				err = net_xmit_errno(err);
+		if (unlikely(err > 0)) {
+			err = net_xmit_errno(err);
 			if (err && __packet_get_status(po, ph) ==
 				   TP_STATUS_AVAILABLE) {
 				/* skb was destructed already */
@@ -2986,8 +3060,15 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
 	if (err)
 		goto out_free;
 
-	if ((sock->type == SOCK_RAW &&
-	     !dev_validate_header(dev, skb->data, len)) || !skb->len) {
+#ifdef CONFIG_FFCLOCK
+//	/* Update the raw FFC timestamp held on sk with that from the latest skb */
+//	printk("*** FFC packet_snd: passing skb->ffclock_ffc (%llu) to overwrite sk_ffclock_ffc (%llu)\n",
+//				skb->ffclock_ffc, sk->sk_ffclock_ffc);
+//	sk->sk_ffclock_ffc = skb->ffclock_ffc;
+#endif
+
+	if (sock->type == SOCK_RAW &&
+	    !dev_validate_header(dev, skb->data, len)) {
 		err = -EINVAL;
 		goto out_free;
 	}
@@ -3020,12 +3101,8 @@ static int packet_snd(struct socket *sock, struct msghdr *msg, size_t len)
 		skb->no_fcs = 1;
 
 	err = po->xmit(skb);
-	if (unlikely(err != 0)) {
-		if (err > 0)
-			err = net_xmit_errno(err);
-		if (err)
-			goto out_unlock;
-	}
+	if (err > 0 && (err = net_xmit_errno(err)) != 0)
+		goto out_unlock;
 
 	dev_put(dev);
 
@@ -3439,11 +3516,16 @@ static int packet_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 		sll->sll_protocol = skb->protocol;
 	}
 
+#ifdef CONFIG_FFCLOCK
+//	/* Update the raw FFC timestamp held on sk with that from the latest skb */
+//	printk("*** FFC packet_recvmsg: passing skb->ffclock_ffc (%llu) to overwrite sk_ffclock_ffc (%llu)\n",
+//				skb->ffclock_ffc, sk->sk_ffclock_ffc);
+//	sk->sk_ffclock_ffc = skb->ffclock_ffc;
+#endif
+
 	sock_recv_ts_and_drops(msg, sk, skb);
 
 	if (msg->msg_name) {
-		const size_t max_len = min(sizeof(skb->cb),
-					   sizeof(struct sockaddr_storage));
 		int copy_len;
 
 		/* If the address length field is there to be filled
@@ -3465,10 +3547,6 @@ static int packet_recvmsg(struct socket *sock, struct msghdr *msg, size_t len,
 				       0, sizeof(sll->sll_addr));
 				msg->msg_namelen = sizeof(struct sockaddr_ll);
 			}
-		}
-		if (WARN_ON_ONCE(copy_len > max_len)) {
-			copy_len = max_len;
-			msg->msg_namelen = copy_len;
 		}
 		memcpy(msg->msg_name, &PACKET_SKB_CB(skb)->sa, copy_len);
 	}
@@ -4176,6 +4254,29 @@ static int packet_ioctl(struct socket *sock, unsigned int cmd,
 		spin_unlock_bh(&sk->sk_receive_queue.lock);
 		return put_user(amount, (int __user *)arg);
 	}
+#ifdef CONFIG_FFCLOCK
+	case SIOCSFFCLOCKTSMODE:
+	{
+		long mode;
+		printk("FFC: #### processing SIOC Set FFCLOCKTSMODE, initially = 0x%04lx ####\n", sk->sk_ffclock_tsmode);
+		get_user(mode, (long __user *)arg);
+		sk->sk_ffclock_tsmode = mode;
+		printk("FFC  Setting to mode 0x%04lx\n", (long unsigned)sk->sk_ffclock_tsmode );
+//		*((long *)arg) = mode;		// provides `get after set', so caller can check it worked
+		return (0);
+	}
+	case SIOCGFFCLOCKTSMODE:
+	{
+		printk("FFC: #### processing SIOC Get FFCLOCKTSMODE, tsmode = 0x%04lx ####\n", sk->sk_ffclock_tsmode);
+		return put_user(sk->sk_ffclock_tsmode, (long __user *)arg);
+	}
+	case SIOCGFFCLOCKSTAMP:
+	{
+		printk("FFC via Get FFCLOCKSTAMP IOCTL:  sk_ffclock_ffc = %llu \n", sk->sk_ffclock_ffc);
+		return put_user(sk->sk_ffclock_ffc, (ffcounter __user *)arg);
+	}
+#endif
+
 #ifdef CONFIG_INET
 	case SIOCADDRT:
 	case SIOCDELRT:

@@ -38,6 +38,9 @@
 
 #include <linux/uaccess.h>
 #include <linux/compat.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
 #include <asm/unistd.h>
 
 #include <generated/timeconst.h>
@@ -262,6 +265,47 @@ COMPAT_SYSCALL_DEFINE2(settimeofday, struct old_timeval32 __user *, tv,
 	}
 
 	return do_sys_settimeofday64(tv ? &new_ts : NULL, tz ? &new_tz : NULL);
+}
+#endif
+
+#ifdef CONFIG_FFCLOCK
+/* Add two syscall callback functions */
+SYSCALL_DEFINE1(ffclock_getcounter, ffcounter __user *, ffcount)
+{
+	ffcounter now;
+	ffclock_read_counter(&now);
+	//printk("sys_ffclock_getcounter : is called.\n");
+
+	if (copy_to_user(ffcount, &now, sizeof(ffcounter)))
+		return -EFAULT;
+	return 0;
+}
+
+SYSCALL_DEFINE3(ffclock_getcounter_latency, ffcounter __user *, ffcount, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
+{
+	ffcounter now = {0};
+	u64 tsc1, tsc2, tsc3 = 0;
+
+#ifdef __x86_64__
+
+	/* One for fun and warmup */
+	tsc1 = rdtsc_ordered();
+	tsc1 = rdtsc_ordered();
+	tsc2 = rdtsc_ordered();
+	ffclock_read_counter(&now);
+	tsc3 = rdtsc_ordered();
+
+	tsc1 = tsc2 - tsc1;		// latency of rdtsc back to back
+	tsc2 = tsc3 - tsc2;		// latency of FFcounter read
+
+#endif
+	if (copy_to_user(ffcount, &now, sizeof(ffcounter)))
+		return -EFAULT;
+	if (copy_to_user(vcount_lat, &tsc2, sizeof(u64)))
+		return -EFAULT;
+	if (copy_to_user(tsc_lat, &tsc1, sizeof(u64)))
+		return -EFAULT;
+	return 0;
 }
 #endif
 

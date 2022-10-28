@@ -362,6 +362,10 @@
 438	common	pidfd_getfd		sys_pidfd_getfd
 439	common	faccessat2		sys_faccessat2
 440	common	process_madvise		sys_process_madvise
+#ifdef CONFIG_FFCLOCK
+441	64	ffclock_getcounter	sys_ffclock_getcounter
+442	64	ffclock_getcounter_latency	sys_ffclock_getcounter_latency
+#endif
 
 #
 # Due to a historical design error, certain syscalls are numbered differently

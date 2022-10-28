@@ -105,6 +105,10 @@
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
 unsigned int sysctl_net_busy_poll __read_mostly;
@@ -1165,6 +1169,12 @@ static long sock_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 			break;
 		case SIOCGSTAMP:
 		case SIOCGSTAMPNS:
+#ifdef CONFIG_FFCLOCK
+			printk("FFC: processing SIOC Get STAMP (%s:%d)\n", __FILE__, __LINE__);
+			ffclock_fill_timestamps(sk->sk_ffclock_ffc,
+			(sk->sk_ffclock_tsmode & ~BPF_T_FFC), NULL, // cancel any raw request
+			&sk->sk_stamp);
+#endif
 			if (!sock->ops->gettstamp) {
 				err = -ENOIOCTLCMD;
 				break;
@@ -1175,6 +1185,12 @@ static long sock_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 			break;
 		case SIOCGSTAMP_NEW:
 		case SIOCGSTAMPNS_NEW:
+#ifdef CONFIG_FFCLOCK
+			printk("FFC: processing SIOC Get STAMP_NEW (%s:%d)\n", __FILE__, __LINE__);
+			ffclock_fill_timestamps(sk->sk_ffclock_ffc,
+			(sk->sk_ffclock_tsmode & ~BPF_T_FFC), NULL, // cancel any raw request
+			&sk->sk_stamp);
+#endif
 			if (!sock->ops->gettstamp) {
 				err = -ENOIOCTLCMD;
 				break;
@@ -1670,7 +1686,7 @@ int __sys_listen(int fd, int backlog)
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock) {
-		somaxconn = READ_ONCE(sock_net(sock->sk)->core.sysctl_somaxconn);
+		somaxconn = sock_net(sock->sk)->core.sysctl_somaxconn;
 		if ((unsigned int)backlog > somaxconn)
 			backlog = somaxconn;
 
@@ -3087,6 +3103,26 @@ void socket_seq_show(struct seq_file *seq)
 #endif				/* CONFIG_PROC_FS */
 
 #ifdef CONFIG_COMPAT
+
+//#ifdef CONFIG_FFCLOCK
+//static int do_siocgffclockstamp(struct net *net, struct socket *sock,
+//			 unsigned int cmd, unsigned long long __user *up)
+//{
+//	mm_segment_t old_fs = get_fs();
+//	__u64 val;
+//	int err=0;
+//
+//	printk("compat SIOC Get FFCLOCKSTAMP used (%s:%d)\n", __FILE__, __LINE__);
+//	set_fs(KERNEL_DS);
+//	err = sock_do_ioctl(net, sock, cmd, (unsigned long)&val);
+//	set_fs(old_fs);
+//	if (!err)
+//		err = put_user(val, up);        // I think this is good.
+//
+//	return err;
+//}
+//#endif
+
 static int compat_dev_ifconf(struct net *net, struct compat_ifconf __user *uifc32)
 {
 	struct compat_ifconf ifc32;
@@ -3286,6 +3322,12 @@ static int compat_sock_ioctl_trans(struct file *file, struct socket *sock,
 	case SIOCSHWTSTAMP:
 	case SIOCGHWTSTAMP:
 		return compat_ifr_data_ioctl(net, cmd, argp);
+#ifdef CONFIG_FFCLOCK
+	case SIOCGFFCLOCKSTAMP:
+		printk("found SIOC Get FFCLOCKSTAMP (%s:%d)\n", __FILE__, __LINE__);
+		//return do_siocgffclockstamp(net, sock, cmd, argp);
+		return 0;
+#endif
 
 	case FIOSETOWN:
 	case SIOCSPGRP:

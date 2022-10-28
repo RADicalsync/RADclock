@@ -230,6 +230,9 @@ struct sk_buff *__alloc_skb(unsigned int size, gfp_t gfp_mask,
 	skb->head = data;
 	skb->data = data;
 	skb_reset_tail_pointer(skb);
+#ifdef CONFIG_FFCLOCK
+	skb->ffclock_ffc = 0;
+#endif
 	skb->end = skb->tail + size;
 	skb->mac_header = (typeof(skb->mac_header))~0U;
 	skb->transport_header = (typeof(skb->transport_header))~0U;
@@ -938,6 +941,9 @@ EXPORT_SYMBOL(napi_consume_skb);
 static void __copy_skb_header(struct sk_buff *new, const struct sk_buff *old)
 {
 	new->tstamp		= old->tstamp;
+	#ifdef CONFIG_FFCLOCK
+	new->ffclock_ffc = old->ffclock_ffc;
+	#endif
 	/* We do not copy old->sk */
 	new->dev		= old->dev;
 	memcpy(new->cb, old->cb, sizeof(old->cb));
@@ -3986,8 +3992,9 @@ normal:
 				SKB_GSO_CB(nskb)->csum_start =
 					skb_headroom(nskb) + doffset;
 			} else {
-				if (skb_copy_bits(head_skb, offset, skb_put(nskb, len), len))
-					goto err;
+				skb_copy_bits(head_skb, offset,
+					      skb_put(nskb, len),
+					      len);
 			}
 			continue;
 		}
@@ -4690,7 +4697,7 @@ static bool skb_may_tx_timestamp(struct sock *sk, bool tsonly)
 {
 	bool ret;
 
-	if (likely(READ_ONCE(sysctl_tstamp_allow_data) || tsonly))
+	if (likely(sysctl_tstamp_allow_data || tsonly))
 		return true;
 
 	read_lock_bh(&sk->sk_callback_lock);

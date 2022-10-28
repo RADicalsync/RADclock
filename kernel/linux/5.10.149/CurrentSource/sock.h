@@ -69,6 +69,10 @@
 #include <linux/net_tstamp.h>
 #include <net/l3mdev.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -160,6 +164,9 @@ typedef __u64 __bitwise __addrpair;
  *	for struct sock and struct inet_timewait_sock.
  */
 struct sock_common {
+	/* skc_daddr and skc_rcv_saddr must be grouped on a 8 bytes aligned
+	 * address on 64bit arches : cf INET_MATCH()
+	 */
 	union {
 		__addrpair	skc_addrpair;
 		struct {
@@ -519,6 +526,10 @@ struct sock {
 	struct bpf_local_storage __rcu	*sk_bpf_storage;
 #endif
 	struct rcu_head		sk_rcu;
+#ifdef CONFIG_FFCLOCK
+	ffcounter		sk_ffclock_ffc;
+	long			sk_ffclock_tsmode;
+#endif
 };
 
 enum sk_pacing {
@@ -527,26 +538,14 @@ enum sk_pacing {
 	SK_PACING_FQ		= 2,
 };
 
-/* flag bits in sk_user_data
- *
- * - SK_USER_DATA_NOCOPY:      Pointer stored in sk_user_data might
- *   not be suitable for copying when cloning the socket. For instance,
- *   it can point to a reference counted object. sk_user_data bottom
- *   bit is set if pointer must not be copied.
- *
- * - SK_USER_DATA_BPF:         Mark whether sk_user_data field is
- *   managed/owned by a BPF reuseport array. This bit should be set
- *   when sk_user_data's sk is added to the bpf's reuseport_array.
- *
- * - SK_USER_DATA_PSOCK:       Mark whether pointer stored in
- *   sk_user_data points to psock type. This bit should be set
- *   when sk_user_data is assigned to a psock object.
+/* Pointer stored in sk_user_data might not be suitable for copying
+ * when cloning the socket. For instance, it can point to a reference
+ * counted object. sk_user_data bottom bit is set if pointer must not
+ * be copied.
  */
 #define SK_USER_DATA_NOCOPY	1UL
-#define SK_USER_DATA_BPF	2UL
-#define SK_USER_DATA_PSOCK	4UL
-#define SK_USER_DATA_PTRMASK	~(SK_USER_DATA_NOCOPY | SK_USER_DATA_BPF |\
-				  SK_USER_DATA_PSOCK)
+#define SK_USER_DATA_BPF	2UL	/* Managed by BPF */
+#define SK_USER_DATA_PTRMASK	~(SK_USER_DATA_NOCOPY | SK_USER_DATA_BPF)
 
 /**
  * sk_user_data_is_nocopy - Test if sk_user_data pointer must not be copied
@@ -559,40 +558,24 @@ static inline bool sk_user_data_is_nocopy(const struct sock *sk)
 
 #define __sk_user_data(sk) ((*((void __rcu **)&(sk)->sk_user_data)))
 
-/**
- * __rcu_dereference_sk_user_data_with_flags - return the pointer
- * only if argument flags all has been set in sk_user_data. Otherwise
- * return NULL
- *
- * @sk: socket
- * @flags: flag bits
- */
-static inline void *
-__rcu_dereference_sk_user_data_with_flags(const struct sock *sk,
-					  uintptr_t flags)
-{
-	uintptr_t sk_user_data = (uintptr_t)rcu_dereference(__sk_user_data(sk));
-
-	WARN_ON_ONCE(flags & SK_USER_DATA_PTRMASK);
-
-	if ((sk_user_data & flags) == flags)
-		return (void *)(sk_user_data & SK_USER_DATA_PTRMASK);
-	return NULL;
-}
-
 #define rcu_dereference_sk_user_data(sk)				\
-	__rcu_dereference_sk_user_data_with_flags(sk, 0)
-#define __rcu_assign_sk_user_data_with_flags(sk, ptr, flags)		\
 ({									\
-	uintptr_t __tmp1 = (uintptr_t)(ptr),				\
-		  __tmp2 = (uintptr_t)(flags);				\
-	WARN_ON_ONCE(__tmp1 & ~SK_USER_DATA_PTRMASK);			\
-	WARN_ON_ONCE(__tmp2 & SK_USER_DATA_PTRMASK);			\
-	rcu_assign_pointer(__sk_user_data((sk)),			\
-			   __tmp1 | __tmp2);				\
+	void *__tmp = rcu_dereference(__sk_user_data((sk)));		\
+	(void *)((uintptr_t)__tmp & SK_USER_DATA_PTRMASK);		\
 })
 #define rcu_assign_sk_user_data(sk, ptr)				\
-	__rcu_assign_sk_user_data_with_flags(sk, ptr, 0)
+({									\
+	uintptr_t __tmp = (uintptr_t)(ptr);				\
+	WARN_ON_ONCE(__tmp & ~SK_USER_DATA_PTRMASK);			\
+	rcu_assign_pointer(__sk_user_data((sk)), __tmp);		\
+})
+#define rcu_assign_sk_user_data_nocopy(sk, ptr)				\
+({									\
+	uintptr_t __tmp = (uintptr_t)(ptr);				\
+	WARN_ON_ONCE(__tmp & ~SK_USER_DATA_PTRMASK);			\
+	rcu_assign_pointer(__sk_user_data((sk)),			\
+			   __tmp | SK_USER_DATA_NOCOPY);		\
+})
 
 /*
  * SK_CAN_REUSE and SK_NO_REUSE on a socket mean that the socket is OK
@@ -1470,7 +1453,7 @@ void __sk_mem_reclaim(struct sock *sk, int amount);
 /* sysctl_mem values are in pages, we convert them in SK_MEM_QUANTUM units */
 static inline long sk_prot_mem_limits(const struct sock *sk, int index)
 {
-	long val = READ_ONCE(sk->sk_prot->sysctl_mem[index]);
+	long val = sk->sk_prot->sysctl_mem[index];
 
 #if PAGE_SIZE > SK_MEM_QUANTUM
 	val <<= PAGE_SHIFT - SK_MEM_QUANTUM_SHIFT;
@@ -1493,23 +1476,19 @@ static inline bool sk_has_account(struct sock *sk)
 
 static inline bool sk_wmem_schedule(struct sock *sk, int size)
 {
-	int delta;
-
 	if (!sk_has_account(sk))
 		return true;
-	delta = size - sk->sk_forward_alloc;
-	return delta <= 0 || __sk_mem_schedule(sk, delta, SK_MEM_SEND);
+	return size <= sk->sk_forward_alloc ||
+		__sk_mem_schedule(sk, size, SK_MEM_SEND);
 }
 
 static inline bool
 sk_rmem_schedule(struct sock *sk, struct sk_buff *skb, int size)
 {
-	int delta;
-
 	if (!sk_has_account(sk))
 		return true;
-	delta = size - sk->sk_forward_alloc;
-	return delta <= 0 || __sk_mem_schedule(sk, delta, SK_MEM_RECV) ||
+	return size <= sk->sk_forward_alloc ||
+		__sk_mem_schedule(sk, size, SK_MEM_RECV) ||
 		skb_pfmemalloc(skb);
 }
 
@@ -2699,25 +2678,24 @@ extern int sysctl_optmem_max;
 extern __u32 sysctl_wmem_default;
 extern __u32 sysctl_rmem_default;
 
-#define SKB_FRAG_PAGE_ORDER	get_order(32768)
 DECLARE_STATIC_KEY_FALSE(net_high_order_alloc_disable_key);
 
 static inline int sk_get_wmem0(const struct sock *sk, const struct proto *proto)
 {
 	/* Does this proto have per netns sysctl_wmem ? */
 	if (proto->sysctl_wmem_offset)
-		return READ_ONCE(*(int *)((void *)sock_net(sk) + proto->sysctl_wmem_offset));
+		return *(int *)((void *)sock_net(sk) + proto->sysctl_wmem_offset);
 
-	return READ_ONCE(*proto->sysctl_wmem);
+	return *proto->sysctl_wmem;
 }
 
 static inline int sk_get_rmem0(const struct sock *sk, const struct proto *proto)
 {
 	/* Does this proto have per netns sysctl_rmem ? */
 	if (proto->sysctl_rmem_offset)
-		return READ_ONCE(*(int *)((void *)sock_net(sk) + proto->sysctl_rmem_offset));
+		return *(int *)((void *)sock_net(sk) + proto->sysctl_rmem_offset);
 
-	return READ_ONCE(*proto->sysctl_rmem);
+	return *proto->sysctl_rmem;
 }
 
 /* Default TCP Small queue budget is ~1 ms of data (1sec >> 10)
