@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+
+# Extract a targetting tail of radclock.log, corresponding to the last few
+# radclock launches only
+#
+# Options:
+#    #1  logfile to examine      [ defaults to radclock.log in the current dir ]
+#    #2  the number of launches  [ defaults to 1 ]
+
+
+# Input parameters with defaults
+infile='radclock.log'
+[[ "$1" != "" ]] && infile="$1" # optionally override from commandline 1st arg
+Nd=1							# number of most recent instances desired
+[[ "$2" != "" ]] && Nd=$2		# optionally override from commandline 2nd arg
+
+outfile='lastRADlaunch.log'
+echo -e "${BLU}Will filter $infile to extract the last $Nd launch instances to $outfile.${CLE}"
+
+# Action parameters
+mark="configuration summary"	# unique string marking beginning of new launch output
+beforecontext=10				# number of context lines before mark line to include
+
+
+
+# See all for diagnosis
+echo "-------------------  All instances ---------------------------"
+grep -n "$mark" $infile  #|cut -d: -f1		# linenumbers of instance starts
+#echo
+#grep -n "$mark" $infile  |tail -${Nd} |head -1
+#grep -n "$mark" $infile  |tail -${Nd} |head -1 |cut -d ':' -f2-4
+echo "--------------------------------------------------------------"
+
+
+## Get line number of desired instance
+Ns=`grep -n "$mark" $infile  |wc -l |awk '{print $1}'`  # get #instances without whitespace
+
+if [[ $Ns -eq 0 ]]; then
+	echo " No start points found in file, defaulting to a full copy"
+	cp $infile $outfile
+	exit
+fi
+if [[ $Ns -lt Nd ]]; then
+	echo " Asked for $Nd instances, but only found $Ns"
+    Nd=$Ns
+fi
+
+topline=`grep -n "$mark" $infile  |tail -${Nd} |head -1` # 1st line of 1st instance to retain
+Nt=`echo $topline |cut -d: -f1`  	# its linenumber
+#topdate=`echo $topline | cut -d ':' -f2-4`	# extract date - but it can fail..
+N=$(( Nt - beforecontext ))			# this syntax allows vars to be used without preceeding $
+[ $N -lt 1 ] && N=1 				# perform max(N,1)
+
+
+## Process selection
+#echo "Target instance starts at line $Nt ($topdate), will recover from line $N :"
+echo "Target instance starts at line $Nt, will recover from line $N :"
+tail +$N $infile >| $outfile
+
+wc $outfile
+echo

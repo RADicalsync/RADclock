@@ -180,7 +180,7 @@ thread_data_processing(void *c_handle)
 	pktwait = 1000000 * handle->conf->poll_period / handle->nservers;
 	if (pktwait > maxwait || pktwait == 0)
 		pktwait = maxwait;
-	verbose(VERB_DEBUG, " thread_data_processing: pktwait = %d", pktwait);
+	verbose(VERB_DEBUG, "thread_data_processing: pktwait = %d", pktwait);
 
 	while ((handle->pthread_flag_stop & PTH_DATA_PROC_STOP) != PTH_DATA_PROC_STOP)
 	{

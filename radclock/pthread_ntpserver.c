@@ -334,8 +334,8 @@ thread_ntp_server(void *c_handle)
 										inband_trust |= (1ULL << s);	// if bit set, copy in
 							}
 							handle->servertrust = inband_trust;		// TODO: what if already set?
-							verbose(LOG_WARNING, "NTP Server received inband ICN status: %0XllX, "
-										"mapped to server trust %0XllX", icn_status, inband_trust);
+							verbose(LOG_WARNING, "NTP Server received inband ICN status: 0x%llX, "
+										"mapped to server trust 0x%llX", icn_status, inband_trust);
 						}
 					}
 
