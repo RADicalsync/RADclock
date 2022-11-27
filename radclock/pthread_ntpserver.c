@@ -153,7 +153,7 @@ thread_ntp_server(void *c_handle)
 	memset((char *) &sin_client, 0, sizeof(struct sockaddr_in));
 	memset((char *) &sin_server, 0, sizeof(struct sockaddr_in));
 	len = sizeof(sin_client);
-	sin_server.sin_family 		= AF_INET;
+	sin_server.sin_family      = AF_INET;
 	sin_server.sin_addr.s_addr = htonl(INADDR_ANY);
 	sin_server.sin_port = htons((long)handle->conf->ntp_downstream_port);
 
@@ -162,7 +162,7 @@ thread_ntp_server(void *c_handle)
 	so_timeout.tv_sec 	= 1;
 	so_timeout.tv_usec 	= 0;
 	setsockopt(s_server, SOL_SOCKET, SO_RCVTIMEO, (void*)(&so_timeout),
-			sizeof(struct timeval));
+	    sizeof(struct timeval));
 
 	/* Initialize public serving rate control */
 	unsigned short ip_hash_current[PUBLIC_NTP_HASH_BUCKETS];
@@ -175,7 +175,7 @@ thread_ntp_server(void *c_handle)
 	err = bind(s_server, (struct sockaddr *)&sin_server, sizeof(struct sockaddr_in));
 	if (err == -1) {
 		verbose(LOG_ERR, "NTPserver: Socket bind() error. Killing thread: %s",
-				strerror(errno));
+		    strerror(errno));
 		pthread_exit(NULL);
 	}
 
@@ -296,26 +296,26 @@ thread_ntp_server(void *c_handle)
 
 		rootdelay = NTP_SERVER(handle)->rootdelay + NTP_SERVER(handle)->minRTT;
 
+
+		/* Deal with authentication */
 		int auth_bytes = 0;
 		int auth_pass = 0;
 		unsigned int key_id = 0;
 		int private_signed_ntp = 0;
 
 		// If the client has requested authentication and we have some key data
-		if (n > LEN_PKT_NOMAC && key_data)
-		{
+		if (n > LEN_PKT_NOMAC && key_data) {
 			key_id = ntohl( ((struct ntp_pkt*)pkt_in)->exten[0] );
+			verbose(LOG_WARNING, "NTPserver: got request with key data, key_id = %u", key_id);
 
-			if (key_id >= 0 && key_id < MAX_NTP_KEYS && key_data[key_id])
-			{
+			if (key_id >= 0 && key_id < MAX_NTP_KEYS && key_data[key_id]) {
 				wc_InitSha(&sha);
 				wc_ShaUpdate(&sha, key_data[key_id], 20);
 				wc_ShaUpdate(&sha, pkt_in, LEN_PKT_NOMAC);
 				wc_ShaFinal(&sha, pck_dgst);
 				// printf("size:%d %s %d key\n", n, key_data[key_id], key_id);
 
-				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0)
-				{
+				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0) {
 					// verbose(LOG_WARNING, "NTP Server authentication SUCCESS");
 					/* If the key is private, then packet must be from the CN.
 					 * In that case deal with possible CN inband signaling.
@@ -326,86 +326,75 @@ thread_ntp_server(void *c_handle)
 						if (handle->conf->is_ocn) {
 							uint64_t icn_status = ntohl(((struct ntp_pkt*)pkt_in)->refid);
 							uint64_t inband_trust = 0;
+							uint64_t server_trust_old = handle->servertrust ;
 							int NTC_id;
-							/* Map ntc_id-indexed inband status word to sID-indexed trustword */
+							/* Use NTC_id-indexed inband status word to update sID-indexed trustword
+							 * Currently a simple overwrite, no clever trust logic */
 							for (int s=0; s < handle->nservers; s++) {
-									NTC_id = handle->conf->time_server_ntc_mapping[s];
-									if ( NTC_id != -1 && icn_status & (1ULL << NTC_id-1) )
-										inband_trust |= (1ULL << s);	// if bit set, copy in
+								NTC_id = handle->conf->time_server_ntc_mapping[s];
+								if ( NTC_id > 0 && icn_status & (1ULL << NTC_id) )
+									inband_trust |= (1ULL << s);	// if bit set, copy in
 							}
-							handle->servertrust = inband_trust;		// TODO: what if already set?
-							verbose(LOG_WARNING, "NTP Server received inband ICN status: 0x%llX, "
-										"mapped to server trust 0x%llX", icn_status, inband_trust);
+							handle->servertrust = inband_trust;
+							verbose(LOG_WARNING, "NTPserver: received inband ICN status: 0x%llX, "
+							    "mapped to server trust 0x%llX (previously 0x%llX)",
+							    icn_status, inband_trust, server_trust_old);
 						}
 					}
-
 					auth_pass = 1;
-				}
-				else
-					verbose(LOG_WARNING, "NTP Server authentication FAILURE");
+				} else
+					verbose(LOG_WARNING, "NTPserver: authentication FAILURE");
 				auth_bytes = 24;
-			}
-			else
-				verbose(LOG_WARNING, "NTP Server authentication request invalid key_id %d", key_id);
-		}
-		else 
-		{
-			if ( !key_data )
-			{
-				verbose(LOG_ERR, "NTP Server authentication request when this server has no keys");
+			} else
+				verbose(LOG_WARNING, "NTPserver: authentication request invalid key_id %d", key_id);
+		} else
+			if ( !key_data ) {
+				verbose(LOG_ERR, "NTPserver: authentication request when this server has no keys");
 				continue;
 			}
-		}
 
-		if ( ! handle->conf->public_ntp && !private_signed_ntp )
-		{
-			// The radclock indicated that it should stop serving public NTP requests so don't reply to this request
-			// Unless the request was from the CN (Control Node) which used the private CN-OCN key
+		/* Drop packets from the public (NTC customers) if public serving is disabled.
+		 * Requests with private CN-OCN keys will always be replied to.*/
+		if ( ! handle->conf->public_ntp && !private_signed_ntp ) {
 			continue;
 		}
 
 		// Once the public_ntp_limit is hit. Stop responding to NTP requests until the window has expired
 		// Tighten hash filter
 		// Allow CN messages to always get a reply - possible exploit on replay attacks from the CN which won't get filtered
-		if ( !private_signed_ntp && public_ntp_current_period_responses > public_ntp_limit )
-		{
+		if ( !private_signed_ntp && public_ntp_current_period_responses > public_ntp_limit ) {
 			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
 			UTCld_to_NTPtime(&time, &reftime);
 
-			if (public_ntp_start_time + public_ntp_period > time)
-			{
+			if (public_ntp_start_time + public_ntp_period > time) {
 				// Tighten hash filter
 				// We received too many messages within the window so tighten the policy
-				if (public_ntp_reject_lvl < PUBLIC_NTP_HASH_BUCKETS)
-				{
+				if (public_ntp_reject_lvl < PUBLIC_NTP_HASH_BUCKETS) {
 					int bucket_id = get_max_enabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
-					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS)
-					{
+					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
 						public_ntp_reject_lvl += 1;
 						ip_hash_enabled[bucket_id] = 0;
-						verbose(LOG_WARNING, "NTPserver: Tightening rejection policy to level %d/%d. Disable bucket %d. Received %d requests in %d < %d", (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id, (int)public_ntp_current_period_responses, (int)(time - public_ntp_start_time), (int)public_ntp_period);
+						verbose(LOG_WARNING, "NTPserver: Tightening rejection policy to level %d/%d. Disable bucket %d. Received %d requests in %d < %d",
+						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id,
+						    (int)public_ntp_current_period_responses, (int)(time - public_ntp_start_time), (int)public_ntp_period);
 					} else
-					{
-						verbose(LOG_ERR, "NTPserver: Tightening rejection error bucket_id %d not in range 0-%d", bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
-					}					
+						verbose(LOG_ERR, "NTPserver: Tightening rejection error bucket_id %d not in range 0-%d",
+						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
 				}
-			} else
-			{
-				if (public_ntp_reject_lvl > 0)
-				{
-					// Potientially we can try to loosen policy if we are significantly under message count
+			} else {
+				if (public_ntp_reject_lvl > 0) {
+					// Potentially we can try to loosen policy if we are significantly under message count
 					// We can see how many requests we would have gotten in the last period if we had loosed the rejection policy
 					// If it looked like we could have safely loosened then do it
 					int bucket_id = get_min_disabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
-					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS)
-					{
+					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
 						public_ntp_reject_lvl -= 1;
 						ip_hash_enabled[bucket_id] = 1;
-						verbose(LOG_WARNING, "NTPserver: Loosening rejection policy to level %d/%d. Enabling bucket %d. Received lower %d requests in last window", (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id, (int)public_ntp_current_period_responses);
+						verbose(LOG_WARNING, "NTPserver: Loosening rejection policy to level %d/%d. Enabling bucket %d. Received lower %d requests in last window",
+						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id, (int)public_ntp_current_period_responses);
 					} else
-					{
-						verbose(LOG_ERR, "NTPserver: Loosening rejection error bucket_id %d not in range 0-%d", bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
-					}
+						verbose(LOG_ERR, "NTPserver: Loosening rejection error bucket_id %d not in range 0-%d",
+						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
 				}
 			}
 			
@@ -419,22 +408,19 @@ thread_ntp_server(void *c_handle)
 		int ip_hash = hash_ip(&sin_client.sin_addr) % PUBLIC_NTP_HASH_BUCKETS ; 
 
 		// Check if we reject public NTP request based on public_ntp_reject_lvl
-		if (!private_signed_ntp && public_ntp_reject_lvl > 0)
-		{
-			if (! ip_hash_enabled[ip_hash])
-			{
+		if (!private_signed_ntp && public_ntp_reject_lvl > 0) {
+			if (! ip_hash_enabled[ip_hash]) {
 				ip_hash_current[ip_hash] += 1;
 				handle->rejected_public_ntp +=1;
-				// printf("Rejected packet %d %d\n", ip_hash, public_ntp_current_period_responses);
+				printf("Rejected packet %d %d\n", ip_hash, public_ntp_current_period_responses);
 
 				// Reject NTP request due to excessive demand
 				continue;
 			}
 		} 
-		// printf("Accepted packet %d - %d\n", ip_hash, public_ntp_current_period_responses);
+		printf("Accepted packet %d - %d\n", ip_hash, public_ntp_current_period_responses);
 		ip_hash_current[ip_hash] += 1;
-		if (!private_signed_ntp)
-		{
+		if (!private_signed_ntp) {
 			public_ntp_current_period_responses += 1;
 			handle->accepted_public_ntp +=1;
 		}
@@ -531,9 +517,8 @@ thread_ntp_server(void *c_handle)
 		pkt_out->xmt.l_int = htonl(xmt.l_int);
 		pkt_out->xmt.l_fra = htonl(xmt.l_fra);
 
-		// Tell the client that the same key was used for auth in reply
-		if (auth_bytes)
-		{
+		/* Prove to remote client that the same key was used for auth in reply */
+		if (auth_bytes) {
 			pkt_out->exten[0] = ((struct ntp_pkt*)pkt_in)->exten[0];
 
 			// Sign reply with key

@@ -410,23 +410,24 @@ ntp_client(struct radclock_handle *handle)
 	gridgap = poll_period / handle->nservers;	// currently universal, hard to generalise
 
 	/* Setup keys for authenticated communication to this server.
-	 * Only attempted in the case of an CN client to an OCN server.
+	 * Only attempted in the case of a CN client to a recognized OCN server.
+	 * For CN sending to other servers, attempt made with no key.
 	 */
 	int key_id = -1;
 	char * ntp_key = NULL;
 	if (handle->conf->is_cn) {
 		int NTC_id = handle->conf->time_server_ntc_mapping[sID];
-		int ocn_id = OCN_ID(NTC_id);
+		int OCN_id = OCN_ID(NTC_id);
 
 		uint64_t ntc_status = ((struct bidir_perfdata *)handle->perfdata)->ntc_status;
 		verbose(VERB_DEBUG, "Sending to server with (sID, NTC_id, OCN_ID) = (%d, %d, %d),"
-			  "  {ntc,icn}_status = {0x%08llX, 0x%08llX} (ICN_MASK= 0x%llX)",
-				sID, NTC_id, ocn_id, ntc_status, ntc_status & ICN_MASK, ICN_MASK);
+		    "  {ntc,icn}_status = {0x%08llX, 0x%08llX} (ICN_MASK= 0x%llX)",
+		    sID, NTC_id, OCN_id, ntc_status, ntc_status & ICN_MASK, ICN_MASK);
 
-		if (ocn_id > -1) {
-			key_id = ocn_id + PRIVATE_CN_NTP_KEYS + 1; // Keys start from 1 where OCN ids start from 0. So +1 to key Id
+		if (OCN_id != -1) {
+			key_id = OCN_id + PRIVATE_CN_NTP_KEYS;		// Keys start from 1 (+ base of private range)
 			if (key_id < MAX_NTP_KEYS && handle->ntp_keys)
-				ntp_key = handle->ntp_keys[key_id];			// = 0 if no key allocated
+				ntp_key = handle->ntp_keys[key_id];		// = 0 if no key allocated
 			if ( ntp_key == -1 || ntp_key == 0 ) {
 				verbose(LOG_ERR, "NTPclient: NTP request failed, CN requires NTP key to communicate to OCN");
 				return(1);
@@ -468,8 +469,8 @@ ntp_client(struct radclock_handle *handle)
 		if (maxattempts > adjusted_period/timeout - 1) {   // -1 provides a buffer
 			maxattempts = MAX(1, (int)(adjusted_period/timeout)-1);
 			verbose(LOG_NOTICE, "NTPclient: reducing max retry attempts on this "
-						"packet to %d to avoid stamp overlap (timeout %3.1lf [ms])",
-						maxattempts, 1e3*timeout);
+					"packet to %d to avoid stamp overlap (timeout %3.1lf [ms])",
+					maxattempts, 1e3*timeout);
 		}
 
 

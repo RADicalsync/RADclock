@@ -17,10 +17,10 @@ Nd=1							# number of most recent instances desired
 outfile='lastRADlaunch.log'
 echo -e "${BLU}Will filter $infile to extract the last $Nd launch instances to $outfile.${CLE}"
 
-# Action parameters
+## Action parameters
+#  TODO: change mark to "Shared Memory exist" so always gets dates, then backtrack to get start
 mark="configuration summary"	# unique string marking beginning of new launch output
 beforecontext=10				# number of context lines before mark line to include
-
 
 
 # See all for diagnosis
@@ -33,6 +33,7 @@ echo "--------------------------------------------------------------"
 
 
 ## Get line number of desired instance
+## TODO: have awareness of logfile size here, add option to rotate it after fetching?
 Ns=`grep -n "$mark" $infile  |wc -l |awk '{print $1}'`  # get #instances without whitespace
 
 if [[ $Ns -eq 0 ]]; then

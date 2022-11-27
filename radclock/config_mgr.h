@@ -89,11 +89,11 @@
 #define DEFAULT_IS_CN			    BOOL_OFF		// Defines if this server is an CN
 #define DEFAULT_SERVER_TELEMETRY    BOOL_OFF		// Creates telemetry cache files in /radclock
 #define DEFAULT_SERVER_SHM			BOOL_OFF		// Defines if SHM is active
-#define DEFAULT_SERVER_NTP			BOOL_OFF			// Don't act as a server
-#define DEFAULT_SERVER_VM_UDP		BOOL_OFF			// Don't Start VM servers
+#define DEFAULT_SERVER_NTP			BOOL_OFF		// Don't act as a server
+#define DEFAULT_SERVER_VM_UDP		BOOL_OFF		// Don't Start VM servers
 #define DEFAULT_SERVER_XEN			BOOL_OFF
 #define DEFAULT_SERVER_VMWARE		BOOL_OFF
-#define DEFAULT_ADJUST_FFCLOCK		BOOL_ON		// Normally a FFclock daemon !
+#define DEFAULT_ADJUST_FFCLOCK		BOOL_ON 		// Normally a FFclock daemon !
 #define DEFAULT_ADJUST_FBCLOCK		BOOL_OFF		// Not normally a FBclock daemon
 #define DEFAULT_NTP_POLL_PERIOD 	16				// 16 NTP pkts every [sec]
 #define DEFAULT_PHAT_INIT			1.e-9
@@ -110,9 +110,10 @@
 #define DEFAULT_SHM_DAG_CLIENT  	"10.0.0.3"
 #define DEFAULT_VM_UDP_LIST			"vm_udp_list"
 #define DEFAULT_PUBLIC_NTP			BOOL_OFF
-#define DEFAULT_PUBLIC_NTP_LIMIT	50  // The public NTP serving limit responses within the DEFAULT_PUBLIC_NTP_PERIOD
-#define DEFAULT_PUBLIC_NTP_PERIOD	10  // The public NTP serving period measure for excessive traffic [sec]
-#define DEFAULT_PUBLIC_NTP_HASH_BUCKETS 	100 // The public NTP serving number of IP hash buckets. In the case of a single spam IP only 1/PUBLIC_NTP_HASH_BUCKETS of the IP range would be rejected
+#define DEFAULT_PUBLIC_NTP_LIMIT	50  // public response limit over a DEFAULT_PUBLIC_NTP_PERIOD
+#define DEFAULT_PUBLIC_NTP_PERIOD	10  // window for public response measurement [sec]
+#define DEFAULT_PUBLIC_NTP_HASH_BUCKETS 100 // # hash buckets splitting the IP range
+// If only 1 bad IP, 1/PUBLIC_NTP_HASH_BUCKETS of the IP range would be rejected
 
 /*
  *  Definition of keys for configuration file keywords
@@ -225,19 +226,20 @@
 
 /* NTC Command&Control assigns NTC nodes unique ids for NTC-global consistency.
  * The NTC_id are allocated as follows:
- * 	CN:  0                  (not currently used)
- *		ICN: 1,2,...  ICN_MAX   (currently ICN_MAX = MAX_NTC/2)
- *		OCN: ICN_MAX+1 ... MAX_NTC
- *    non-NTC servers or uninitialized:  -1
- * In `flag form` status words, the i-th LSB corresponds to ntc_id=i .
- * Hence if #nodes>64 the implementation based on uint64_t will break.
+ *  CN:  0
+ *  ICN: 1,2,...  ICN_MAX   (currently ICN_MAX = MAX_NTC/2 -1)
+ *  OCN: ICN_MAX+1 ... MAX_NTC
+ *  non-NTC servers or uninitialized:  -1
+ * If #nodes>64 the implementation based on uint64_t and refid abuse will break.
+ *
+ * In `flag form` status words, the (s+1)-th LSB corresponds to ntc_id=s .
  * The ICN_MASK is used to null the bits in ntc_id status words
  * corresponding to the OCNs (used in in-band signalling ICN status to OCNs)
  */
 #define MAX_NTC 32
 #define ICN_MASK (~(~0ULL << MAX_NTC/2))	// 000..0011...111  null OCN bits
-/* Convert the ntc_id of an OCN into a `OCN_id' starting at 1, or -1 if not an OCN */
-#define OCN_ID(h) (h >= MAX_NTC/2 ? h - MAX_NTC/2 : -1 )
+/* Convert the NTC_id of an OCN into a `OCN_id' starting at 1, or -1 if not an OCN */
+#define OCN_ID(h) (h >= MAX_NTC/2 ? h - MAX_NTC/2 + 1 : -1 )
 struct NTC_Config {
 	int 	id;
 	char 	domain[MAXLINE];
@@ -250,45 +252,45 @@ struct NTC_Config {
  */ 
 struct radclock_config {
 	u_int32_t mask;						/* Update param mask */
-	char 	conffile[MAXLINE]; 			/* Configuration file path */
-	char 	logfile[MAXLINE]; 			/* Log file path */
-	char 	radclock_version[MAXLINE]; /* Package version id */
-	int 	verbose_level; 				/* debug output level */
-	int 	poll_period; 					/* period of NTP pkt sending [sec] */
+	char 	conffile[MAXLINE];			/* Configuration file path */
+	char 	logfile[MAXLINE];			/* Log file path */
+	char 	radclock_version[MAXLINE];	/* Package version id */
+	int 	verbose_level;				/* debug output level */
+	int 	poll_period;				/* period of NTP pkt sending [sec] */
 	struct 	radclock_phyparam phyparam; /* Physical and temperature characteristics */ 
-	int 	synchro_type; 				/* multi-choice depending on client-side protocol */
-	int 	server_ipc; 				/* Boolean */
+	int 	synchro_type;				/* multi-choice depending on client-side protocol */
+	int 	server_ipc;					/* Boolean */
 	int 	server_telemetry;			/* Boolean */
 	int 	server_shm;					/* Boolean */
 	int 	server_ntp;					/* Boolean */
 	int 	server_vm_udp;				/* Boolean */
 	int 	server_xen;					/* Boolean */
 	int 	server_vmware;				/* Boolean */
-	int 	is_ocn;				/* Boolean */
-	int 	is_cn;				/* Boolean */
+	int 	is_ocn;						/* Boolean */
+	int 	is_cn;						/* Boolean */
 	int 	public_ntp;				/* Boolean - Flag indicates whether radclock responds to public NTP requests*/
 	int 	adjust_FFclock;			/* Boolean */
 	int 	adjust_FBclock;			/* Boolean */
 	double 	phat_init;				/* Initial value for phat */
 	double 	asym_host;				/* Host asymmetry estimate [sec] */
 	double	asym_net;				/* Network asymmetry estimate [sec] */
-	int	ntp_upstream_port;       /* NTP Upstream port */
-	int	ntp_downstream_port;     /* NTP Downstream port */
-	char 	hostname[MAXLINE]; 			/* Client hostname */
-	char 	*time_server;			 		/* Server names, concatenated in MAXLINE blocks */
+	int	ntp_upstream_port;			/* NTP Upstream port */
+	int	ntp_downstream_port;		/* NTP Downstream port */
+	char 	hostname[MAXLINE];		/* Client hostname */
+	char 	*time_server;			/* Server names, concatenated in MAXLINE blocks */
 	int	*time_server_ntc_mapping;	/* Maps timer_server id to NTC ids, non NTC servers get -1 */
 	int	*time_server_ntc_indexes;	/* Lists the NTC server indexes relative to the time_server ordering.
 	Eg given time_servers A B C. If A and C are NTC servers then this would be 0,2 */
 	int	time_server_ntc_count;		/* The number of time_servers that are NTC servers */
 	char 	network_device[MAXLINE];	/* physical device string, eg xl0, eth0 */ 
-	char 	sync_in_pcap[MAXLINE];	 	/* read from stored instead of live input */
-	char 	sync_in_ascii[MAXLINE]; 	/* input is a preprocessed stamp file */
-	char 	sync_out_pcap[MAXLINE]; 	/* raw packet Output file name */
-	char 	sync_out_ascii[MAXLINE]; 	/* output processed stamp file */
-	char 	clock_out_ascii[MAXLINE];  /* output matlab requirements */
-	char 	vm_udp_list[MAXLINE];  		/* File containing list of udp vm's */
-	char 	shm_dag_client[MAXLINE];  	/* Ip address of SHM DAG client */
-	struct NTC_Config 	ntc[MAX_NTC];  /* NTC definition */
+	char 	sync_in_pcap[MAXLINE];		/* read from stored instead of live input */
+	char 	sync_in_ascii[MAXLINE];		/* input is a preprocessed stamp file */
+	char 	sync_out_pcap[MAXLINE];		/* raw packet Output file name */
+	char 	sync_out_ascii[MAXLINE];	/* output processed stamp file */
+	char 	clock_out_ascii[MAXLINE];	/* output matlab requirements */
+	char 	vm_udp_list[MAXLINE];		/* File containing list of udp vm's */
+	char 	shm_dag_client[MAXLINE];	/* Ip address of SHM DAG client */
+	struct NTC_Config 	ntc[MAX_NTC];	/* NTC definition */
 };
 
 

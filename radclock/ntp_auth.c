@@ -68,10 +68,10 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 	char crypt_type[16];
 	char crypt_key[64];
 	int key_id = -1;
-	int min_key_id = 0;
-	int max_key_id = PRIVATE_CN_NTP_KEYS;
-	if (is_private_key)
-	{
+	int min_key_id = 0;			// seems to be actual min index in C notation
+	int max_key_id = PRIVATE_CN_NTP_KEYS - 1;   // seems to be total number, not C notation
+
+	if (is_private_key) {
 		min_key_id = PRIVATE_CN_NTP_KEYS;
 		max_key_id = MAX_NTP_KEYS;
 	}
@@ -82,17 +82,15 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 		if (is_private_key)
 			key_id += PRIVATE_CN_NTP_KEYS;
 
-		// Sanity check that private keys are not allocated below the PRIVATE_CN_NTP_KEYS counter
-		if (is_private_key && key_id < PRIVATE_CN_NTP_KEYS)
-		{
-			verbose(LOG_ERR, "Authentication file read: Key id %d private key conflict", key_id);
+		// Sanity check that private keys start at PRIVATE_CN_NTP_KEYS
+		if (is_private_key && key_id < PRIVATE_CN_NTP_KEYS) {
+			verbose(LOG_ERR, "Auth file read: Key id %d private key conflict", key_id);
 			return;
 		}
 
-		// Sanity check that public keys are not allocated above or equal to the PRIVATE_CN_NTP_KEYS counter
-		if (!is_private_key && key_id >= PRIVATE_CN_NTP_KEYS)
-		{
-			verbose(LOG_ERR, "Authentication file read: Key id %d public key conflict", key_id);
+		// Sanity check that public keys are below PRIVATE_CN_NTP_KEYS
+		if (!is_private_key && key_id >= PRIVATE_CN_NTP_KEYS) {
+			verbose(LOG_ERR, "Auth file read: Key id %d public key conflict", key_id);
 			return;
 		}
 
@@ -100,19 +98,15 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 		{
 			// Data for this key has already been inserted. Warn user
 			if (key_data[key_id])
-				verbose(LOG_WARNING, "Authentication file read: Key id %d has already been allocated", key_id);
+				verbose(LOG_WARNING, "Auth file read: Key id %d already allocated", key_id);
 
 			if (strcmp("SHA1", crypt_type) == 0)
-			{   
 				key_data[key_id] = cstr_2_bytes(crypt_key);
-			}
 			else
-				verbose(LOG_WARNING, "Authentication file read: Invalid key type. Only SHA1 is currently supported got %s", crypt_type);
-		}
-		else
-		{
-			verbose(LOG_WARNING, "Authentication file read: key ids must be in range 1-127");
-		}
+				verbose(LOG_WARNING, "Auth file read: Invalid key type. Only SHA1 currently supported, got %s",
+				    crypt_type);
+		} else
+			verbose(LOG_WARNING, "Auth file read: key ids must be in range 1-127");  // but min_key_id = 0  ..
 	}
 }
 

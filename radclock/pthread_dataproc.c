@@ -771,17 +771,17 @@ preferred_RADclock(struct radclock_handle *handle)
  * This function is the core of the RADclock daemon.
  * It checks to see if any of the maintained RADclocks (one per server) is being
  * starved of data.  It then looks for a new stamp. If one is available, it:
- * 	assesses it
- *		determines the server it came from (which RADclock it will feed)
- *			- manages the leapsecond issues
- *			- feeds a vetted and leapsecond-safe RAD-stamp to the algo
- *			- updates the central handle->rad_data containing this clock's params and state
- *		Once the new stamp is processed, the preferred clock decision is updated
- *		If running live:
- *			- the parameters of the preferred clock are sent to the relevant
- *			  IPC consumers (FF and/or FB kernel clocks, SMS)
- *			- keeps summaries of the new stamp and server state
- *			- if the daemon is an NTC OCN node, outputs a critical summary into a telemetry feed
+ *	assesses it
+ *	determines the server it came from (which RADclock it will feed)
+ *		- manages the leapsecond issues
+ *		- feeds a vetted and leapsecond-safe RAD-stamp to the algo
+ *		- updates the central handle->rad_data containing this clock's params and state
+ *	Once the new stamp is processed, the preferred clock decision is updated
+ *	If running live:
+ *		- the parameters of the preferred clock are sent to the relevant
+ *		  IPC consumers (FF and/or FB kernel clocks, SMS)
+ *		- keeps summaries of the new stamp and server state
+ *		- if the daemon is an NTC CN or OCN node, outputs a critical summary into a telemetry feed
  */
 int
 process_stamp(struct radclock_handle *handle)
@@ -865,7 +865,7 @@ process_stamp(struct radclock_handle *handle)
 					state = &algodata->state[handle->pref_sID];
 					if ( VERB_LEVEL>2 ) {
 						verbose(LOG_WARNING, "RADclock noticed a FFdata reset after stamp %d, "
-												"may require a restart I'm afraid", state->stamp_i);
+						    "may require a restart I'm afraid", state->stamp_i);
 						printout_FFdata(&cest);
 					}
 					//return -1;
@@ -895,8 +895,8 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Authentication check for a CN using an OCN server */
 	if (handle->conf->is_cn) {
-		int ocn_id = OCN_ID(handle->conf->time_server_ntc_mapping[sID]);
-		if (ocn_id > -1 && stamp.auth_key_id != ocn_id + PRIVATE_CN_NTP_KEYS + 1) {
+		int OCN_id = OCN_ID(handle->conf->time_server_ntc_mapping[sID]);
+		if (OCN_id != -1 && stamp.auth_key_id != OCN_id + PRIVATE_CN_NTP_KEYS) {
 			verbose(LOG_ERR, "CN skipping received OCN stamp with incorrect auth_key!");
 			return (1);
 		}
@@ -907,7 +907,7 @@ process_stamp(struct radclock_handle *handle)
 	rad_error = &handle->rad_error[sID];
 	laststamp = &algodata->laststamp[sID];
 	output = &algodata->output[sID];
-	state = &algodata->state[sID];
+	state  = &algodata->state[sID];
 
 	/* If the stamp fails basic tests we won't endanger the algo with it, just exit
 	 * If there is something potentially dangerous but not fatal, flag it.
@@ -1026,7 +1026,7 @@ process_stamp(struct radclock_handle *handle)
 		handle->pref_sID = pref_sID_new;		// register change
 	} else
 		if (sID == handle->pref_sID) pref_updated = 1;
-		
+
 
 
 	/*
@@ -1182,7 +1182,7 @@ process_stamp(struct radclock_handle *handle)
 	}
 
 
-	/* Send telemetry data through ring buffer and eventually to NTC_CN */
+	/* Send telemetry data through ring buffer and eventually to the NTC's TICK server */
 	push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 
 	/* Write ascii output files if open, much less urgent than previous tasks */

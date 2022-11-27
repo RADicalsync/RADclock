@@ -159,7 +159,7 @@ thread_shm(void *c_handle)
 			if ( st_r->id > 0) { 	// data present
 				memcpy(&copy, st_r, sizeof(struct stamp_t));
 				verbose(VERB_DEBUG, " RAD halfstamp found in buffer with id %llu, %d back from head at %llu",
-								copy.id, next0-r, next0 );
+				    copy.id, next0-r, next0 );
 				/* Check if copy can be trusted */
 				if ( perfdata->RADbuff_next - r >= N )	// not safe, stop here
 					break;
@@ -176,7 +176,7 @@ thread_shm(void *c_handle)
 				}
 
 				verbose(VERB_DEBUG, " .. passed corruption checks, trying to insert "
-										  " copy into match queue (%d)", next0-r );
+				    " copy into match queue (%d)", next0-r );
 				insertandmatch_halfstamp(perfdata->q, &copy, MODE_RAD);
 				r -= 1;
 			} else
@@ -189,7 +189,7 @@ thread_shm(void *c_handle)
 		 * be checked for, and to give the OS an opportunity to suspend the thread
 		 */
 		num_bytes = recvfrom(socket_desc, &dag_msg, sizeof(struct dag_cap),
-		  				0, (struct sockaddr*)&client, &socklen);
+		    0, (struct sockaddr*)&client, &socklen);
 
 		if ( num_bytes == (sizeof(struct dag_cap)) ) {
 			got_dag_msg = 1;
@@ -287,31 +287,50 @@ thread_shm(void *c_handle)
 
 
 	/* TODO: code below here factor into a  process_perfstamp(handle, &RADperfstamp);  ??
-	 *		When processing this stamp state holds the state from Last time, until it updates it at
-	 *	 	the end, just before telemetry
+	 *		When processing this stamp, state holds the state from Last time, until it updates it at
+	 *		the end, just before telemetry
 	 */
 
 	/* ********************** SHM specific ****************************/
 		/* Test code for SA detector */
-		int SA_detected;
+		int SA_detected = 0;
 
-		/* Recall NTC_id mapping :
-		 * 	ICN:  (1,2,3,4,5) = (SYD,MEL,BRI,PER,ADL)
-		 *		OCN:  (0,1,2,3,4) = (SYD,MEL,BRI,PE)  and +16 for ntc_id:  (16,17,18,19)
+		/* Recall NTC_id mapping (see config_mgr.h) :
+		 *   CN:  0
+		 *  ICN:  (1,2,3,4,5) = (SYD,MEL,BRI,PER,ADL)
+		 *  OCN:  (1,2,3,4)   = (SYD,MEL,BRI,PER)  and +15 for ntc_id:  (16,17,18,19)
+		 * Mapping convention into status words:
+		 *   - same as for sID into servertrust
+		 *   - ie value i mapped to (i+1)-th bit ,  thus the CN is the 1st bit
+		 * Impacts:
+		 *   CN:  ntc status word causes CN to change PICN, no impact on OCNs
+		 *        telemetry: SAs reported in NTC Central DB for all RAD nodes (OCN+CN)
+		 *  OCN:  icn status word causes OCNs to move PICN off SA-affected servers, post unsync status
+		 *        this may feedback to the CN to stop using as a preferred server
+		 *        telemetry: icn status reported in OCN DBs  (all the same)
 		 */
 		switch (NTC_id) {
 			case -1:	// Undefined
 				verbose(LOG_NOTICE, "SHM: Encountered an undefined NTC_id .");
 				break;
 			case 1:	// SYD
-				SA_detected = ((state->stamp_i % 33) ? 0 : 1);	// set SA rarely
+				SA_detected = ((state->stamp_i % (15*60/4)) ? 0 : 1);	// min*..
 				break;
 			case 2:	// MEL
-				SA_detected = ((state->stamp_i % 153) ? 0 : 1);	// set SA rarely
+				SA_detected = ((state->stamp_i % (20*60/4 +1)) ? 0 : 1);
 				break;
 			case 3:	// BRI
+				break;
 			case 4:	// PER
+				SA_detected = ((state->stamp_i % (30*60/4 +3)) ? 0 : 1);
+				break;
 			case 5:	// ADL
+				break;
+			case 16: // OCN SYD
+				break;
+			case 17: // OCN MEL
+				SA_detected = ((state->stamp_i % (31*60/4 +5)) ? 0 : 1);
+				break;
 			default:	// other ICN, or an OCN
 				SA_detected = 0;
 				break;
@@ -320,23 +339,29 @@ thread_shm(void *c_handle)
 		//						state->stamp_i, sID, NTC_id, SA_detected);
 
 
-		/* Update servertrust */
+		/* Update servertrust  [ warn yourself of the SA's discovered ]
+		 * TODO: this overrides the servertrust setting - to be reviewed */
 		if (state->SA != SA_detected) {
 			handle->servertrust &= ~(1ULL << sID);		// clear bit
 			if (SA_detected)
-				handle->servertrust |= (1ULL << sID);	// set bit
-			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with (sID, NTC_id) = (%d, %d), servertrust now 0x%llX",
-					state->stamp_i, sID, NTC_id, handle->servertrust);
+			    handle->servertrust |= (1ULL << sID);	// set bit
+			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with "
+			   "(sID, NTC_id) = (%d, %d), servertrust now 0x%llX",
+			    state->stamp_i, sID, NTC_id, handle->servertrust);
 		}
 
-		/* Use SA update to update icn_status word sent to OCNs inband.
-		 * The word is in flag form (like servertrust, but NTC_id starts from 1 */
-		if (state->SA != SA_detected && NTC_id > -1) {
-			perfdata->ntc_status &= ~(1ULL << NTC_id-1);		// clear bit
+		/* Incorporate SA update in ntc_status word
+		 * Currently the existing status is *simply overwritten* by the new SA value.
+		 * TODO: make available to preferred_RADclock() and write smarter logic,
+		 *       would require wait for next packet before being actioned
+		 *   Is used for SA telemetry, and for icn_status sent to OCNs inband. */
+		if (state->SA != SA_detected && NTC_id != -1) {
+			perfdata->ntc_status &= ~(1ULL << NTC_id);		// clear bit
 			if (SA_detected)
-				perfdata->ntc_status |= (1ULL << NTC_id-1);	// set bit
-			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with (sID, NTC_id) = (%d, %d),  ntc_status now 0x%llX",
-					state->stamp_i, sID, NTC_id, perfdata->ntc_status);
+				perfdata->ntc_status |= (1ULL << NTC_id);	// set bit
+			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with "
+			    "(sID, NTC_id) = (%d, %d), ntc_status now 0x%llX",
+			    state->stamp_i, sID, NTC_id, perfdata->ntc_status);
 		}
 
 
@@ -379,10 +404,11 @@ thread_shm(void *c_handle)
 		 * SHM thread telemetry triggering dealt with in PROC:process_stamp .
 		 * Here just document SHM and Perf variables sent over telemetry.
 		 * For each of these, state->stamp_i can be used to detect during trigger
-		 * checking if a perfstamp output has been missed by PROC. */
+		 * checking if a perfstamp output has been missed by PROC.
+		 * Both are based on NTC_ids, with grafana manually separating into ICNs and OCNs. */
 
 		/* SHM */
-			// RADclock DB:  perfdata->ntc_status  [let grafana separate ICNs and OCNs]
+			// NTC Central DB:  perfdata->ntc_status
 		/* Perf */
 			// CN DB:        state->RADerror for clock sID
 

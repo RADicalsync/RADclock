@@ -377,10 +377,10 @@ struct bidir_perfstate {
 	history stamp_hist;
 
 	/* OWD */
-	double Dfhat;					// Estimate of minimal Df
+	double Dfhat;				// Estimate of minimal Df
 	double Dfhat_shift;			// sliding window estimate for upward level shift detection
 	double Dfhat_shift_thres;	// threshold in [s] for triggering upward shift detection
-	double Dbhat;					// Estimate of minimal Db
+	double Dbhat;				// Estimate of minimal Db
 	double Dbhat_shift;			// sliding window estimate for upward level shift detection
 	double Dbhat_shift_thres;	// threshold in [s] for triggering upward shift detection
 
@@ -425,14 +425,14 @@ struct bidir_perfdata {
 	struct stamp_queue *q;
 
 	/* Buffer for fast dumping of sane popped RADstamps within PROC */
-	int RADBUFF_SIZE;		// number of buffer elements
+	int RADBUFF_SIZE;				// number of buffer elements
 	struct stamp_t *RADbuff;
 	index_t	RADbuff_next;			// buffer index for next write, won't wrap
 
-	struct stamp_t *laststamp;			// containing bidir_stamp_perf tuples
+	struct stamp_t *laststamp;		// containing bidir_stamp_perf tuples
 	struct bidir_perfoutput *output;
 	struct bidir_perfstate *state;	// includes SHM state
-	uint64_t ntc_status;					// trust summary for servers with ntc indices
+	uint64_t ntc_status;			// trust summary for servers with NTC indices
 };
 
 //#define OUTPUT(handle, x) ((struct bidir_algooutput*)handle->algo_output)->x

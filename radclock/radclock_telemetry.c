@@ -3,13 +3,16 @@
 
 #include "radclock_telemetry.h"
 
-Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, int NTC_Count, long double timestamp, int delta_accepted_public_ntp, int delta_rejected_public_ntp, uint64_t servertrust, unsigned int public_ntp_state, uint64_t SA)
+Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, int NTC_Count,
+    long double timestamp, int delta_accepted_public_ntp, int delta_rejected_public_ntp,
+    uint64_t servertrust, unsigned int public_ntp_state, uint64_t SA)
 {
     // Make telemetry packet
     Radclock_Telemetry_Latest data;
 
     // Header Data - Should never change - Speficies first bytes of the packet to be the size and version of the packet
-    data.header.size = sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*NTC_Count + sizeof(Radclock_Telemetry_Footer);
+    data.header.size = sizeof(Radclock_Telemetry_Latest) +
+       sizeof(Radclock_Telemetry_NTC_Latest)*NTC_Count + sizeof(Radclock_Telemetry_Footer);
     data.header.version = RADCLOCK_TELEMETRY_VERSION;
     data.header.packetId = packetId;
 
@@ -34,7 +37,8 @@ Radclock_Telemetry_Latest make_telemetry_packet(int packetId, int PICN, int NTC_
 
 
 
-Radclock_Telemetry_NTC_Latest make_telemetry_NTC_packet(unsigned int status_word, int NTC_id, double uA, double err_bound, double min_RTT, double clockErr)
+Radclock_Telemetry_NTC_Latest  make_telemetry_NTC_packet(unsigned int status_word,
+   int NTC_id, double uA, double err_bound, double min_RTT, double clockErr)
 {
     Radclock_Telemetry_NTC_Latest data;
 

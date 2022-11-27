@@ -26,9 +26,12 @@ void * open_shared_memory()
 {
     if (RADCLOCK_HEAD_INT_THRESHOLD < RADCLOCK_RING_BASE_BUFFER_BYTES * 10)
     {
-        printf("Error RADCLOCK_HEAD_INT_THRESHOLD too small %d %d\n", RADCLOCK_HEAD_INT_THRESHOLD, RADCLOCK_RING_BASE_BUFFER_BYTES * 10);
+        printf("Error RADCLOCK_HEAD_INT_THRESHOLD too small %d %d\n",
+            RADCLOCK_HEAD_INT_THRESHOLD, RADCLOCK_RING_BASE_BUFFER_BYTES * 10);
     }
-    printf("Memory size:%dkB Thresh:%d Dif:%d Typical_Packet:%ld Buffer_Packets:%d\n", RADCLOCK_RING_BASE_BUFFER_BYTES / 1024, RADCLOCK_HEAD_INT_THRESHOLD, RADCLOCK_HEAD_INT_THRESHOLD_DIF, RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE, RADCLOCK_RING_BUFFER_PACKETS);
+    printf("Memory size:%dkB Thresh:%d Dif:%d Typical_Packet:%ld Buffer_Packets:%d\n",
+        RADCLOCK_RING_BASE_BUFFER_BYTES / 1024, RADCLOCK_HEAD_INT_THRESHOLD, RADCLOCK_HEAD_INT_THRESHOLD_DIF,
+        RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE, RADCLOCK_RING_BUFFER_PACKETS);
     // ftok to generate unique key 
     //key_t key = ftok(PROJECT_FILE, PROJECT_ID); 
     //printf("key %d\n", key);
@@ -106,7 +109,8 @@ int ring_buffer_write(void * data, int bytes, void * ring_buffer, int *ring_writ
     // Sanity check that we can't write more than the buffer size
     if (bytes > RADCLOCK_RING_BASE_BUFFER_BYTES)
     {
-        printf("Error attempting to write data larger than the buffer. Data %d bytes cannot fit in %d buffer\n", bytes, RADCLOCK_RING_BASE_BUFFER_BYTES);
+        printf("Error attempting to write data larger than the buffer. Data %d bytes cannot fit in %d buffer\n",
+            bytes, RADCLOCK_RING_BASE_BUFFER_BYTES);
         return RADCLOCK_ERROR_DATA_TOO_LARGE;
     }
     if (bytes < 1)
@@ -161,7 +165,8 @@ int ring_buffer_read(void * data, int bytes, void * ring_buffer, int *ring_read_
     // Sanity check that we can't read more than the buffer size
     if (bytes > RADCLOCK_RING_BASE_BUFFER_BYTES)
     {
-        printf("Error attempting to read data larger than the buffer. Data %d bytes cannot fit in %d buffer\n", bytes, RADCLOCK_RING_BASE_BUFFER_BYTES);
+        printf("Error attempting to read data larger than the buffer. Data %d bytes cannot fit in %d buffer\n",
+            bytes, RADCLOCK_RING_BASE_BUFFER_BYTES);
         return RADCLOCK_ERROR_DATA_TOO_LARGE;
     }
 

@@ -564,9 +564,9 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 		/* If queue too long, trim off last element */
 		if (q->size == MAX_STQ_SIZE) {
 			if (new->type == STAMP_NTP)
-				verbose(LOG_WARNING, "RAD Stamp matching queue has hit max size.");
+				verbose(LOG_WARNING, "RAD Stamp matching queue must trim.");
 			else
-				verbose(LOG_WARNING, "Perf Stamp matching queue has hit max size.");
+				verbose(LOG_WARNING, "Perf Stamp matching queue must trim.");
 			q->end = q->end->prev;
 			free(q->end->next);
 			q->end->next = NULL;
@@ -638,6 +638,8 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 	/* Print out queue from head to tail (youngest at top of printout). */
 	if (VERB_LEVEL>1) {
 		qel = q->start;
+
+		verbose(VERB_DEBUG, "  >> insertandmatch exiting: queue size is %d ", q->size);
 
 		while (qel != NULL) {
 			stamp = &qel->stamp;
