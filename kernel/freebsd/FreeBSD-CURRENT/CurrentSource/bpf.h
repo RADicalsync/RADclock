@@ -2,12 +2,15 @@
  * SPDX-License-Identifier: BSD-3-Clause
  *
  * Copyright (c) 1990, 1991, 1993
- *	The Regents of the University of California.  All rights reserved.
+ *	The Regents of the University of California.
  *
  * This code is derived from the Stanford/CMU enet packet filter,
  * (net/enet.c) distributed as part of 4.3BSD, and code contributed
  * to Berkeley by Steven McCanne and Van Jacobson both of Lawrence
  * Berkeley Laboratory.
+ *
+ * Portions of this software were developed by Julien Ridoux and Darryl Veitch
+ * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -45,6 +48,7 @@
 #include <sys/_eventhandler.h>
 #include <sys/ck.h>
 #include <net/dlt.h>
+#include <sys/_ffcounter.h>
 
 /* BSD style release date */
 #define	BPF_RELEASE 199606
@@ -53,11 +57,10 @@ typedef	int32_t	  bpf_int32;
 typedef	u_int32_t bpf_u_int32;
 typedef	int64_t	  bpf_int64;
 typedef	u_int64_t bpf_u_int64;
-struct ifnet;
 
 /*
- * Alignment macros.  BPF_WORDALIGN rounds up to the next multiple of
- * BPF_ALIGNMENT.
+ * Alignment macros.  BPF_WORDALIGN rounds up to the next
+ * even multiple of BPF_ALIGNMENT.
  */
 #define BPF_ALIGNMENT sizeof(long)
 #define BPF_WORDALIGN(x) (((x)+(BPF_ALIGNMENT-1))&~(BPF_ALIGNMENT-1))
@@ -167,32 +170,52 @@ enum bpf_direction {
 	BPF_D_OUT	/* See outgoing packets */
 };
 
-/* Time stamping functions */
-#define	BPF_T_MICROTIME		0x0000
+/* Time stamping flags */
+/* FORMAT flags 	[ mutually exclusive, not to be ORed ]*/
+#define	BPF_T_MICROTIME	0x0000
 #define	BPF_T_NANOTIME		0x0001
 #define	BPF_T_BINTIME		0x0002
-#define	BPF_T_NONE		0x0003
+#define	BPF_T_NONE			0x0003	// relates to ts only, FFRAW independent
 #define	BPF_T_FORMAT_MASK	0x0003
-#define	BPF_T_NORMAL		0x0000
-#define	BPF_T_FAST		0x0100
-#define	BPF_T_MONOTONIC		0x0200
-#define	BPF_T_MONOTONIC_FAST	(BPF_T_FAST | BPF_T_MONOTONIC)
-#define	BPF_T_FLAG_MASK		0x0300
-#define	BPF_T_FORMAT(t)		((t) & BPF_T_FORMAT_MASK)
-#define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
-#define	BPF_T_VALID(t)						\
-    ((t) == BPF_T_NONE || (BPF_T_FORMAT(t) != BPF_T_NONE &&	\
-    ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FLAG_MASK)) == 0))
+/* FFRAW flag */
+#define	BPF_T_NOFFC			0x0000   // no FFcount
+#define	BPF_T_FFC			0x0010   // want FFcount
+#define	BPF_T_FFRAW_MASK	0x0010
+/* FLAG flags   [ can view bits as ORable flags ] */
+#define	BPF_T_NORMAL		0x0000	// UTC, !FAST
+#define	BPF_T_FAST			0x0100   // UTC,  FAST
+#define	BPF_T_MONOTONIC	0x0200	// UPTIME, !FAST
+#define	BPF_T_MONOTONIC_FAST	0x0300// UPTIME,  FAST
+#define	BPF_T_FLAG_MASK	0x0300
+/* CLOCK flags   [ mutually exclusive, not to be ORed ] */
+#define	BPF_T_SYSCLOCK		0x0000	// read current sysclock
+#define	BPF_T_FBCLOCK		0x1000   // read FB
+#define	BPF_T_FFCLOCK		0x2000   // read mono FF (standard reads are mono)
+#define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
+#define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
+#define	BPF_T_CLOCK_MASK	0x7000
 
-#define	BPF_T_MICROTIME_FAST		(BPF_T_MICROTIME | BPF_T_FAST)
-#define	BPF_T_NANOTIME_FAST		(BPF_T_NANOTIME | BPF_T_FAST)
-#define	BPF_T_BINTIME_FAST		(BPF_T_BINTIME | BPF_T_FAST)
-#define	BPF_T_MICROTIME_MONOTONIC	(BPF_T_MICROTIME | BPF_T_MONOTONIC)
-#define	BPF_T_NANOTIME_MONOTONIC	(BPF_T_NANOTIME | BPF_T_MONOTONIC)
-#define	BPF_T_BINTIME_MONOTONIC		(BPF_T_BINTIME | BPF_T_MONOTONIC)
-#define	BPF_T_MICROTIME_MONOTONIC_FAST	(BPF_T_MICROTIME | BPF_T_MONOTONIC_FAST)
-#define	BPF_T_NANOTIME_MONOTONIC_FAST	(BPF_T_NANOTIME | BPF_T_MONOTONIC_FAST)
-#define	BPF_T_BINTIME_MONOTONIC_FAST	(BPF_T_BINTIME | BPF_T_MONOTONIC_FAST)
+/* Extract FORMAT, FFRAW, FLAG, CLOCK  bits */
+#define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
+#define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
+#define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
+#define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
+
+/*
+ * Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl.
+ *	All components are independent, and either always meaningful, or
+ * not acted on if not meaningful. Hence checks reduce to ensuring no bits in
+ * undefined positions, and not ask for a FF clock that doesnt exist.
+*/
+#ifdef FFCLOCK
+#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
+											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
+									&& BPF_T_CLOCK(t)<=BPF_T_FFDIFFCLOCK )
+#else
+#define	BPF_T_VALID(t)	( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
+											  BPF_T_FLAG_MASK | BPF_T_CLOCK_MASK)) == 0 \
+									&& BPF_T_CLOCK(t)<=BPF_T_FBCLOCK )
+#endif
 
 /*
  * Structure prepended to each packet.
@@ -207,6 +230,7 @@ struct bpf_xhdr {
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 };
 /* Obsolete */
 struct bpf_hdr {
@@ -215,6 +239,7 @@ struct bpf_hdr {
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
+	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
 };
 #ifdef _KERNEL
 #define	MTAG_BPF		0x627066
@@ -422,11 +447,8 @@ struct bpf_if_ext {
 void	 bpf_bufheld(struct bpf_d *d);
 int	 bpf_validate(const struct bpf_insn *, int);
 void	 bpf_tap(struct bpf_if *, u_char *, u_int);
-void	 bpf_tap_if(struct ifnet *, u_char *, u_int);
 void	 bpf_mtap(struct bpf_if *, struct mbuf *);
-void	 bpf_mtap_if(struct ifnet *, struct mbuf *);
 void	 bpf_mtap2(struct bpf_if *, void *, u_int, struct mbuf *);
-void	 bpf_mtap2_if(struct ifnet *, void *, u_int, struct mbuf *);
 void	 bpfattach(struct ifnet *, u_int, u_int);
 void	 bpfattach2(struct ifnet *, u_int, u_int, struct bpf_if **);
 void	 bpfdetach(struct ifnet *);
@@ -448,12 +470,22 @@ bpf_peers_present(struct bpf_if *bpf)
 	return (0);
 }
 
-#define	BPF_TAP(_ifp,_pkt,_pktlen)				\
-		bpf_tap_if((_ifp), (_pkt), (_pktlen))
-#define	BPF_MTAP(_ifp,_m) 					\
-	bpf_mtap_if((_ifp), (_m))
-#define	BPF_MTAP2(_ifp,_data,_dlen,_m) 				\
-	bpf_mtap2_if((_ifp), (_data), (_dlen), (_m))
+#define	BPF_TAP(_ifp,_pkt,_pktlen) do {				\
+	if (bpf_peers_present((_ifp)->if_bpf))			\
+		bpf_tap((_ifp)->if_bpf, (_pkt), (_pktlen));	\
+} while (0)
+#define	BPF_MTAP(_ifp,_m) do {					\
+	if (bpf_peers_present((_ifp)->if_bpf)) {		\
+		M_ASSERTVALID(_m);				\
+		bpf_mtap((_ifp)->if_bpf, (_m));			\
+	}							\
+} while (0)
+#define	BPF_MTAP2(_ifp,_data,_dlen,_m) do {			\
+	if (bpf_peers_present((_ifp)->if_bpf)) {		\
+		M_ASSERTVALID(_m);				\
+		bpf_mtap2((_ifp)->if_bpf,(_data),(_dlen),(_m));	\
+	}							\
+} while (0)
 #endif
 
 /*
@@ -462,6 +494,7 @@ bpf_peers_present(struct bpf_if *bpf)
 #define BPF_MEMWORDS 16
 
 /* BPF attach/detach events */
+struct ifnet;
 typedef void (*bpf_track_fn)(void *, struct ifnet *, int /* dlt */,
     int /* 1 =>'s attach */);
 EVENTHANDLER_DECLARE(bpf_track, bpf_track_fn);

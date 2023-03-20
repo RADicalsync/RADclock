@@ -5,14 +5,13 @@
  * Copyright (c) 1982, 1990, 1993
  *	The Regents of the University of California.
  * Copyright (c) 2011 The FreeBSD Foundation
- * All rights reserved.
  *
  * This code is derived from software contributed to Berkeley by
  * the Systems Programming Group of the University of Utah Computer
  * Science Department.
  *
- * Portions of this software were developed by Julien Ridoux at the University
- * of Melbourne under sponsorship from the FreeBSD Foundation.
+ * Portions of this software were developed by Julien Ridoux and Darryl Veitch
+ * at the University of Melbourne under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -360,12 +359,9 @@ inittodr(time_t base)
 		ts.tv_nsec = 0;
 	}
 
-	if (ts.tv_sec >= 0) {
+	if (ts.tv_sec >= 0)
 		tc_setclock(&ts);
-#ifdef FFCLOCK
-		ffclock_reset_clock(&ts);
-#endif
-	}
+
 }
 
 /*
