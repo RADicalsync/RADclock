@@ -29,7 +29,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$ 13.1 Aug 2022");
+__FBSDID("$FreeBSD$");
 
 #include "opt_ffclock.h"
 
@@ -42,7 +42,6 @@ __FBSDID("$FreeBSD$ 13.1 Aug 2022");
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/sbuf.h>
-#include <sys/sysent.h>
 #include <sys/sysproto.h>
 #include <sys/sysctl.h>
 #include <sys/systm.h>
@@ -86,7 +85,7 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 	/* Current ffclock estimate, use update_ffcount as generation number. */
 	do {
 		update_ffcount = ffclock_estimate.update_ffcount;
-		bcopy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
+		memcpy(&cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
 	} while (update_ffcount != ffclock_estimate.update_ffcount);
 
 	/*
@@ -434,10 +433,10 @@ sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
 	    != 0)
 		return (error);
 
-	mtx_lock(&ffclock_mtx);
+	mtx_lock_spin(&ffclock_mtx);
 	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
 	ffclock_updated++;
-	mtx_unlock(&ffclock_mtx);
+	mtx_unlock_spin(&ffclock_mtx);
 	
 	return (error);
 }
@@ -459,9 +458,9 @@ sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
 	struct ffclock_estimate cest;
 	int error;
 
-	mtx_lock(&ffclock_mtx);
+	mtx_lock_spin(&ffclock_mtx);
 	memcpy(&cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
-	mtx_unlock(&ffclock_mtx);
+	mtx_unlock_spin(&ffclock_mtx);
 	error = copyout(&cest, uap->cest, sizeof(struct ffclock_estimate));
 	return (error);
 }
