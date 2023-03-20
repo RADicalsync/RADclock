@@ -78,6 +78,7 @@ __FBSDID("$FreeBSD$");
 
 #include <net/if.h>
 #include <net/if_var.h>
+#include <net/if_private.h>
 #include <net/if_vlan_var.h>
 #include <net/if_dl.h>
 #include <net/bpf.h>
@@ -213,6 +214,7 @@ static int	bpf_getdltlist(struct bpf_d *, struct bpf_dltlist *);
 static int	bpf_setdlt(struct bpf_d *, u_int);
 static void	filt_bpfdetach(struct knote *);
 static int	filt_bpfread(struct knote *, long);
+static int	filt_bpfwrite(struct knote *, long);
 static void	bpf_drvinit(void *);
 static int	bpf_stats_sysctl(SYSCTL_HANDLER_ARGS);
 
@@ -255,6 +257,12 @@ static struct filterops bpfread_filtops = {
 	.f_isfd = 1,
 	.f_detach = filt_bpfdetach,
 	.f_event = filt_bpfread,
+};
+
+static struct filterops bpfwrite_filtops = {
+	.f_isfd = 1,
+	.f_detach = filt_bpfdetach,
+	.f_event = filt_bpfwrite,
 };
 
 /*
@@ -643,7 +651,8 @@ bpf_movein(struct uio *uio, int linktype, struct ifnet *ifp, struct mbuf **mp,
 	if (len < hlen || len - hlen > ifp->if_mtu)
 		return (EMSGSIZE);
 
-	m = m_get2(len, M_WAITOK, MT_DATA, M_PKTHDR);
+	/* Allocate a mbuf for our write, since m_get2 fails if len >= to MJUMPAGESIZE, use m_getjcl for bigger buffers */
+	m = m_get3(len, M_WAITOK, MT_DATA, M_PKTHDR);
 	if (m == NULL)
 		return (EIO);
 	m->m_pkthdr.len = m->m_len = len;
@@ -755,6 +764,10 @@ bpf_attachd(struct bpf_d *d, struct bpf_if *bp)
 		CK_LIST_INSERT_HEAD(&bp->bif_dlist, d, bd_next);
 
 	reset_d(d);
+
+	/* Trigger EVFILT_WRITE events. */
+	bpf_wakeup(d);
+
 	BPFD_UNLOCK(d);
 	bpf_bpfd_cnt++;
 
@@ -961,7 +974,7 @@ bpfopen(struct cdev *dev, int flags, int fmt, struct thread *td)
 	d->bd_bufmode = BPF_BUFMODE_BUFFER;
 	d->bd_sig = SIGIO;
 	d->bd_direction = BPF_D_INOUT;
-	d->bd_refcnt = 1;
+	refcount_init(&d->bd_refcnt, 1);
 	BPF_PID_REFRESH(d, td);
 #ifdef MAC
 	mac_bpfdesc_init(d);
@@ -1503,18 +1516,18 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 	 * Put interface into promiscuous mode.
 	 */
 	case BIOCPROMISC:
+		BPF_LOCK();
 		if (d->bd_bif == NULL) {
 			/*
 			 * No interface attached yet.
 			 */
 			error = EINVAL;
-			break;
-		}
-		if (d->bd_promisc == 0) {
+		} else if (d->bd_promisc == 0) {
 			error = ifpromisc(d->bd_bif->bif_ifp, 1);
 			if (error == 0)
 				d->bd_promisc = 1;
 		}
+		BPF_UNLOCK();
 		break;
 
 	/*
@@ -1633,7 +1646,7 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 #endif
 		{
 			struct timeval *tv = (struct timeval *)addr;
-#if defined(COMPAT_FREEBSD32) && !defined(__mips__)
+#if defined(COMPAT_FREEBSD32)
 			struct timeval32 *tv32;
 			struct timeval tv64;
 
@@ -2157,16 +2170,27 @@ bpfkqfilter(struct cdev *dev, struct knote *kn)
 {
 	struct bpf_d *d;
 
-	if (devfs_get_cdevpriv((void **)&d) != 0 ||
-	    kn->kn_filter != EVFILT_READ)
+	if (devfs_get_cdevpriv((void **)&d) != 0)
 		return (1);
+
+	switch (kn->kn_filter) {
+	case EVFILT_READ:
+		kn->kn_fop = &bpfread_filtops;
+		break;
+
+	case EVFILT_WRITE:
+		kn->kn_fop = &bpfwrite_filtops;
+		break;
+
+	default:
+		return (1);
+	}
 
 	/*
 	 * Refresh PID associated with this descriptor.
 	 */
 	BPFD_LOCK(d);
 	BPF_PID_REFRESH_CUR(d);
-	kn->kn_fop = &bpfread_filtops;
 	kn->kn_hook = d;
 	knlist_add(&d->bd_sel.si_note, kn, 1);
 	BPFD_UNLOCK(d);
@@ -2206,6 +2230,22 @@ filt_bpfread(struct knote *kn, long hint)
 	return (ready);
 }
 
+static int
+filt_bpfwrite(struct knote *kn, long hint)
+{
+	struct bpf_d *d = (struct bpf_d *)kn->kn_hook;
+
+	BPFD_LOCK_ASSERT(d);
+
+	if (d->bd_bif == NULL) {
+		kn->kn_data = 0;
+		return (0);
+	} else {
+		kn->kn_data = d->bd_bif->bif_ifp->if_mtu;
+		return (1);
+	}
+}
+
 #define	BPF_TSTAMP_NONE		0
 #define	BPF_TSTAMP_FAST		1
 #define	BPF_TSTAMP_NORMAL	2
@@ -2226,6 +2266,7 @@ bpf_ts_quality(int tstype)
 static int
 bpf_gettime(struct bintime *bt, int tstype, struct mbuf *m)
 {
+	struct timespec ts;
 	struct m_tag *tag;
 	int quality;
 
@@ -2234,6 +2275,11 @@ bpf_gettime(struct bintime *bt, int tstype, struct mbuf *m)
 		return (quality);
 
 	if (m != NULL) {
+		if ((m->m_flags & (M_PKTHDR | M_TSTMP)) == (M_PKTHDR | M_TSTMP)) {
+			mbuf_tstmp2timespec(m, &ts);
+			timespec2bintime(&ts, bt);
+			return (BPF_TSTAMP_EXTERN);
+		}
 		tag = m_tag_locate(m, MTAG_BPF, MTAG_BPF_TIMESTAMP, NULL);
 		if (tag != NULL) {
 			*bt = *(struct bintime *)(tag + 1);
@@ -2303,6 +2349,13 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 	NET_EPOCH_EXIT(et);
 }
 
+void
+bpf_tap_if(if_t ifp, u_char *pkt, u_int pktlen)
+{
+	if (bpf_peers_present(ifp->if_bpf))
+		bpf_tap(ifp->if_bpf, pkt, pktlen);
+}
+
 #define	BPF_CHECK_DIRECTION(d, r, i)				\
 	    (((d)->bd_direction == BPF_D_IN && (r) != (i)) ||	\
 	    ((d)->bd_direction == BPF_D_OUT && (r) == (i)))
@@ -2363,6 +2416,15 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 	NET_EPOCH_EXIT(et);
 }
 
+void
+bpf_mtap_if(if_t ifp, struct mbuf *m)
+{
+	if (bpf_peers_present(ifp->if_bpf)) {
+		M_ASSERTVALID(m);
+		bpf_mtap(ifp->if_bpf, m);
+	}
+}
+
 /*
  * Incoming linkage from device drivers, when packet is in
  * an mbuf chain and to be prepended by a contiguous header.
@@ -2418,6 +2480,15 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 		}
 	}
 	NET_EPOCH_EXIT(et);
+}
+
+void
+bpf_mtap2_if(if_t ifp, void *data, u_int dlen, struct mbuf *m)
+{
+	if (bpf_peers_present(ifp->if_bpf)) {
+		M_ASSERTVALID(m);
+		bpf_mtap2(ifp->if_bpf, data, dlen, m);
+	}
 }
 
 #undef	BPF_CHECK_DIRECTION
@@ -2497,6 +2568,7 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
     void (*cpfn)(struct bpf_d *, caddr_t, u_int, void *, u_int),
     struct bintime *bt)
 {
+	static char zeroes[BPF_ALIGNMENT];
 	struct bpf_xhdr hdr;
 #ifndef BURN_BRIDGES
 	struct bpf_hdr hdr_old;
@@ -2504,7 +2576,7 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 	struct bpf_hdr32 hdr32_old;
 #endif
 #endif
-	int caplen, curlen, hdrlen, totlen;
+	int caplen, curlen, hdrlen, pad, totlen;
 	int do_wakeup = 0;
 	int do_timestamp;
 	int tstype;
@@ -2570,13 +2642,25 @@ catchpacket(struct bpf_d *d, u_char *pkt, u_int pktlen, u_int snaplen,
 		ROTATE_BUFFERS(d);
 		do_wakeup = 1;
 		curlen = 0;
-	} else if (d->bd_immediate || d->bd_state == BPF_TIMED_OUT)
-		/*
-		 * Immediate mode is set, or the read timeout has already
-		 * expired during a select call.  A packet arrived, so the
-		 * reader should be woken up.
-		 */
-		do_wakeup = 1;
+	} else {
+		if (d->bd_immediate || d->bd_state == BPF_TIMED_OUT) {
+			/*
+			 * Immediate mode is set, or the read timeout has
+			 * already expired during a select call.  A packet
+			 * arrived, so the reader should be woken up.
+			 */
+			do_wakeup = 1;
+		}
+		pad = curlen - d->bd_slen;
+		KASSERT(pad >= 0 && pad <= sizeof(zeroes),
+		    ("%s: invalid pad byte count %d", __func__, pad));
+		if (pad > 0) {
+			/* Zero pad bytes. */
+			bpf_append_bytes(d, d->bd_sbuf, d->bd_slen, zeroes,
+			    pad);
+		}
+	}
+
 	caplen = totlen - hdrlen;
 	tstype = d->bd_tstamp;
 	do_timestamp = tstype != BPF_T_NONE;
@@ -2718,7 +2802,7 @@ bpfattach2(struct ifnet *ifp, u_int dlt, u_int hdrlen,
 	bp->bif_dlt = dlt;
 	bp->bif_hdrlen = hdrlen;
 	bp->bif_bpf = driverp;
-	bp->bif_refcnt = 1;
+	refcount_init(&bp->bif_refcnt, 1);
 	*driverp = bp;
 	/*
 	 * Reference ifnet pointer, so it won't freed until
@@ -3037,12 +3121,27 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 }
 
 void
+bpf_tap_if(if_t ifp, u_char *pkt, u_int pktlen)
+{
+}
+
+void
 bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 {
 }
 
 void
+bpf_mtap_if(if_t ifp, struct mbuf *m)
+{
+}
+
+void
 bpf_mtap2(struct bpf_if *bp, void *d, u_int l, struct mbuf *m)
+{
+}
+
+void
+bpf_mtap2_if(if_t ifp, void *data, u_int dlen, struct mbuf *m)
 {
 }
 
@@ -3088,6 +3187,7 @@ bpf_show_bpf_if(struct bpf_if *bpf_if)
 		return;
 	db_printf("%p:\n", bpf_if);
 #define	BPF_DB_PRINTF(f, e)	db_printf("   %s = " f "\n", #e, bpf_if->e);
+#define	BPF_DB_PRINTF_RAW(f, e)	db_printf("   %s = " f "\n", #e, e);
 	/* bif_ext.bif_next */
 	/* bif_ext.bif_dlist */
 	BPF_DB_PRINTF("%#x", bif_dlt);
@@ -3095,7 +3195,7 @@ bpf_show_bpf_if(struct bpf_if *bpf_if)
 	/* bif_wlist */
 	BPF_DB_PRINTF("%p", bif_ifp);
 	BPF_DB_PRINTF("%p", bif_bpf);
-	BPF_DB_PRINTF("%u", bif_refcnt);
+	BPF_DB_PRINTF_RAW("%u", refcount_load(&bpf_if->bif_refcnt));
 }
 
 DB_SHOW_COMMAND(bpf_if, db_show_bpf_if)
