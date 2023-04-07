@@ -18,10 +18,10 @@ FFtarget="$Based/FFclock_working"
 ## Source dir
 MountPoint="V4_mountedfrom_Icaro"
 RealRepo="$Based/$MountPoint/RADclock_mycurrent"
-TestRepo="$Based/$MountPoint/TestingGround/PortloopRepo"	# alternative for tesing port drafts
+TestRepo="$Based/$MountPoint/TestingGround/PortloopRepo"  # alternative for testing port drafts
 Repo=$RealRepo
-read -p "** Repo is set to $Repo, continue [Yn] ? " ans
-[[ "$ans" == "n" ]] && exit
+#read -p "** Repo is set to $Repo, continue [Yn] ? " ans
+#[[ "$ans" == "n" ]] && exit
 
 KernDir="$Repo/kernel"
 
@@ -37,7 +37,12 @@ FreeBSD)
 	if [[ "$1" != "" ]]; then
 		OSv=$1
 	else
-		OSv=`uname -r | cut -d'-' -f1`
+		OSv=`uname -r | cut -d'-' -f2`
+		if [[ "$OSv" == "CURRENT" ]]; then
+			echo ">> FreeBSD CURRENT OS detected, setting OSv = $OSv <<"
+		else
+			OSv=`uname -r | cut -d'-' -f1`
+		fi
 	fi
 	FFsource=$KernDir/freebsd/FreeBSD-$OSv/CurrentSource
 
@@ -95,7 +100,7 @@ echo
 ## Copy over All files present from the source directory to the local working copy
 #   new files:  futureproof,  must modify move_into_srctree to `activate' any changes
 #   old files:  must be removed manually on VM, or made impotent by modifying  move_into_srctree,
-#     since --delete doesn't work on files send individually, only those in entire directories.
+#     since --delete doesn't work on files sent individually, only those in entire directories.
 #     To exploit --delete would have to transfer "CurrentSource" as a dir into "FFtarget" and modify
 #     move_into_srctree  to match.
 echo "  rSyncing from  $FFsource  -->  "

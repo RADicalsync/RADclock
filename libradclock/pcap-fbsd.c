@@ -124,9 +124,8 @@
 #endif
 
 
-
 /* The decoding functions display what the given bpf timestamp type descriptor
- * corresponds to, explicity and exhaustively, in terms of its independent
+ * corresponds to, explicitly and exhaustively, in terms of its independent
  * components, and fields within each component.
  */
 static void
@@ -785,19 +784,19 @@ header_match_test(pcap_t *p_handle, const struct pcap_pkthdr *header,
 
 		/* Assuming timeval, compare timestamps */
 		raw = (vcounter_t *) &h->bh_tstamp;	// raw only 64bits, so if timeval is 128, will see which half the cast gets
-		logger(RADLOG_NOTICE, " bh_tstamp:  %lld.%06lld and as cast to raw: %llu",
+		logger(RADLOG_NOTICE, " bh_tstamp:  %lld.%06llu and as cast to raw: %llu",
 			h->bh_tstamp.tv_sec, h->bh_tstamp.tv_usec, (long long unsigned) *raw );
 
 		raw = (vcounter_t *) &(header->ts);	// works regardless of size of timeval, no need to test first, nice
-		logger(RADLOG_NOTICE, " pcap ts:    %lld.%06lld and as cast to raw: %llu",
+		logger(RADLOG_NOTICE, " pcap ts:    %lld.%06llu and as cast to raw: %llu",
 			header->ts.tv_sec, header->ts.tv_usec, (long long unsigned) *raw );
 
 		/* Smart timeval printing */
 		if (sizeof(struct timeval)==16) {		// 64 bit machines
 			tv = h->bh_tstamp;
-			logger(RADLOG_NOTICE, " bpf  (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
+			logger(RADLOG_NOTICE, " bpf  (tval 2*64):  %lld  %llu", tv.tv_sec, tv.tv_usec);
 			tv = header->ts;
-			logger(RADLOG_NOTICE, " pcap (tval 2*64):  %lld  %lld", tv.tv_sec, tv.tv_usec);
+			logger(RADLOG_NOTICE, " pcap (tval 2*64):  %lld  %llu", tv.tv_sec, tv.tv_usec);
 		} else {		// traditional timeval, 32 machines
 			tv = h->bh_tstamp;
 			logger(RADLOG_NOTICE, " bpf  (tval 2*32):  %ld  %ld"  , tv.tv_sec, tv.tv_usec);

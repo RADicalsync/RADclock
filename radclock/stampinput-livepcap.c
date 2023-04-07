@@ -544,14 +544,14 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 {
 	pcap_t* p_handle = NULL;
 	struct bpf_program filter;
-	char fltstr[MAXBPFLINE];	// TODO: dynamically allocate, better if many servers
+	char fltstr[MAXBPFLINE];      // TODO: dynamically allocate, better if many servers
 	int strsize = 0;
 	int promiscuous = 0;
-	int bpf_timeout = 5;			// waiting time on BPF before exporting pkts [ms]
+	int pcap_timeout = 15;         // min waiting time before exporting pkts [ms]
 	struct radclock_config *conf;
 	char errbuf[PCAP_ERRBUF_SIZE];
-	char addr_name[16] = "";		// IP address from a hostname
-	char addr_if[16] = "";			// IP address from an interface
+	char addr_name[16] = "";      // IP address from a hostname
+	char addr_if[16] = "";        // IP address from an interface
 	int err = 0;
 
 	conf = handle->conf;
@@ -565,7 +565,7 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 		verbose(LOG_ERR, "Failed to get address by name");
 		//return (NULL);  
 	}
-	
+
 	/* If we have a host, means we supposely know who we are */
 	if (strlen(conf->hostname) > 0)
 		strcpy(addr_if, addr_name);
@@ -605,7 +605,7 @@ open_live(struct radclock_handle *handle, struct livepcap_data *ldata)
 	 * waking up the userland process, no IMMEDIATE mode!
 	 */
 	if ((p_handle = pcap_open_live(conf->network_device, BPF_PACKET_SIZE,
-			promiscuous, bpf_timeout, errbuf)) == NULL) {
+			promiscuous, pcap_timeout, errbuf)) == NULL) {
 		verbose(LOG_ERR, "Open failed on live interface, pcap says:  %s", errbuf);
 		return (NULL);
 	}

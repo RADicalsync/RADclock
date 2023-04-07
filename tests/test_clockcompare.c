@@ -44,17 +44,28 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-#include <pcap.h>			// includes <net/bpf.h>
-//#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
+#include <pcap.h>          // includes <net/bpf.h>
+//#include <net/bpf.h>     // not needed if just using tsmode presets in radclock.h
 
 /* RADclock API and RADclock packet capture API */
-#include <radclock.h>		// includes <pcap.h>
+#include <radclock.h>      // includes <pcap.h>
 
 /* For testing, but is outside the library */
 #include <radclock-private.h>
-#include "kclock.h"              // struct ffclock_estimate, get_kernel_ffclock
+#include "kclock.h"             // struct ffclock_estimate, get_kernel_ffclock
 
 #define BPF_PACKET_SIZE   108
+#define PCAP_TIMEOUT   15       // [ms]  Previous value of 5 caused huge delays
+
+
+/* bpf based KV detection */
+#define	BPF_KV             2.	// Define symbol, with default value
+#ifdef	BPF_T_FFC           	// KV≥3 detection
+#define	BPF_KV             3.
+#endif
+#ifdef	BPF_T_SYSC         	    // KV3bis detection
+#define	BPF_KV             3.5
+#endif
 
 
 void
@@ -95,14 +106,13 @@ initialise_pcap_device(char * network_device, char * filtstr)
 	}
 
 	/* No promiscuous mode, timeout on BPF = 5ms */
-	phandle = pcap_open_live(network_device, BPF_PACKET_SIZE, 0, 5, errbuf);
+	phandle = pcap_open_live(network_device, BPF_PACKET_SIZE, 0, PCAP_TIMEOUT, errbuf);
 	if (phandle == NULL) {
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		exit(EXIT_FAILURE);
 	}
 	if (alldevs)
-		pcap_freealldevs(alldevs);		// network_device no longer needed
-
+		pcap_freealldevs(alldevs);    // network_device no longer needed
 
 	/* No need to test broadcast addresses */
 	if (filtstr == NULL) {
@@ -119,30 +129,37 @@ initialise_pcap_device(char * network_device, char * filtstr)
 		}
 	}
 	if (pcap_setfilter(phandle,&filter) == -1 )  {
-		fprintf(stderr, "pcap filter setting failure, pcap says: %s\n",
-				pcap_geterr(phandle));
+		fprintf(stderr, "pcap filter setting failure, pcap says: %s\n", pcap_geterr(phandle));
 		exit(EXIT_FAILURE);
 	}
 	return phandle;
 }
 
 
-
+/* Is about testing consistency of all FF clock readings, including their raw and other
+ * conversions. Tests (silently if all good) if a taps get the same raw as desired.
+ * Focus is on raw and the FFclock conversions, including FB behaviour.
+ * Leave FAST and FORMAT, focus on comparing all clocks at once.
+ * Once basics working, is set up to compare minor errors against FORMAT and precision
+ * expectations and to keep track.
+ *
+ * tests/test_clockcompare -i em0 -o testCC.out -v
+ */
 int
 main (int argc, char *argv[])
 {
 
 	/* The user radclock structure */
-	const int nc = 6;		// number of radclocks to compare
+	const int nc = 6;    // number of radclocks to compare
 	struct radclock *clock, *c[nc];
 	radclock_local_period_t	 lpm = RADCLOCK_LOCAL_PERIOD_OFF;
 
 	/* Pcap */
-	pcap_t *pcap_handle = NULL; /* pcap handle for interface */
+	pcap_t *pcap_handle = NULL;  /* pcap handle for interface */
 	pcap_t *ph[nc];
 	char *network_device = NULL; /* points to physical device, eg xl0, em0, eth0 */
 	int i;
-	
+
 	/* Captured packet */
 	struct pcap_pkthdr header;           /* The header that pcap gives us */
 	const u_char *packet;                /* The actual packet */
@@ -158,8 +175,8 @@ main (int argc, char *argv[])
 
 	/* FFdata */
 	//struct ffclock_estimate cest;
-	
-	
+
+
 	/* packet timestamp capture mode */
 	//pktcap_tsmode_t tsmode;
 	// detailed bpf level tsmode used only if tsmode = PKTCAP_TSMODE_CUSTOM
@@ -169,7 +186,6 @@ main (int argc, char *argv[])
 	int verbose_flag = 0;
 	int ch;
 	long count_pkt = 0;
-
 
 	/* parsing the command line arguments */
 	while ((ch = getopt(argc, argv, "vo:i:t:c:lf:")) != -1)
@@ -185,11 +201,13 @@ main (int argc, char *argv[])
 			break;
 		case 't':    //  tsmode selection amoung presets, to override default
 			//tsmode = (pktcap_tsmode_t) strtol(optarg,NULL,10);	// base10
+			fprintf(stdout, "** tsmode selection currently disabled: ignored.\n");
 			break;
 		case 'c':    //  custom bpf tsmode selection, to override default
 			//custom = (u_int) strtol(optarg,NULL,16);	// base16
+			fprintf(stdout, "** custom tsmode selection currently disabled: ignored.\n");
 			break;
-		case 'L':    //  local period mode to ON, else the default is OFF
+		case 'l':    //  local period mode to ON, else the default is OFF
 			lpm = RADCLOCK_LOCAL_PERIOD_ON;
 			fprintf(stdout, "Activating plocal refinement if available.\n");
 			break;
@@ -204,7 +222,6 @@ main (int argc, char *argv[])
 		usage(argv[0]);
 		return 1;
 	}
-
 
 	/* Initialize the vector of clocks */
 	for (i=0; i<nc; i++)	{
@@ -226,6 +243,9 @@ main (int argc, char *argv[])
 		ph[i] = pcap_handle;
 	
 	}
+
+	/* bpf KV check */
+	fprintf(stderr, "\n KV bpf version detected as: %3.1f \n\n", BPF_KV);
 
 	/* tsmode is typically set by use of the pktcap_tsmode presets described in
 	 * radclock.h   The classic choice is PKTCAP_TSMODE_FFNATIVECLOCK, which
@@ -251,12 +271,12 @@ main (int argc, char *argv[])
 	cus[4] = 0x2212;			// FFmono;   Upt !FAST; bintime
 	cus[5] = 0x1212;			// FBclock;  Upt !FAST; bintime
 	// Linux choice
-	cus[0] = 0x3011;			// FFnative; UTC !FAST; nanotime
-	cus[1] = 0x2011;			// FFmono;   UTC !FAST;    "
-	cus[2] = 0x0011;			// SYSclock; UTC !FAST;    "
-	cus[3] = 0x1011;			// FBclock;  UTC !FAST;    "
-	cus[4] = 0x2211;			// FFmono;   Upt !FAST;    "
-	cus[5] = 0x1211;			// FBclock;  Upt !FAST;    "
+//	cus[0] = 0x3011;			// FFnative; UTC !FAST; nanotime
+//	cus[1] = 0x2011;			// FFmono;   UTC !FAST;    "
+//	cus[2] = 0x0011;			// SYSclock; UTC !FAST;    "
+//	cus[3] = 0x1011;			// FBclock;  UTC !FAST;    "
+//	cus[4] = 0x2211;			// FFmono;   Upt !FAST;    "
+//	cus[5] = 0x1211;			// FBclock;  Upt !FAST;    "
 
 
 	printf("------------------- Setting the packet tsmodes ------------------\n");
@@ -298,47 +318,47 @@ main (int argc, char *argv[])
 	 * then compare FF and FB side by side relative to adjusted origins given below
 	 */
 	printf("----------- Timestamp read check for baseline ---------\n");
-	for (i=0; i<nc; i++)	{
+	for (i=0; i<nc; i++) {
 		radclock_get_packet(c[i], ph[i], &header, (unsigned char **) &packet, &v[i], &tv);
 		ts_format_to_double(&tv, cus[i], &ti[i]);		// convert tv to ld using chosen tsmode
-		fprintf(output_fd,	" (%llu)	%3.9Lf [s]\n", (long long unsigned)v[i], ti[i]);
-		fprintf(stdout, 		" (%llu)	%3.9Lf [s]\n", (long long unsigned)v[i], ti[i]);
+		fprintf(output_fd, " (%llu)	%3.9Lf [s]\n", (long long unsigned)v[i], ti[i]);
+		fprintf(stdout,    " (%llu)	%3.9Lf [s]\n", (long long unsigned)v[i], ti[i]);
 	}
-	if ( ! (v[0] == v[1] && v[2] == v[3] && v[0] == v[3]) )	printf(" raw timestamps differ !! \n");
+	if ( ! (v[0] == v[1] && v[2] == v[3] && v[0] == v[3]) ) printf(" raw timestamps differ !! \n");
 	//vi = v[0];
 
 	printf("-------------------------------------------------------\n");
-	fprintf(stdout, " (raw)\t\t   UTC:  FF   FFmono   SYS    FB     (FFmono-FF SYS-FF FB-FF) \t   UP:  FFmono  FB  (FB-FFmono) \n");
+	fprintf(stdout, " (raw)\t\t   UTC:  FF     FFmono SYS    FB     (FFmono-FF SYS-FF FB-FF) \t   UP:  FFmono  FB  (FB-FFmono) \n");
 	printf("-------------------------------------------------------\n");
 
 	while (1) {
 
-		for (i=0; i<nc; i++)	{
+		for (i=0; i<nc; i++) {
 			radclock_get_packet(c[i], ph[i], &header, (unsigned char **) &packet, &v[i], &tv);
-			ts_format_to_double(&tv, cus[i], &t[i]);		// convert tv to ld using chosen tsmode
+			ts_format_to_double(&tv, cus[i], &t[i]);    // convert tv to ld using chosen tsmode
 			/* Make relative to FF values on initial packet to improve readability */
 			if (i<4)
-				t[i] -= ti[0];		// UTC origin set to first nativeFF value
+				t[i] -= ti[0];    // UTC origin set to first nativeFF value
 			else
-				t[i] -= ti[4];		// UPtime origin set to first monoFF values
-			}
-		
+				t[i] -= ti[4];    // UPtime origin set to first monoFF values
+		}
+
 		/* Check bpf timestamping architecture:  all taps should get same raw timestamp */
 		if ( ! (v[0] == v[1] && v[2] == v[3] && v[0] == v[3]) )
-				printf(" raw timestamps differ !! \n");
+			printf(" raw timestamps differ !! \n");
 				
 		/* Compare FF to FB, both as UTC, and as Uptime clocks */
 		fprintf(output_fd, " %llu %3.4Lf %3.4Lf %3.4Lf %3.4Lf %3.3Lf %3.4Lf %3.4Lf "
-								 "   %3.4Lf %3.4Lf %3.5Lf\n",
-					(long long unsigned)(v[0]), 	t[0], t[1], t[2], t[3], t[1]-t[0], t[2]-t[0], t[3]-t[0],
-															t[4], t[5], t[5]-t[4] );
+		    "   %3.4Lf %3.4Lf %3.5Lf\n",
+		    (long long unsigned)(v[0]), t[0], t[1], t[2], t[3], t[1]-t[0], t[2]-t[0], t[3]-t[0],
+			                            t[4], t[5], t[5]-t[4] );
 		fflush(output_fd);
 
 		if (verbose_flag || count_pkt < 2)
 			fprintf(stdout, " [%llu] \t %3.4Lf %3.4Lf %3.4Lf %3.4Lf (%3.3Lf [ms] %3.4Lf %3.4Lf) \t"
-								 	 " | %3.4Lf %3.4Lf (%3.5Lf)\n",
-					(long long unsigned)(v[0]), 	t[0], t[1], t[2], t[3], 1000*(t[1]-t[0]), t[2]-t[0], t[3]-t[0],
-															t[4], t[5], t[5]-t[4] );
+			    " | %3.4Lf %3.4Lf (%3.5Lf)\n",
+			    (long long unsigned)(v[0]),	t[0], t[1], t[2], t[3], 1000*(t[1]-t[0]), t[2]-t[0], t[3]-t[0],
+			                                t[4], t[5], t[5]-t[4] );
 		
 		
 		/* Collect some statistics */

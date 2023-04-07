@@ -81,7 +81,7 @@ pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode
 			break;
 
 	}
-	
+
 	/* Call to system specific method to set the bpf ts type */
 	if (descriptor_set_tsmode(clock, p_handle, (int *)&mode, custom))
 		return (-1);
@@ -102,13 +102,13 @@ pktcap_get_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t *mod
 		logger(RADLOG_ERR, "Clock handle is null, can't set mode");
 		return (-1);
 	}
-	
+
 	/* Call to system specific method to get the mode */
 	inferredmode = 0;
 	if (descriptor_get_tsmode(clock, p_handle, &inferredmode))
 		return (-1);
 
-	*mode = (pktcap_tsmode_t) inferredmode;		// only set if get safe value
+	*mode = (pktcap_tsmode_t) inferredmode;    // only set if get safe value
 
 	switch(inferredmode) {
 	case PKTCAP_TSMODE_SYSCLOCK:
@@ -159,7 +159,7 @@ void kernelclock_routine(u_char *user, const struct pcap_pkthdr *phdr, const u_c
 	struct routine_priv_data *data = (struct routine_priv_data *) user;
 	//memcpy(data->pcap_header, phdr, sizeof(struct pcap_pkthdr));
 	data->ret = extract_vcount_stamp(data->clock, data->p_handle, phdr, pdata,
-												data->vcount, data->pcap_header);
+	    data->vcount, data->pcap_header);
 	data->packet = (unsigned char*)pdata;
 	
 	if (data->clock->tsmode == PKTCAP_TSMODE_RADCLOCK) {
@@ -182,25 +182,22 @@ void kernelclock_routine(u_char *user, const struct pcap_pkthdr *phdr, const u_c
  * vcount padded in the pcap header.
  * No other choice than having a clock handle as a parameter input ...
  */
-int radclock_get_packet( struct radclock *clock, 
-						pcap_t *p_handle, 
-						struct pcap_pkthdr *header, 
-						unsigned char **packet, 
-						vcounter_t *vcount_ptr,
-						struct timeval *ts_ptr)
+int radclock_get_packet( struct radclock *clock, pcap_t *p_handle,
+    struct pcap_pkthdr *header, unsigned char **packet,
+    vcounter_t *vcount_ptr, struct timeval *ts_ptr)
 {
 	/* Assemble the user data pcap_loop will pass to our callback function */
 	struct routine_priv_data data =
 	{
-		.clock			= clock,
-		.p_handle		= p_handle,
+		.clock		= clock,
+		.p_handle	= p_handle,
 		.pcap_header	= header,
-		.vcount			= vcount_ptr,
-		.ts				= ts_ptr,
-		.ret				= 0,
-		.packet			= NULL,
+		.vcount		= vcount_ptr,
+		.ts		= ts_ptr,
+		.ret		= 0,
+		.packet		= NULL,
 	};
-	
+
 	/* Need to call the low level pcap_loop function to be able to pass our 
 	 * own callback, needed in order to extract the vcount timestamp */
 	int err;
@@ -218,4 +215,3 @@ int radclock_get_packet( struct radclock *clock,
 	}
 	return (0);
 }
-

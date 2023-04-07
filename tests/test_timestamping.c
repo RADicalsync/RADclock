@@ -32,6 +32,8 @@
 #include "radclock-private.h"
 #include "logger.h"
 
+#define BPF_PACKET_SIZE   170
+#define PCAP_TIMEOUT   15       // [ms]  Previous value of 5 caused huge delays
 
 
 int
@@ -64,8 +66,8 @@ main(int argc, char **argv)
 		fprintf(stderr, "Found device %s\n", if_name);
 	}
 
-	/* No promiscuous mode, timeout on BPF = 5ms */
-	if ((phandle = pcap_open_live(if_name, 170, 0, 5, errbuf)) == NULL) {
+	/* No promiscuous mode */
+	if ((phandle = pcap_open_live(if_name, BPF_PACKET_SIZE, 0, PCAP_TIMEOUT, errbuf)) == NULL) {
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		return (1);
 	}

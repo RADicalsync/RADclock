@@ -94,7 +94,7 @@
 #define DEFAULT_ASYM_HOST			0.0				// [microseconds]
 #define DEFAULT_ASYM_NET			0.0				// [microseconds]
 #define DEFAULT_HOSTNAME			"platypus2.tklab.feit.uts.edu.au"
-#define DEFAULT_TIME_SERVER			"ntp1.net.monash.edu.au"
+#define DEFAULT_TIME_SERVER			"syd4gps0.syd.ops.aspac.uu.net"
 #define DEFAULT_NETWORKDEV			"em0"
 #define DEFAULT_SYNC_IN_PCAP		"/etc/sync_input.pcap"
 #define DEFAULT_SYNC_IN_ASCII		"/etc/sync_input.ascii"

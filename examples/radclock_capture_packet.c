@@ -44,18 +44,18 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-//#include <net/bpf.h>		// not needed if just using tsmode presets in radclock.h
-#include <pcap.h>			// includes <net/bpf.h>
+//#include <net/bpf.h>      // not needed if just using tsmode presets in radclock.h
+#include <pcap.h>           // includes <net/bpf.h>
 
 /* RADclock API and RADclock packet capture API */
-#include <radclock.h>		// includes <pcap.h>
+#include <radclock.h>       // includes <pcap.h>
 
 /* For testing, but is outside the library, don't need for basic use */
 #include <radclock-private.h>
-#include "kclock.h"			// struct ffclock_estimate, get_kernel_ffclock
+#include "kclock.h"         // struct ffclock_estimate, get_kernel_ffclock
 
 #define BPF_PACKET_SIZE   108
-
+#define PCAP_TIMEOUT   15   // [ms]  Previous value of 5 caused huge delays
 
 void
 usage(char *progname)
@@ -95,14 +95,13 @@ initialise_pcap_device(char * network_device, char * filtstr)
 	}
 
 	/* No promiscuous mode, timeout on BPF = 5ms */
-	phandle = pcap_open_live(network_device, BPF_PACKET_SIZE, 0, 5, errbuf);
+	phandle = pcap_open_live(network_device, BPF_PACKET_SIZE, 0, PCAP_TIMEOUT, errbuf);
 	if (phandle == NULL) {
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		exit(EXIT_FAILURE);
 	}
 	if (alldevs)
-		pcap_freealldevs(alldevs);		// network_device no longer needed
-
+		pcap_freealldevs(alldevs);    // network_device no longer needed
 
 	/* No need to test broadcast addresses */
 	if (filtstr == NULL) {
@@ -119,8 +118,7 @@ initialise_pcap_device(char * network_device, char * filtstr)
 		}
 	}
 	if (pcap_setfilter(phandle,&filter) == -1 )  {
-		fprintf(stderr, "pcap filter setting failure, pcap says: %s\n",
-				pcap_geterr(phandle));
+		fprintf(stderr, "pcap filter setting failure, pcap says: %s\n", pcap_geterr(phandle));
 		exit(EXIT_FAILURE);
 	}
 	return phandle;
@@ -136,12 +134,12 @@ main (int argc, char *argv[])
 	radclock_local_period_t	 lpm = RADCLOCK_LOCAL_PERIOD_OFF;
 
 	/* Pcap */
-	pcap_t *pcap_handle = NULL;		/* pcap handle for interface */
-	char *network_device = NULL;	/* points to physical device, eg em0 */
+	pcap_t *pcap_handle = NULL;     /* pcap handle for interface */
+	char *network_device = NULL;    /* points to physical device, eg em0 */
 
 	/* Captured packet */
-	struct pcap_pkthdr header;		/* The header that pcap gives us */
-	const u_char *packet;			/* The actual packet */
+	struct pcap_pkthdr header;      /* The header that pcap gives us */
+	const u_char *packet;           /* The actual packet */
 	vcounter_t vcount;
 	struct timeval tv;
 	long double currtime;
@@ -158,7 +156,7 @@ main (int argc, char *argv[])
 	 * overwritten by a command line argument.
 	 */
 	pktcap_tsmode_t tsmode = PKTCAP_TSMODE_FFNATIVECLOCK;
-	u_int custom = 0x3012;	// like PKTCAP_TSMODE_FFNATIVECLOCK but returns bintime
+	u_int custom = 0x3012;    // like PKTCAP_TSMODE_FFNATIVECLOCK but returns bintime
 
 	/* Misc */
 	int verbose_flag = 0;
@@ -170,7 +168,7 @@ main (int argc, char *argv[])
 	long double tvdouble=0 , cdiff, frac;
 
 	/* parsing the command line arguments */
-	while ((ch = getopt(argc, argv, "vo:i:t:c:Lf:")) != -1)
+	while ((ch = getopt(argc, argv, "vo:i:t:c:lf:")) != -1)
 		switch (ch) {
 		case 'o':
 			output_file = optarg;
@@ -187,7 +185,7 @@ main (int argc, char *argv[])
 		case 'c':    //  custom bpf tsmode selection, to override default
 			custom = (u_int) strtol(optarg,NULL,16);	// base16
 			break;
-		case 'L':    //  local period mode to ON, else the default is OFF
+		case 'l':    //  local period mode to ON, else the default is OFF
  			lpm = RADCLOCK_LOCAL_PERIOD_ON;
 			fprintf(stdout, "Activating plocal refinement if available.\n");
  			break;
@@ -220,8 +218,6 @@ main (int argc, char *argv[])
 
 	radclock_register_pcap(clock, pcap_handle);
 
-
-
 	/* tsmode is typically set by use of the pktcap_tsmode presets described in
 	 * radclock.h   The classic choice is PKTCAP_TSMODE_FFNATIVECLOCK, which
 	 * uses the native FFclock.  This is the normal radclock, which is the most
@@ -238,19 +234,18 @@ main (int argc, char *argv[])
 	 * Alternative values can be set on the command line using -c .
 	 */
 	printf("------------------- Setting the packet tsmode ------------------\n");
-	//custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;	// this is PKTCAP_TSMODE_FFNATIVECLOCK
+	//custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // this is PKTCAP_TSMODE_FFNATIVECLOCK
 	//custom = BPF_T_NANOTIME  | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // same but upping to ns resolution
 	pktcap_set_tsmode(clock, pcap_handle, tsmode, custom);
 	// Reuse custom as a tstype argument for  ts_format_to_double  below
 	if (tsmode == PKTCAP_TSMODE_FFNATIVECLOCK)
 		custom = 0x3010;
-//		custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;	// not available in any .h
+//		custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // not available in any .h
 
-	
+
 	printf("------------------- Checking what it was finally set to ---------\n");
 	pktcap_get_tsmode(clock, pcap_handle, &tsmode);
 	printf("----------------------------------------------------------------\n");
-
 
 
 
@@ -263,7 +258,7 @@ main (int argc, char *argv[])
 		fprintf(output_fd, "%% column 1: RAW vcount underlying the timestamp\n");
 		fprintf(output_fd, "%% column 2: Time - Absolute time from kernel using chosen clock\n");
 		fprintf(output_fd, "%% column 3: Time - RADclock Absolute clock at that raw timestamp\n");
-		fprintf(output_fd, "%% column 4: diff:  kernel - radclock [s] \n");
+		fprintf(output_fd, "%% column 4: diff:  kernel - RADclock [s] \n");
 		fprintf(output_fd, "%% column 5: Fractional part of diff expressed in mus\n");
 		fprintf(output_fd, "%% column 6: Generation number of sms used\n");
 		fflush(output_fd);
@@ -305,33 +300,35 @@ main (int argc, char *argv[])
 		radclock_vcount_to_abstime(clock, &vcount, &currtime);
 
 		/* Convert tv to double for comparison */
-		ts_format_to_double(&tv, custom, &tvdouble);		// custom currently ignored if Linux
+		ts_format_to_double(&tv, custom, &tvdouble);    // custom currently ignored if Linux
 		cdiff = (currtime - tvdouble);
 		frac = cdiff - (int) cdiff;
 
 		/* Output the kernel's absolute timestamp, the raw, radclocks's abs time */
 		fprintf(output_fd, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
-				(long long unsigned) vcount,
-				tv.tv_sec, (long long unsigned)tv.tv_usec,
-				currtime,
-				cdiff, 1e6*frac,
-				gen);
+		    (long long unsigned) vcount,
+		    tv.tv_sec, (long long unsigned)tv.tv_usec,
+		    currtime,
+		    cdiff, 1e6*frac,
+		    gen);
 
 		fflush(output_fd);
-		
-		
+
 		if (verbose_flag) {
+			if (count_pkt == 0)
+				fprintf(stdout, "   Shared raw        kernel ts                "
+				    "        radclock ts       ( radclock  -  kernel  ) \n");
 			fprintf(stdout, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
-					(long long unsigned) vcount,
-					tv.tv_sec, (long long unsigned)tv.tv_usec,
-					currtime,
-					cdiff, 1e6*frac,
-					gen);
+			    (long long unsigned) vcount,
+			    tv.tv_sec, (long long unsigned)tv.tv_usec,
+			    currtime,
+			    cdiff, 1e6*frac,
+			    gen);
 		}
 
 		/* Collect some statistics */
 		count_pkt++;
-		if ( fabs(1e9*frac) > 1 ) count_err_ns++;		// keep track of #errors worse than 1ns
+		if ( fabs(1e9*frac) > 1 ) count_err_ns++;   // keep track of #errors worse than 1ns
 
 		if (verbose_flag) {
 			if ( count_pkt%4 == 0 ) {

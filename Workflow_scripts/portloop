@@ -13,11 +13,16 @@
 # 	(NPort)   :  apply O->N patch [by cherry-picking (2)] to the WD of O+ (3)
 #                to obtain a first cut Naive Port- not committed!
 #
+#  port          O --- N --- O+ --{NP}
+#               /
+#  master  --- H
+#
 ## Manual outside the script:
 #    Finish NPort (resolve conflicts, other changes; git add .)
 #      - test in a VM, and perfect as needed to generate N+
-#    This includes deletion of files with no FF content not actually needed.
-#    Have to add new dir to Xcode project to enable CR on it
+#    This includes deletion of files with no FF content not actually needed,
+#    and more rarely, addition of new FFfiles.
+#    Have to add new dir to Xcode project to enable CR on it.
 #    Add additional cleanup scripts if needed (hopefully not).
 #
 ## Phase 2 of script:  "portloop -c"
@@ -25,14 +30,25 @@
 # 	(commit 4):  the full tested port   [ call this N+ ]
 # (commit 5):  merge commit onto master
 #
+#  port          O --- N --- O+ --- N+
+#               /                    \
+#  master  --- H --- (≥0 commits) --- N'+
+#
 # Following (NPort), additional cleanup commits may be created inbetween (4) and (5),
 # but these are not handled by the script.  Options are provided for the commit
 # message to automate the 2 simple cases (no conflict or trivial conflict),
 # and to seed the commit message if more complex.
-
+#
 # If have already completed port in the TestRepo, and now repeating in real repo,
 # have option at end of Phase 1 to transfer the final FFfiles into the repo.
-
+#
+# The SeedingCURRENT parameter is used to support the initial step for the
+# re-tracking of FreeBSD-CURRENT after a long break.
+# Once used, "retrack" (run in the VM) continues the tracking process on master
+# without any further loops.
+#
+# The only files ever added for commit are those in the destination NewFF dir.
+# It is safe to use portloop without touching other uncommitted changes on master.
 
 
 # Base parameters
@@ -41,13 +57,16 @@ RealRepo="$Home/RADclock_mycurrent"
 TestRepo="$Home/TestingGround/PortloopRepo"
 
 # Input parameters
-Repo=$RealRepo		# select from {Real,Test}Repo
-OS='linux'			# select from {freebsd,linux}
-Norigin="VM"		# Linux only: distinguish between Earthly or VM origin of N version
-Old="4.19.235"		# O=Old is the current version to be advanced to N=New
+Repo=$RealRepo      # select from {Real,Test}Repo
+SeedingCURRENT="y"  # if loop is to re-seed tracking of FreeBSD CURRENT
+OS='freebsd'        # select from {freebsd,linux}
+Norigin="VM"        # Linux only: distinguish between Earthly or VM origin of N version
+Old="4.19.235"      # O=Old is the current version to be advanced to N=New
 New="4.19.260"
 Old="5.10.106"
 New="5.10.149"
+Old="13.1"
+New="14.0-CURRENT"
 
 # Setup Repo where the loop will be created
 if [ "$Repo" == "$RealRepo" ]; then
@@ -88,7 +107,12 @@ else
 	OldOrig="$Home/OriginalFFfiles_FreeBSD/$Old/"		# O
 	NewOrig="$Home/OriginalFFfiles_FreeBSD/$New/"		# N
 	OD="FreeBSD-$Old"
-	ND="FreeBSD-$New"
+	if [[ "$SeedingCURRENT" == "n" ]]; then
+		ND="FreeBSD-$New"       # neme mirrors name of NewOrig dir
+	else
+		ND="FreeBSD-CURRENT"    # only one CURRENT tracking dir, name not versioned
+		echo "** You are looping to re-start tracking of CURRENT, a special case. Target dir is $ND ***"
+	fi
 fi
 OldFF="kernel/$OS/$OD/CurrentSource/"					# O+
 NewFF="kernel/$OS/$ND/CurrentSource/"					# N+
@@ -208,7 +232,7 @@ if [ "$1" == "" ]; then
 	#git branch
 
 	# Create new dir, named after N, where the loop changes will live
-	mkdir -p $NewFF		# creates both ND and ND/CurrentSource
+	mkdir -p $NewFF		# creates both ND and ND/CurrentSource if needed
 
 	# Seeding Stage 1	(O)
 	echo
@@ -256,7 +280,9 @@ if [ "$1" == "" ]; then
 	echo -e "${BLU}=== Phase 1 Complete:  complete port manually in WD, then run 'portloop -c' ===${CLE}"
 	echo
 
+
 	## Repeat run in RealRepo of what already done in TestRepo? if so manual work done!
+	## Note Phase 2 in TestRepo not needed, only that the N+ FFfiles are in the WD, committed or not.
 	if [ "$Repo" == "$RealRepo" ]; then
 		NewFF_test="$TestRepo/$NewFF"
 		if [[ -e $NewFF_test ]]; then
@@ -325,9 +351,19 @@ else
 
 	echo
 	echo -e "${BLE}=========== Closing Loop -- Merge to master ==========${CLE}"
+	# checkout should work even if uncommitted changes (outside NewFF): they won't be merged
 	git checkout master
 	SM="Merge commit of branch $loopbranch : Port of $OS FFcode from $Old to $New."
-	git merge --no-ff  $loopbranch	-m"$SM"	# insist on a MC, even though not necessary
+	if [[ "$SeedingCURRENT" == "n" ]]; then
+		git merge --no-ff  $loopbranch	-m"$SM"	# insist on a MC, even though not necessary
+	else
+		echo " **!!** Must enter editor to record commit MN1 from CURRENT, since missing from N1 commit above **!!** "
+		echo " **!!** Copy output of  git branch -v  from FFport in VM **!!**"
+		CM="The new source derived from the following main commit :"
+		read -p "Hit return when ready to enter editor... " ans
+		git merge -e --no-ff  $loopbranch	-m"$SM"	-m"$CM"		# insist on a MC, even though not necessary
+	fi
+
 	echo
 	git branch -d $loopbranch
 	echo

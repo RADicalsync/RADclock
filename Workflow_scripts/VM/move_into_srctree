@@ -50,12 +50,16 @@ if [ $OS == "FreeBSD" ]; then
 	else
 		ls -l $FFsource  | grep -v "if_"
 	fi
-	\cp $FFsource/{kern_*,subr_rtc}.c		$Installd/sys/kern/
-	\cp $FFsource/{timeffc,_ffcounter}.h	$Installd/sys/sys/
-	\cp $FFsource/bpf.{c,h}			$Installd/sys/net/
-	\cp $FFsource/FFCLOCK			$Installd/sys/$Arch/conf/
-	\cp $FFsource/ffclock.2			$Installd/lib/libc/sys/
-	\cp $FFsource/ffclock.4			$Installd/share/man/man4/
+	\cp $FFsource/{kern_*,subr_rtc}.c             $Installd/sys/kern/
+	\cp $FFsource/{timeffc,timepps,_ffcounter}.h  $Installd/sys/sys/
+	\cp $FFsource/bpf.{c,h}                       $Installd/sys/net/
+	\cp $FFsource/FFCLOCK                         $Installd/sys/$Arch/conf/
+	\cp $FFsource/FFCLOCK                         $Installd/sys/i386/conf/
+	\cp $FFsource/ffclock.2                       $Installd/lib/libc/sys/
+	\cp $FFsource/ffclock.4                       $Installd/share/man/man4/
+	\cp $FFsource/freebsd32_misc.c                $Installd/sys/compat/freebsd32/
+	\cp $FFsource/freebsd32.h                     $Installd/sys/compat/freebsd32/
+#	\cp $FFsource/bpf.4                           $Installd/share/man/man4/
 fi
 
 

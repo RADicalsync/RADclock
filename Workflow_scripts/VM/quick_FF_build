@@ -4,7 +4,7 @@
 # options -n :  use existing source, don't update FFfiles or overwrite with them
 #         -f :  Linux:  select faster (non-clean) compile options
 #         -nf:  if you want both: must be in this order !
-#         -c :  FreeBSD: select faster (non-clean) compile options
+#         -c :  FreeBSD: select clean (slower) compile option
 #         -w :  FreeBSD: build world
 #
 # TODO:  is a mess: process these properly at the head of the file, and use to define stable
@@ -42,7 +42,7 @@ if [[ "$source" == "current" ]]; then
 	echo "=== Will build and install the current kernel $SourceDir for $OS ==="
 else	
 	echo "=== Will update FF source, copy it to source tree at $SourceDir for $OS, then build and install ==="
-	update_workingFFsource 	# pass explicit argument if not finding desired version
+	update_workingFFsource  # pass explicit argument here as a hack if not finding desired version
 	echo
 	#update_linuxSource -l		# a hack, dont do this unless it works for you
 	echo "=============================================================="
