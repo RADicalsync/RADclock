@@ -167,7 +167,7 @@ struct bpf_hdr32 {
 	uint32_t	bh_datalen;	/* original length of packet */
 	uint16_t	bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
-	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
+	ffcounter	bh_ffcounter;	/* feedforward counter stamp */
 };
 #endif
 
@@ -1798,7 +1798,8 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		break;
 
 	/*
-	 * Get packet timestamp format and resolution.
+	 * Get packet timestamp descriptor, describing the requested CLOCK,
+	 * FFRAW (raw counter return), FLAG qualifiers, and FORMAT (resolution).
 	 */
 	case BIOCGTSTAMP:
 		BPFD_LOCK(d);
@@ -1807,7 +1808,8 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 		break;
 
 	/*
-	 * Set packet timestamp format and resolution.
+	 * Set packet timestamp descriptor, describing the requested CLOCK,
+	 * FFRAW (raw counter return), FLAG qualifiers, and FORMAT (resolution).
 	 */
 	case BIOCSTSTAMP:
 		{
@@ -2264,6 +2266,41 @@ filt_bpfwrite(struct knote *kn, long hint)
 }
 
 /*
+ * Translate the FLAG and CLOCK dimensions of the BPF_T_ timestamp descriptor
+ * held in tstype, to the sysclock flag system for clock-type specification.
+ * The specification requires that the clock family be separately carried, BOTH
+ * the default FB and FF (nativeFFC) clocks correspond to sysflags=0.
+ * The FORMAT and FFRAW dimensions are ignored as they are processed elsewhere.
+ */
+static void
+translate_clock_flags(int tstype, int *clockfamily, uint32_t *sysflags)
+{
+	int clock;
+
+	*sysflags = 0;
+	clock = BPF_T_CLOCK(tstype);
+
+	if ( (clock == BPF_T_SYSC && sysclock_active == SYSCLOCK_FB) ||
+	    clock == BPF_T_FBC ) {    // FB case
+		*clockfamily = SYSCLOCK_FB;
+		if (tstype & BPF_T_FAST)
+			*sysflags = FBCLOCK_FAST;
+		if (tstype & BPF_T_MONOTONIC)
+			*sysflags |= FBCLOCK_UPTIME;
+	} else {                      // FF case
+		*clockfamily = SYSCLOCK_FF;
+		if (tstype & BPF_T_FAST)
+			*sysflags = FFCLOCK_FAST;
+		if (tstype & BPF_T_MONOTONIC)
+			*sysflags |= FFCLOCK_UPTIME;
+		if (clock == BPF_T_MONOFFC || clock == BPF_T_SYSC)
+			*sysflags |= FFCLOCK_MONO;
+		if (clock == BPF_T_DIFFFFC)
+			*sysflags |= FFCLOCK_DIFF;
+	}
+}
+
+/*
  * Incoming linkage from device drivers.  Process the packet pkt, of length
  * pktlen, which is stored in a contiguous buffer.  The packet is parsed
  * by each process' filter, and if accepted, stashed into the corresponding
@@ -2275,6 +2312,8 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 	struct epoch_tracker et;
 	struct bintime bt;
 	struct sysclock_snap cs;
+	int clockfamily;
+	uint32_t flags;
 	struct bpf_d *d;
 #ifdef BPF_JITTER
 	bpf_jit_filter *bf;
@@ -2313,18 +2352,8 @@ bpf_tap(struct bpf_if *bp, u_char *pkt, u_int pktlen)
 				goto ts_filled;
 			}
 			/* Prepare a ts from the requested clock. */
-			if ( (sysclock_active == SYSCLOCK_FB
-			    && BPF_T_CLOCK(d->bd_tstamp) == BPF_T_SYSCLOCK)
-			    || BPF_T_CLOCK(d->bd_tstamp) == BPF_T_FBCLOCK )
-				sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FB,
-				    d->bd_tstamp & BPF_T_FAST,
-				    d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
-			else
-				sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FF,
-				    d->bd_tstamp & BPF_T_FAST,
-				    d->bd_tstamp & BPF_T_MONOTONIC,
-				    BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
-				    BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK);
+			translate_clock_flags(d->bd_tstamp, &clockfamily, &flags);
+			sysclock_snap2bintime(&cs, &bt, clockfamily, flags);
 
 ts_filled:
 #ifdef MAC
@@ -2372,6 +2401,8 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 	struct bintime bt;
 	struct timespec ts;
 	struct sysclock_snap cs;
+	int clockfamily;
+	uint32_t flags;
 	struct bpf_d *d;
 	struct m_tag *tag = NULL;
 #ifdef BPF_JITTER
@@ -2430,18 +2461,8 @@ bpf_mtap(struct bpf_if *bp, struct mbuf *m)
 				}
 			}
 			/* Prepare a ts from the requested clock. */
-			if ( (sysclock_active == SYSCLOCK_FB
-			    && BPF_T_CLOCK(d->bd_tstamp) == BPF_T_SYSCLOCK)
-			    || BPF_T_CLOCK(d->bd_tstamp) == BPF_T_FBCLOCK )
-				sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FB,
-				    d->bd_tstamp & BPF_T_FAST,
-				    d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
-			else
-				sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FF,
-				    d->bd_tstamp & BPF_T_FAST,
-				    d->bd_tstamp & BPF_T_MONOTONIC,
-				    BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
-				    BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK);
+			translate_clock_flags(d->bd_tstamp, &clockfamily, &flags);
+			sysclock_snap2bintime(&cs, &bt, clockfamily, flags);
 				
 ts_filled:
 #ifdef MAC
@@ -2487,6 +2508,8 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 	struct bintime bt;
 	struct timespec ts;
 	struct sysclock_snap cs;
+	int clockfamily;
+	uint32_t flags;
 	struct mbuf mb;
 	struct bpf_d *d;
 	struct m_tag *tag = NULL;
@@ -2545,18 +2568,8 @@ bpf_mtap2(struct bpf_if *bp, void *data, u_int dlen, struct mbuf *m)
 				}
 			}
 			/* Prepare a ts from the requested clock. */
-			if ( (sysclock_active == SYSCLOCK_FB
-			    && BPF_T_CLOCK(d->bd_tstamp) == BPF_T_SYSCLOCK)
-			    || BPF_T_CLOCK(d->bd_tstamp) == BPF_T_FBCLOCK )
-				sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FB,
-				    d->bd_tstamp & BPF_T_FAST,
-				    d->bd_tstamp & BPF_T_MONOTONIC, 0, 0);
-			else
-				sysclock_snap2bintime(&cs, &bt, SYSCLOCK_FF,
-				    d->bd_tstamp & BPF_T_FAST,
-				    d->bd_tstamp & BPF_T_MONOTONIC,
-				    BPF_T_CLOCK(d->bd_tstamp)< BPF_T_FFNATIVECLOCK,
-				    BPF_T_CLOCK(d->bd_tstamp)==BPF_T_FFDIFFCLOCK);
+			translate_clock_flags(d->bd_tstamp, &clockfamily, &flags);
+			sysclock_snap2bintime(&cs, &bt, clockfamily, flags);
 
 ts_filled:
 #ifdef MAC

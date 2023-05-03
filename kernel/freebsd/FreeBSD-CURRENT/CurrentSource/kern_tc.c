@@ -631,7 +631,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 	ffth->tick_ffcount = fftimehands->tick_ffcount + ffdelta;
 
 	/*
- 	 * RTC reset: reset all FFclocks, and the daemon natFF data.
+	 * RTC reset: reset all FFclocks, and the daemon natFFC data.
 	 * The period is initialized only if needed.
 	 */
 	if (reset_FBbootime) {
@@ -952,7 +952,7 @@ ffclock_change_tc(struct timehands *th, unsigned int ncount)
 	ffth->tick_time_mono = fftimehands->tick_time_mono;
 	ffth->period_mono = cest->period;
 
-	/* Push the reset FFdata to the global variable. */
+	/* Push the reset natFFC data to the global variable. */
 	mtx_lock_spin(&ffclock_mtx);
 	memcpy(&ffclock_estimate, cest, sizeof(struct ffclock_estimate));
 	ffclock_updated--;    // ensure next daemon update will be ignored
@@ -1306,7 +1306,7 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
  */
 int
 sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichfamily, int wantFast, int wantUptime, int wantMono, int wantDiff)
+    int clockfamily, uint32_t flags)
 {
 	struct bintime boottimebin;
 #ifdef FFCLOCK
@@ -1314,44 +1314,43 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 	uint64_t period;
 #endif
 
-	switch (whichfamily) {
+	switch (clockfamily) {
 	case SYSCLOCK_FB:
 		*bt = cs->fb_info.tick_time;
 
 		/* If snapshot was created with !fast, delta will be >0. */
-		if (!wantFast && cs->delta > 0)
+		if (flags & FBCLOCK_FAST && cs->delta > 0)
 			bintime_addx(bt, cs->fb_info.th_scale * cs->delta);
 
-		/* Native FBclock is Uptime, need to adjust if want UTC. */
-		if (!wantUptime) {
+		if ((flags & FBCLOCK_UPTIME) == 0) {
 			getboottimebin(&boottimebin);
 			bintime_add(bt, &boottimebin);
 		}
 		break;
 #ifdef FFCLOCK
 	case SYSCLOCK_FF:
-		if (wantMono) {  // Lerp supercedes Diff
-			period = cs->ff_info.period_mono;
+		if (flags & FFCLOCK_MONO) {
 			*bt = cs->ff_info.tick_time_mono;
+			period = cs->ff_info.period_mono;
 		} else {
 			period = cs->ff_info.period;
-			if (wantDiff && !wantUptime)
+			if ((flags & FFCLOCK_DIFF) && !(flags & FFCLOCK_UPTIME))
 				*bt = cs->ff_info.tick_time_diff;
 			else
 				*bt = cs->ff_info.tick_time;
 		}
 
 		/* If snapshot was created with !fast, delta will be >0. */
-		if (!wantFast && cs->delta > 0) {
+		if (!(flags & FFCLOCK_FAST) && cs->delta > 0) {
 			ffclock_convert_delta((ffcounter)cs->delta,period,&bt2);
 			bintime_add(bt, &bt2);
 		}
 
-		/* Add appropriate const for Uptime, UTC, or Diff FF clock. */
-		if (wantUptime)  // Uptime superceded Diff
-			bintime_sub(bt, &ffclock_boottime);
-		else
-			if (!wantDiff || wantMono)  // UTC
+		/* Add appropriate const for Uptime, UTC, or diffFFC clock. */
+		if (flags & FFCLOCK_UPTIME)
+			bintime_sub(bt, &cs->ff_info.ffclock_boottime);
+		else // UTC
+			if (!(flags & FFCLOCK_DIFF) || flags & FFCLOCK_MONO)
 				bt->sec -= cs->ff_info.leapsec_adjustment;
 			// else Diff
 		break;

@@ -171,7 +171,7 @@ void sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast);
 
 /* Convert a timestamp from the selected system clock into bintime. */
 int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, int wantFast, int wantUptime, int wantLerp, int wantDiff);
+    int clockfamily, uint32_t flags);
 
 /*
  * Return the current value of the feedforward clock counter. Essential to

@@ -191,11 +191,11 @@ enum bpf_direction {
 #define	BPF_T_MONOTONIC_FAST 0x0300  // UPTIME,  FAST
 #define	BPF_T_FLAG_MASK      0x0300
 /* CLOCK flags   [ mutually exclusive, not to be ORed. ] */
-#define	BPF_T_SYSCLOCK       0x0000  // read current sysclock
-#define	BPF_T_FBCLOCK        0x1000  // read FB
-#define	BPF_T_FFCLOCK        0x2000  // read mono FF (standard reads are mono)
-#define	BPF_T_FFNATIVECLOCK  0x3000  // read native FF
-#define	BPF_T_FFDIFFCLOCK    0x4000  // read FF difference clock
+#define	BPF_T_SYSC           0x0000  // read current sysclock
+#define	BPF_T_FBC            0x1000  // read FBclock
+#define	BPF_T_MONOFFC        0x2000  // read monoFFC (sysclock reads are mono)
+#define	BPF_T_NATFFC         0x3000  // read natFFC
+#define	BPF_T_DIFFFFC        0x4000  // read diffFFC
 #define	BPF_T_CLOCK_MASK     0x7000
 
 /* Extract FORMAT, FFRAW, FLAG, CLOCK  bits. */
@@ -213,12 +213,32 @@ enum bpf_direction {
 #ifdef FFCLOCK
 #define	BPF_T_VALID(t) ( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
                                   BPF_T_FLAG_MASK   | BPF_T_CLOCK_MASK)) == 0 \
-                         && BPF_T_CLOCK(t)<=BPF_T_FFDIFFCLOCK )
+                         && BPF_T_CLOCK(t)<=BPF_T_DIFFFFC )
 #else
 #define	BPF_T_VALID(t) ( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
                                   BPF_T_FLAG_MASK   | BPF_T_CLOCK_MASK)) == 0 \
-                         && BPF_T_CLOCK(t)<=BPF_T_FBCLOCK )
+                         && BPF_T_CLOCK(t)<=BPF_T_FBC )
 #endif
+
+/*
+ * Presets to ease tstype selection for users. These cover all FORMAT*FLAG
+ * combinations for a default clock of BPF_T_SYSC, with BPF_T_NOFFC .
+ */
+#define	BPF_T_MICROTIME_FAST		(BPF_T_MICROTIME | BPF_T_FAST)
+#define	BPF_T_NANOTIME_FAST		(BPF_T_NANOTIME | BPF_T_FAST)
+#define	BPF_T_BINTIME_FAST		(BPF_T_BINTIME | BPF_T_FAST)
+#define	BPF_T_MICROTIME_MONOTONIC	(BPF_T_MICROTIME | BPF_T_MONOTONIC)
+#define	BPF_T_NANOTIME_MONOTONIC	(BPF_T_NANOTIME | BPF_T_MONOTONIC)
+#define	BPF_T_BINTIME_MONOTONIC		(BPF_T_BINTIME | BPF_T_MONOTONIC)
+#define	BPF_T_MICROTIME_MONOTONIC_FAST	(BPF_T_MICROTIME | BPF_T_MONOTONIC_FAST)
+#define	BPF_T_NANOTIME_MONOTONIC_FAST	(BPF_T_NANOTIME | BPF_T_MONOTONIC_FAST)
+#define	BPF_T_BINTIME_MONOTONIC_FAST	(BPF_T_BINTIME | BPF_T_MONOTONIC_
+
+/* Presets for the main FFCLOCK choices, all with BPF_T_FFC. */
+#define	BPF_T_BINTIME_FFC_MONOFFC    (BPF_T_BINTIME | BPF_T_FFC | BPF_T_MONOFFC)
+#define	BPF_T_BINTIME_FFC_NATFFC     (BPF_T_BINTIME | BPF_T_FFC | BPF_T_NATFFC)
+#define	BPF_T_BINTIME_FFC_DIFFFFC    (BPF_T_BINTIME | BPF_T_FFC | BPF_T_DIFFFFC)
+
 
 /*
  * Structure prepended to each packet.
@@ -233,7 +253,7 @@ struct bpf_xhdr {
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
-	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
+	ffcounter	bh_ffcounter;	/* feedforward counter stamp */
 };
 /* Obsolete */
 struct bpf_hdr {
@@ -242,7 +262,7 @@ struct bpf_hdr {
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
-	ffcounter	bh_ffcounter;	/* feed-forward counter stamp */
+	ffcounter	bh_ffcounter;	/* feedforward counter stamp */
 };
 #ifdef _KERNEL
 #define	MTAG_BPF		0x627066

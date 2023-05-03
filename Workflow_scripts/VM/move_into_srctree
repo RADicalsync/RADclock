@@ -59,7 +59,7 @@ if [ $OS == "FreeBSD" ]; then
 	\cp $FFsource/ffclock.4                       $Installd/share/man/man4/
 	\cp $FFsource/freebsd32_misc.c                $Installd/sys/compat/freebsd32/
 	\cp $FFsource/freebsd32.h                     $Installd/sys/compat/freebsd32/
-#	\cp $FFsource/bpf.4                           $Installd/share/man/man4/
+	\cp $FFsource/bpf.4                           $Installd/share/man/man4/
 fi
 
 

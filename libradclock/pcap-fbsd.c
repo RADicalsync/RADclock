@@ -73,6 +73,14 @@
 #endif
 
 
+/* bpf based KV detection */
+#define	BPF_KV             2.   // Define symbol, with default value
+#ifdef	BPF_T_FFC               // KV≥3 detection
+#define	BPF_KV             3.
+#endif
+#ifdef	BPF_T_SYSC              // KV3bis detection
+#define	BPF_KV             3.5
+#endif
 
 /* Ensure all symbols needed for compilation of KV=2,3 related code are defined,
  * (without any overwritting), regardless of compiled kernel
@@ -106,7 +114,6 @@
 #define	BPF_T_CLOCK_MAX		0x2000
 #endif
 
-
 /* Ensure definition of symbols unique to KV=3 */
 #ifndef	BPF_T_NOFFC
 #define	BPF_T_NOFFC			0x0000   // no FFcount
@@ -121,6 +128,15 @@
 #define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
 //#define	BPF_T_FLAVOR(t)	((t) & BPF_T_FLAVOR_MASK)
 #define	BPF_T_CLOCK_MASK	0x7000	// shouldnt be needed..
+#endif
+
+/* KV3bis support: ensure definition of symbols needed by original KV=3, if now superceded in bpf.h */
+#ifdef	BPF_T_SYSC		// detect kernel is KV=3bis, add KV3 symbols used here, aliased to new values
+#define	BPF_T_SYSCLOCK         BPF_T_SYSC
+#define	BPF_T_FBCLOCK          BPF_T_FBC
+#define	BPF_T_FFCLOCK          BPF_T_MONOFFC
+#define	BPF_T_FFNATIVECLOCK    BPF_T_NATFFC
+#define	BPF_T_FFDIFFCLOCK      BPF_T_DIFFFFC
 #endif
 
 
@@ -878,6 +894,7 @@ extract_vcount_stamp_v3(pcap_t *p_handle,  const struct pcap_pkthdr *header,
 			logger(RADLOG_WARNING, "bpf_hdr and pcap timestamps do not match");
 			logger(RADLOG_WARNING, "Overwriting pcap ts with bpf ts (which will "
 					"obey the requested tsmode), silencing future transgressions.");
+			logger(RADLOG_WARNING, "KV bpf version detected as: %3.1f", BPF_KV);
 			tstested = 1;
 		}
 		/* Could fail if timeval 8 bytes, but shouldnt execute in that case */
