@@ -521,16 +521,16 @@ getboottimebin(struct bintime *boottimebin)
 
 /* Feedforward clock estimates kept updated by the synchronization daemon. */
 struct ffclock_estimate ffclock_estimate;
-struct bintime ffclock_boottime;	/* feedforward boot time estimate. */
 uint32_t ffclock_status;		/* feedforward clock status. */
 int8_t ffclock_updated;			/* New estimates are available. */
 struct mtx ffclock_mtx;			/* Mutex on ffclock_estimate. */
 
 struct fftimehands {
-	struct ffclock_estimate cest;	/* natFFC data */
-	struct bintime tick_time;	/* natFFC */
-	struct bintime tick_time_mono;	/* monoFFC */
-	struct bintime tick_time_diff;	/* diffFFC */
+	struct ffclock_estimate cest;		/* natFFC daemon data */
+	struct bintime tick_time;		/* natFFC */
+	struct bintime tick_time_mono;		/* monoFFC */
+	struct bintime tick_time_diff;		/* diffFFC */
+	struct bintime ffclock_boottime;	/* UTC timestamp of boot */
 	struct bintime tick_error;
 	ffcounter tick_ffcount;
 	uint64_t period_mono;
@@ -558,7 +558,6 @@ ffclock_init(void)
 
 	ffclock_updated = 0;
 	ffclock_status = FFCLOCK_STA_UNSYNC;
-	ffclock_boottime.sec = ffclock_boottime.frac = 0;
 	mtx_init(&ffclock_mtx, "ffclock lock", NULL, MTX_SPIN);
 }
 
@@ -645,7 +644,7 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		 *          = FF : ensure cont'y in FF and hence sysclock Uptime
 		 */
 		if (sysclock_active == SYSCLOCK_FB)
-			ffclock_boottime = *reset_FBbootime;
+			ffth->ffclock_boottime = *reset_FBbootime;
 		else {
 			/* First calculate what monoFFC would have been. */
 			ffth->tick_time_mono = fftimehands->tick_time_mono;
@@ -657,11 +656,11 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 			if (bintime_cmp(reset_UTC, &ffth->tick_time_mono, >)) {
 				gap = *reset_UTC;
 				bintime_sub(&gap, &ffth->tick_time_mono);
-				bintime_add(&ffclock_boottime, &gap);
+				bintime_add(&ffth->ffclock_boottime, &gap);
 			} else {
 				gap = ffth->tick_time_mono;
 				bintime_sub(&gap, reset_UTC);
-				bintime_sub(&ffclock_boottime, &gap);
+				bintime_sub(&ffth->ffclock_boottime, &gap);
 			}
 		}
 
@@ -696,17 +695,18 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		ffth->period_mono = cest->period;
 
 		upt = ffth->tick_time_mono;
-		bintime_sub(&upt, &ffclock_boottime);
+		bintime_sub(&upt, &ffth->ffclock_boottime);
 		printf("FFclock processing RTC reset: UTC: %lld.%03u"
 		    " boottime: %llu.%03u, uptime: %llu.%03u\n",
 		    (long long)ffth->tick_time_mono.sec,
 		    (unsigned int)(ffth->tick_time_mono.frac / MS_AS_BINFRAC),
-		    (unsigned long long)ffclock_boottime.sec,
-		    (unsigned int)(ffclock_boottime.frac / MS_AS_BINFRAC),
+		    (unsigned long long)ffth->ffclock_boottime.sec,
+		    (unsigned int)(ffth->ffclock_boottime.frac / MS_AS_BINFRAC),
 		    (unsigned long long)upt.sec,
 		    (unsigned int)(upt.frac / MS_AS_BINFRAC) );
 
-	}
+	} else
+		ffth->ffclock_boottime = fftimehands->ffclock_boottime;
 
 	/*
 	 * Signal to ignore a stale daemon update following a RTC reset.
@@ -818,17 +818,17 @@ ffclock_windup(unsigned int delta, struct bintime *reset_FBbootime,
 		    && ((cest->status & FFCLOCK_STA_UNSYNC) == 0) ) {
 			if (forward_jump) {
 				printf("ffwindup:  forward");
-				bintime_add(&ffclock_boottime, &gap);
+				bintime_add(&ffth->ffclock_boottime, &gap);
 			} else {
 				printf("ffwindup:  backward");
-				bintime_sub(&ffclock_boottime, &gap);
+				bintime_sub(&ffth->ffclock_boottime, &gap);
 			}
 			printf(" jump for monoFFclock of %llu.%03u",
 			    (unsigned long long)gap.sec,
 			    (unsigned int)(gap.frac / MS_AS_BINFRAC) );
 
 			upt = ffth->tick_time_mono;
-			bintime_sub(&upt, &ffclock_boottime);
+			bintime_sub(&upt, &ffth->ffclock_boottime);
 			printf(" (uptime preserved at: %llu.%03u)\n",
 			    (unsigned long long)upt.sec,
 			    (unsigned int)(upt.frac / MS_AS_BINFRAC) );
@@ -990,6 +990,11 @@ ffclock_last_tick(ffcounter *ffcount, struct bintime *bt, uint32_t flags)
 		else
 			*bt = ffth->tick_time;
 		*ffcount = ffth->tick_ffcount;
+
+		/* Uptime clock case, obtain from UTC via boottime timestamp. */
+		if ((flags & FFCLOCK_UPTIME) == FFCLOCK_UPTIME)
+			bintime_sub(bt, &ffth->ffclock_boottime);
+
 	} while (gen == 0 || gen != ffth->gen);
 }
 
@@ -1031,6 +1036,11 @@ ffclock_convert_abs(ffcounter ffcount, struct bintime *bt, uint32_t flags)
 			bintime_add(bt, &bt2);
 		else
 			bintime_sub(bt, &bt2);
+
+		/* Uptime clock case, obtain from UTC via boottime timestamp. */
+		if ((flags & FFCLOCK_UPTIME) == FFCLOCK_UPTIME)
+			bintime_sub(bt, &ffth->ffclock_boottime);
+
 	} while (gen == 0 || gen != ffth->gen);
 }
 
@@ -1251,6 +1261,7 @@ sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast)
 		ffi->tick_time = ffth->tick_time;
 		ffi->tick_time_diff = ffth->tick_time_diff;
 		ffi->tick_time_mono = ffth->tick_time_mono;
+		ffi->ffclock_boottime = ffth->ffclock_boottime;
 		ffi->period = ffth->cest.period;
 		ffi->period_mono = ffth->period_mono;
 		clock_snap->ffcount = ffth->tick_ffcount;

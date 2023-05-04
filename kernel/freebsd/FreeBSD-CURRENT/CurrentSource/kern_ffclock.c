@@ -54,7 +54,6 @@ __FBSDID("$FreeBSD$");
 FEATURE(ffclock, "Feedforward clock support");
 
 extern struct ffclock_estimate ffclock_estimate;
-extern struct bintime ffclock_boottime;
 extern int8_t ffclock_updated;
 extern struct mtx ffclock_mtx;
 
@@ -65,7 +64,7 @@ extern struct mtx ffclock_mtx;
  * into account). If valid pointers are provided, the ffcounter value and an
  * upper bound on clock error associated with the bintime are provided.
  * The DIFF and MONO flags determining FFclock type are processed within
- * ffclock_last_tick and ffclock_read_counter.
+ * ffclock_last_tick and ffclock_read_counter, as is the UPTIME flag.
  * Note that here ffclock_convert_abs() is used to read the FFclock `now', but
  * the resulting timestamp corresponds to the event timestamped by the raw
  * ffcounter read made earlier - this is a feature!
@@ -103,10 +102,6 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 		if (cest.leapsec_expected != 0 && ffc > cest.leapsec_expected)
 			bt->sec -= cest.leapsec_next;
 	}
-
-	/* Uptime clock case, obtain from UTC via boottime timestamp. */
-	if ((flags & FFCLOCK_UPTIME) == FFCLOCK_UPTIME)
-		bintime_sub(bt, &ffclock_boottime);
 
 	/* Compute error bound if a valid pointer has been passed. */
 	if (error_bound) {

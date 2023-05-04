@@ -146,6 +146,7 @@ struct ffclock_info {
 	struct bintime tick_time;
 	struct bintime tick_time_mono;
 	struct bintime tick_time_diff;
+	struct bintime ffclock_boottime;
 	uint64_t period;
 	uint64_t period_mono;
 	int leapsec_adjustment;
