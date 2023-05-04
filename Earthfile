@@ -2,6 +2,7 @@
 #
 # Earthfile to build the RADclock app and library, and the FFkernel on both
 # amd64 and arm64 for the Raspberry Pi (RPi).
+VERSION 0.7
 
 # Select the distribution we want
 # ARG DIST=buster
