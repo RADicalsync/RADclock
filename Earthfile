@@ -40,13 +40,13 @@ deb-kernel-deps:
     # Pull Linux deb source
     RUN apt-get -y source linux
     # Work out what we have and jump in [ went from 4.19.{181,208,235,..} ]
-	 ARG osversion=$(ls -tr |tail -1 |cut -d'-' -f2)
+	ARG osversion=$(ls -tr |tail -1 |cut -d'-' -f2)
     WORKDIR linux-$osversion			# osversion extractable by other targets
-	 RUN --no-cache pwd
-	 # Save the source (needed for compile on VM)
-	 ARG DEST="./artifacts/kernelsourcefiles/deb-$osversion/"
-	 RUN echo "Dumping source to $DEST"
-	 SAVE ARTIFACT .    						AS LOCAL $DEST"linux-source"
+	RUN --no-cache pwd
+	# Save the source (needed for compile on VM)
+	ARG DEST="./artifacts/kernelsourcefiles/deb-$osversion/"
+	RUN echo "Dumping source to $DEST"
+	SAVE ARTIFACT .    						AS LOCAL $DEST"linux-source"
 
 deb-kernel-config:
 	 # Get essential packages and kernel source
