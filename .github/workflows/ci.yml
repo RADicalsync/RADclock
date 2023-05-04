@@ -2,9 +2,9 @@ name: RADclock build system
 
 on:
   push:
-    branches: [ RADdev ]
+    branches: [ RADdev, master]
   pull_request:
-    branches: [ RADdev ]
+    branches: [ RADdev, master]
 
 jobs:
   kernel-amd64:
@@ -13,10 +13,10 @@ jobs:
     steps:
       - uses: earthly/actions/setup-earthly@v1
         with:
-          version: v0.6.6
+          version: v0.7.4
       - uses: actions/checkout@v2
       - name: Build Debian AMD64 kernel packages
-        run: earthly +kernel-build-patched
+        run: earthly +deb-kernel-build-patched
       - uses: actions/upload-artifact@v2
         with:
           name: Debian kernel AMD64 packages
@@ -28,10 +28,10 @@ jobs:
     steps:
       - uses: earthly/actions/setup-earthly@v1
         with:
-          version: v0.6.6
+          version: v0.7.4
       - uses: actions/checkout@v2
       - name: Build ARM64 kernel packages
-        run: earthly +bh-build
+        run: earthly +arm-kernel-build-patched
       - uses: actions/upload-artifact@v2
         with:
           name: Raspbian kernel ARM64 packages
@@ -46,12 +46,12 @@ jobs:
     steps:
       - uses: earthly/actions/setup-earthly@v1
         with:
-          version: v0.5.24
+          version: v0.7.4
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
       - name: Build radclock for AMD64
-        run: earthly +build-radclock-with-kernel
+        run: earthly +deb-build-radclock-with-kernel
       - uses: actions/upload-artifact@v2
         with:
           name: Debian radclock build
@@ -70,12 +70,12 @@ jobs:
           platforms: all
       - uses: earthly/actions/setup-earthly@v1
         with:
-          version: v0.6.6
+          version: v0.7.4
       - uses: actions/checkout@v2
         with:
           fetch-depth: 0
       - name: Build radclock for arm64
-        run: earthly --platform=linux/arm64 +build-radclock-with-kernel
+        run: earthly --platform=linux/arm64 +arm-crossbuild64-radclock-with-kernel
       - uses: actions/upload-artifact@v2
         with:
           name: Debian radclock build (ARM64)
