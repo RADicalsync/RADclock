@@ -31,6 +31,7 @@
 
 #include <sys/types.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>		// needed for module.h
 #include <sys/module.h>
 #include <sys/syscall.h>
 #include <sys/sysctl.h>

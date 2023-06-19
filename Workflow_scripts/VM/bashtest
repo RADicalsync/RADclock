@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+
+
+
+#======= Control the exit
+exit
+#=============================================================================
+
+# Testing $$ syntax
+srcdir="/root/FFkernel_Work/RADclock_working"
+echo `ls $srcdir/kernel/freebsd`
+for d in `ls $srcdir/kernel/freebsd`; do \
+	echo "$d"
+done
+
+echo
+echo
+echo `ls $srcdir/kernel/freebsd/FreeBSD-1*`
+for d in `ls $srcdir/kernel/freebsd/FreeBSD-1*`; do \
+	echo "$d"
+done
+
+exit
+
+
+echo Setting up working environment for FF and RADdev 
+
+BSDv=`uname -r | cut -d'-' -f1`
+echo "Setting up working environment for FF and RADdev for $BSDV system"
+
+if [ $BSDv == "12.1" ]; then
+	echo "This is a $BSDv system, if_em.c will not ignored"
+fi
+
+Based="FFkernel_Work"
+MountPoint="V4_mountedfrom_Icaro"
+DirToMount="/Users/darryl/Papers/TSCclock/Programs/V4"
+ToolDir="VM_toolkit"
+ServerIP="172.16.20.1"         # IP of Icaro in VMware's subnet
+HostIP=`showmount -a $ServerIP |grep darryl |cut -d':' -f1`
+
+echo "$MountPoint/$ToolDir"
+cd; pwd
+cd $Based; pwd
+ls -al $MountPoint/$ToolDir/
+ls -al $MountPoint/$ToolDir/.bashrc
+ls -al $MountPoint/$ToolDir/".bashrc"
+ls -al $MountPoint/$ToolDir/\.bashrc
+

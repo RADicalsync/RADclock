@@ -70,7 +70,7 @@ int get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *sta
 /*
  * Integrated thread and thread-work function for SHM module
  */
-void 
+void *
 thread_shm(void *c_handle)
 {
 	struct radclock_handle *handle = c_handle;
@@ -185,7 +185,7 @@ thread_shm(void *c_handle)
 
 
 		/* Make an attempt to obtain the next authoritative halfstamp.
-		 * A timeout is used to reduce processing, allow the thread kill signal to
+		 * A timeout is used to reduce processing, to allow the thread kill signal to
 		 * be checked for, and to give the OS an opportunity to suspend the thread
 		 */
 		num_bytes = recvfrom(socket_desc, &dag_msg, sizeof(struct dag_cap),
@@ -314,22 +314,23 @@ thread_shm(void *c_handle)
 				verbose(LOG_NOTICE, "SHM: Encountered an undefined NTC_id .");
 				break;
 			case 1:	// SYD
-				SA_detected = ((state->stamp_i % (15*60/4)) ? 0 : 1);	// min*..
+				SA_detected = ((state->stamp_i % (120*60/4)) ? 0 : 1);	// min*..
 				break;
 			case 2:	// MEL
-				SA_detected = ((state->stamp_i % (20*60/4 +1)) ? 0 : 1);
+				SA_detected = ((state->stamp_i % (3*120*60/4)) ? 0 : 1);
 				break;
 			case 3:	// BRI
 				break;
 			case 4:	// PER
-				SA_detected = ((state->stamp_i % (30*60/4 +3)) ? 0 : 1);
+				SA_detected = ((state->stamp_i % (160*60/4 +3)) ? 0 : 1);
 				break;
 			case 5:	// ADL
+				SA_detected = ((state->stamp_i % (180*60/4 +5)) ? 0 : 1);
 				break;
 			case 16: // OCN SYD
 				break;
 			case 17: // OCN MEL
-				SA_detected = ((state->stamp_i % (31*60/4 +5)) ? 0 : 1);
+				SA_detected = ((state->stamp_i % (110*60/4 +5)) ? 0 : 1);
 				break;
 			default:	// other ICN, or an OCN
 				SA_detected = 0;
@@ -351,7 +352,7 @@ thread_shm(void *c_handle)
 		}
 
 		/* Incorporate SA update in ntc_status word
-		 * Currently the existing status is *simply overwritten* by the new SA value.
+		 * Currently the existing status is simply overwritten by the new SA value.
 		 * TODO: make available to preferred_RADclock() and write smarter logic,
 		 *       would require wait for next packet before being actioned
 		 *   Is used for SA telemetry, and for icn_status sent to OCNs inband. */

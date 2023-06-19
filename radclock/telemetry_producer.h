@@ -8,29 +8,32 @@
 void
 update_prior_data(struct radclock_handle *handle)
 {
-    if (handle->conf->time_server_ntc_count > handle->telemetry_data.prior_data_size)
-    {
-        struct Ring_Buffer_Prior_Data * new_data = (struct Ring_Buffer_Prior_Data *) malloc( sizeof(struct Ring_Buffer_Prior_Data) * handle->conf->time_server_ntc_count);
-        // Copy old data into larger data structure
-        memcpy(new_data, handle->telemetry_data.prior_data, sizeof(struct Ring_Buffer_Prior_Data) * handle->telemetry_data.prior_data_size);
-        // Zero the data in the data structures
-        memset(&new_data[handle->telemetry_data.prior_data_size+1], sizeof(struct Ring_Buffer_Prior_Data) * (handle->telemetry_data.prior_data_size - handle->conf->time_server_ntc_count), 0);
+	if (handle->conf->time_server_ntc_count > handle->telemetry_data.prior_data_size)
+	{
+		struct Ring_Buffer_Prior_Data * new_data = (struct Ring_Buffer_Prior_Data *)
+		    malloc( sizeof(struct Ring_Buffer_Prior_Data) * handle->conf->time_server_ntc_count);
+		// Copy old data into larger data structure
+		memcpy(new_data, handle->telemetry_data.prior_data,
+		    sizeof(struct Ring_Buffer_Prior_Data) * handle->telemetry_data.prior_data_size);
+		// Zero the data in the data structures
+		memset(&new_data[handle->telemetry_data.prior_data_size+1],
+		    sizeof(struct Ring_Buffer_Prior_Data) * (handle->telemetry_data.prior_data_size - handle->conf->time_server_ntc_count), 0);
 
-        free(handle->telemetry_data.prior_data);
+		free(handle->telemetry_data.prior_data);
 
-        // Set the newly allocated data last message time to current time.
-        // Allows some time for the stats on the clocks to get set instead of immediately timing out
-        // vcounter_t vcount;
-        // radclock_get_vcounter(handle->clock, &vcount);
-        // long double radclock_ts;
-        // read_RADabs_UTC(&handle->rad_data[handle->pref_sID], &vcount, &radclock_ts, 0);
-        // for (int i = handle->telemetry_data.prior_data_size; i < handle->conf->time_server_ntc_count; i++)
-        //     new_data[i].last_msg_time = radclock_ts;
+		// Set the newly allocated data last message time to current time.
+		// Allows some time for the stats on the clocks to get set instead of immediately timing out
+		// vcounter_t vcount;
+		// radclock_get_vcounter(handle->clock, &vcount);
+		// long double radclock_ts;
+		// read_RADabs_UTC(&handle->rad_data[handle->pref_sID], &vcount, &radclock_ts, 0);
+		// for (int i = handle->telemetry_data.prior_data_size; i < handle->conf->time_server_ntc_count; i++)
+		//     new_data[i].last_msg_time = radclock_ts;
 
-        handle->telemetry_data.prior_data_size = handle->conf->time_server_ntc_count;
+		handle->telemetry_data.prior_data_size = handle->conf->time_server_ntc_count;
 
-        handle->telemetry_data.prior_data = new_data;
-    }
+		handle->telemetry_data.prior_data = new_data;
+	}
 }
 
 
@@ -45,23 +48,43 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
 	if (handle->telemetry_data.prior_PICN != PICN)
 		return 1;
 
+	// If public serving status changed
+	if (handle->telemetry_data.prior_public_ntp != handle->conf->public_ntp ) {
+		verbose(LOG_NOTICE, "Telemetry Producer - public serving state changed");
+		return 1;
+	}
+
 	if (is_sID_NTC)		// if an NTC server
 	{
 		// If clock status word has changed
 		if (handle->telemetry_data.prior_data[sID].prior_status != handle->rad_data[sID].status) {
-			verbose(LOG_NOTICE, "Telemetry Producer - status changed");
+			verbose(VERB_DEBUG, "Telemetry Producer - status changed");
 			return 1;
 		}
 
 		// If clock underlying asymmetry has changed
+		// struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];   // old name
+		struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
+		if (handle->telemetry_data.prior_data[sID].prior_uA != state->Asymhat) {
+			verbose(VERB_DEBUG, "Telemetry Producer - Asymmetry has changed");
+			return 1;
+		}
+
+		// If clock error bound over threshold
 		if (handle->rad_data[sID].ca_err > TRIGGER_CA_ERR_THRESHOLD) {
-			verbose(LOG_NOTICE, "Telemetry Producer - Error bound exceeded");
+			verbose(VERB_DEBUG, "Telemetry Producer - Error bound exceeded");
 			return 1;
 		}
 
 		// If clock has just passed a leap second
 		if (handle->rad_data[sID].leapsec_total != handle->telemetry_data.prior_data[sID].prior_leapsec_total) {
-			verbose(LOG_NOTICE, "Telemetry Producer - Change in leap seconds %d");
+			verbose(LOG_NOTICE, "Telemetry Producer - leap seconds have changed %d");
+			return 1;
+		}
+
+		// If servertrust word has changed  TODO: check this, why not check entire word?
+		if ((handle->telemetry_data.prior_data[sID].prior_servertrust & (1ULL << sID)) != (handle->servertrust & (1ULL << sID)) ) {
+			verbose(VERB_DEBUG, "Telemetry Producer - ServerTrust status changed");
 			return 1;
 		}
 
@@ -71,19 +94,6 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
 			return 1;
 		}
 
-		// If clock status word has changed  TODO: check this, why not check entire word?
-		if ((handle->telemetry_data.prior_data[sID].prior_servertrust & (1ULL << sID)) != (handle->servertrust & (1ULL << sID)) ) {
-			verbose(LOG_NOTICE, "Telemetry Producer - ServerTrust status changed");
-			return 1;
-		}
-
-		// If clock underlying asymmetry has changed
-		// struct bidir_algostate *state = &((struct bidir_peers *)handle->peers)->state[sID];   // old name
-		struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
-		if (handle->telemetry_data.prior_data[sID].prior_uA != state->Asymhat) {
-			verbose(LOG_NOTICE, "Telemetry Producer - Asymmetry has changed");
-			return 1;
-		}
 	}
 
 	vcounter_t vcount;
@@ -91,7 +101,7 @@ active_trigger(struct radclock_handle *handle, long double *radclock_ts, int sID
 	read_RADabs_UTC(&handle->rad_data[handle->pref_sID], &vcount, radclock_ts, 0);
 
 	if (*radclock_ts - handle->telemetry_data.last_msg_time >= TELEMETRY_KEEP_ALIVE_SECONDS) {
-		verbose(LOG_NOTICE, "Telemetry Producer - Synchronous keep alive trigger %d seconds since last message",
+		verbose(VERB_DEBUG, "Telemetry Producer - Synchronous keep alive trigger %d seconds since last message",
 		    (int)(*radclock_ts - handle->telemetry_data.last_msg_time));
 		return 1;
 	}
@@ -140,6 +150,7 @@ push_telemetry(struct radclock_handle *handle, int sID)
 		handle->telemetry_data.packetId += 1;
 		handle->telemetry_data.last_msg_time = radclock_ts;
 		handle->telemetry_data.prior_PICN = PICN;
+		handle->telemetry_data.prior_public_ntp = handle->conf->public_ntp; // update to current value
 
 		if (is_sID_NTC) {
 			struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
@@ -167,8 +178,8 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
 
 	// If the packet is larger than the holding buffer then make a new larger holding buffer
 	int packet_size = sizeof(Radclock_Telemetry_Latest)
-					+ sizeof(Radclock_Telemetry_NTC_Latest) * NTC_Count
-					+ sizeof(Radclock_Telemetry_Footer);
+	    + sizeof(Radclock_Telemetry_NTC_Latest) * NTC_Count
+	    + sizeof(Radclock_Telemetry_Footer);
 	check_and_grow_holding_buffer(holding_buffer_size, packet_size, holding_buffer);
 
 	if (packet_size > RADCLOCK_RING_BASE_BUFFER_BYTES) {
@@ -176,89 +187,95 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
 		    packet_size, RADCLOCK_RING_BASE_BUFFER_BYTES);
 		return RADCLOCK_ERROR_DATA_TOO_LARGE;
 	}
+		int start_write_buffer_pos = *ring_write_pos;
 
-    int start_write_buffer_pos = *ring_write_pos;
-
-    // Create a telemetry OCN specific packet
-    Radclock_Telemetry_Latest * header_data = (Radclock_Telemetry_Latest *) holding_buffer;
+		// Create a telemetry OCN specific packet
+		Radclock_Telemetry_Latest * header_data = (Radclock_Telemetry_Latest *) holding_buffer;
 
    // if (keep_alive_trigger)
     //{
-    //    // If it is a keep alive trigger assume all the data is the same. But change the header data
+    //    // If a keep alive trigger assume all the data the same. But change header data
    //     header_data->header.packetId = packetId;
   //      header_data->timestamp = timestamp;
  //   }
 //    else
-    {
-        int delta_accepted_public_ntp = handle->accepted_public_ntp - handle->prior_ntp_sent;
-        int delta_rejected_public_ntp = handle->rejected_public_ntp - handle->prior_ntp_rejected;
-        // printf("Telem delta %d %d (%d, %d), (%d, %d)\n", delta_accepted_public_ntp,
-        //     delta_rejected_public_ntp, handle->accepted_public_ntp, handle->prior_ntp_sent,
-        //     handle->rejected_public_ntp, handle->prior_ntp_rejected);
+		{
+			int delta_accepted_public_ntp = handle->accepted_public_ntp - handle->prior_ntp_sent;
+			int delta_rejected_public_ntp = handle->rejected_public_ntp - handle->prior_ntp_rejected;
+//			verbose(LOG_NOTICE, "Telem delta %d %d  Acc(%d, %d), Rej(%d, %d)\n",
+//					 delta_accepted_public_ntp,
+//					 delta_rejected_public_ntp,
+//					 handle->accepted_public_ntp, handle->prior_ntp_sent,
+//					 handle->rejected_public_ntp, handle->prior_ntp_rejected);
 
-        handle->prior_ntp_sent     = handle->accepted_public_ntp;
-        handle->prior_ntp_rejected = handle->rejected_public_ntp;
+			handle->prior_ntp_sent     = handle->accepted_public_ntp;
+			handle->prior_ntp_rejected = handle->rejected_public_ntp;
 
-        // printf("Telemetry SA val: %d\n", SA);
-        *header_data = make_telemetry_packet(packetId, PICN, NTC_Count, timestamp,
-            delta_accepted_public_ntp, delta_rejected_public_ntp, handle->servertrust, handle->conf->public_ntp, SA);
+			// UGLY hack to test grafana code:
+//			delta_rejected_public_ntp = 100;
 
-        // Write OCN specific telemetry packet to shared memory
-        // bytes_written += ring_buffer_write(&header_data, sizeof(Radclock_Telemetry_Latest), shared_memory_handle, ring_write_pos);
-        for (int s = 0; s < NTC_Count; s++)
-        {
-            int sID = handle->conf->time_server_ntc_indexes[s];
-            unsigned int status_word = handle->rad_data[sID].status;
-            int NTC_id = handle->conf->time_server_ntc_mapping[sID];
+			// printf("Telemetry SA val: %d\n", SA);
+			*header_data = make_telemetry_packet(packetId, PICN, NTC_Count, timestamp,
+			    delta_accepted_public_ntp, delta_rejected_public_ntp,
+			    handle->servertrust, handle->conf->public_ntp, SA);
 
-            struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
-            double uA = state->Asymhat; // (float)(rand()%1000) * 0.001; 
-            double err_bound = handle->rad_data[sID].ca_err;
-            double min_RTT   = handle->rad_error[sID].min_RTT; //;handle->ntp_server[sID].minRTT;
-            double clockErr = 0;
-            if (handle->conf->is_cn)
-                clockErr= ((struct bidir_perfdata *)(handle->perfdata))->state[sID].RADerror;
+			// Write OCN specific telemetry packet to shared memory
+			// bytes_written += ring_buffer_write(&header_data, sizeof(Radclock_Telemetry_Latest), shared_memory_handle, ring_write_pos);
+			for (int s=0; s < NTC_Count; s++) {
+				int sID = handle->conf->time_server_ntc_indexes[s];
+				unsigned int status_word = handle->rad_data[sID].status;
+				int NTC_id = handle->conf->time_server_ntc_mapping[sID];
 
-            // Create a telemetry NTC server specific packet
-            Radclock_Telemetry_NTC_Latest * NTC_data = (Radclock_Telemetry_NTC_Latest *)
-                (holding_buffer + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*s);
-            *NTC_data = make_telemetry_NTC_packet(status_word, NTC_id, uA, err_bound, min_RTT, clockErr);
-        }
+				struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
+				double uA = state->Asymhat; // (float)(rand()%1000) * 0.001;
+				double err_bound = handle->rad_data[sID].ca_err;
+				double min_RTT   = handle->rad_error[sID].min_RTT; //;handle->ntp_server[sID].minRTT;
+				double clockErr = 0;
+				if (handle->conf->is_cn)
+					clockErr= ((struct bidir_perfdata *)(handle->perfdata))->state[sID].RADerror;
 
-        // Create and copy footer data to holding buffer
-        Radclock_Telemetry_Footer * footer_data = (Radclock_Telemetry_Footer *)
-            (holding_buffer + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*NTC_Count);
-        *footer_data = make_telemetry_footer(packet_size);
+				// Create a telemetry NTC server specific packet
+				Radclock_Telemetry_NTC_Latest * NTC_data = (Radclock_Telemetry_NTC_Latest *)
+				    (holding_buffer + sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*s);
+				*NTC_data = make_telemetry_NTC_packet(status_word, NTC_id, uA, err_bound, min_RTT, clockErr);
+			}
 
-        if (TELEMETRY_PRODUCER_LOG_VERBOSITY > 1)
-            verbose(LOG_NOTICE, "Telemetry Producer Footer: wp:%d footer_size:%d", *ring_write_pos, footer_data->size);        
-    }
+			// Create and copy footer data to holding buffer
+			Radclock_Telemetry_Footer * footer_data = (Radclock_Telemetry_Footer *)
+			    (holding_buffer + sizeof(Radclock_Telemetry_Latest) +
+			    sizeof(Radclock_Telemetry_NTC_Latest)*NTC_Count);
+			*footer_data = make_telemetry_footer(packet_size);
 
-    // Push all data into the ring buffer in a single batch write
-    bytes_written += ring_buffer_write(holding_buffer, packet_size, shared_memory_handle, ring_write_pos);
+			if (TELEMETRY_PRODUCER_LOG_VERBOSITY > 1)
+				verbose(LOG_NOTICE, "Telemetry Producer Footer: wp:%d footer_size:%d",
+				    *ring_write_pos, footer_data->size);
+		}
 
-    // Update the ring head positions
-    flush_heads(shared_memory_handle, start_write_buffer_pos, *ring_write_pos);
+		// Push all data into the ring buffer in a single batch write
+		bytes_written += ring_buffer_write(holding_buffer, packet_size, shared_memory_handle, ring_write_pos);
 
-    if (TELEMETRY_PRODUCER_LOG_VERBOSITY > 0 && header_data->header.packetId % TELEMETRY_PRODUCER_LOG_PACKET_INTERVAL == 0) // && header_data.header.packetId % 1000 == 0
-        verbose(LOG_NOTICE, "Telemetry Producer: start ts:%.09Lf wp:%d current wp:%d: v:%d NTCs:%d size:%d id:%d",
-            timestamp, start_write_buffer_pos, *ring_write_pos, header_data->header.version,
-            header_data->NTC_Count, header_data->header.size, header_data->header.packetId);
+		// Update the ring head positions
+		flush_heads(shared_memory_handle, start_write_buffer_pos, *ring_write_pos);
 
-    if (TELEMETRY_PRODUCER_LOG_VERBOSITY > 2 )
-        for (int s = 0; s < NTC_Count; s++)
-        {
-            int offset = sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*s;
-            Radclock_Telemetry_NTC_Latest * NTC_data = (Radclock_Telemetry_NTC_Latest *) (holding_buffer + offset);
+		if (TELEMETRY_PRODUCER_LOG_VERBOSITY > 0 &&
+		    header_data->header.packetId % TELEMETRY_PRODUCER_LOG_PACKET_INTERVAL == 0) // && header_data.header.packetId % 1000 == 0
+			verbose(VERB_DEBUG, "Telemetry Producer: start ts:%.09Lf wp:%d current wp:%d: v:%d NTCs:%d size:%d id:%d",
+			    timestamp, start_write_buffer_pos, *ring_write_pos, header_data->header.version,
+			    header_data->NTC_Count, header_data->header.size, header_data->header.packetId);
 
-            verbose(LOG_NOTICE, "Telemetry Producer NTC: wp:%d: stat:%u id:%d uA:%le err:%le (%d, %d)",
-                *ring_write_pos, NTC_data->status_word, NTC_data->NTC_id, NTC_data->uA,
-                NTC_data->err_bound, offset, *holding_buffer_size);
-        }
+		if (TELEMETRY_PRODUCER_LOG_VERBOSITY > 2 )
+			for (int s = 0; s < NTC_Count; s++) {
+				int offset = sizeof(Radclock_Telemetry_Latest) + sizeof(Radclock_Telemetry_NTC_Latest)*s;
+				Radclock_Telemetry_NTC_Latest * NTC_data = (Radclock_Telemetry_NTC_Latest *) (holding_buffer + offset);
 
-    if (bytes_written != header_data->header.size)
-        verbose(LOG_ERR, "Telemetry Producer Error packet bytes: %d different from packet.header.size: %d",
-            bytes_written, header_data->header.size);
+				verbose(VERB_DEBUG, "Telemetry Producer NTC: wp:%d: stat:%u id:%d uA:%le err:%le (%d, %d)",
+				    *ring_write_pos, NTC_data->status_word, NTC_data->NTC_id, NTC_data->uA,
+				    NTC_data->err_bound, offset, *holding_buffer_size);
+			}
 
-    return bytes_written;
+		if (bytes_written != header_data->header.size)
+			verbose(LOG_ERR, "Telemetry Producer Error packet bytes: %d different from packet.header.size: %d",
+			    bytes_written, header_data->header.size);
+
+		return bytes_written;
 }

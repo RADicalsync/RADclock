@@ -399,30 +399,30 @@ which is core function called either directly by main, or through the DATA_PROC 
 
 A summary of all this minus the detail, in the case of livepcap, is:
 
-Source File 			   	Function                     		Returns         Comment
+Source File             Function                         Returns          Comment
 --------------------------------------------------------------------------------
-pthread_mgr.c 				  thread_data_processing 									 [ infinite loop ]
-pthread_dataproc.c     		process_stamp							rad_data			 [ calls algo ]
-stampinput.c   			    get_next_stamp						stamp           [ fn pointer ]
-stampinput-livepcap.c	     livepcapstamp_get_next			stamp           [ wrapper ]
-create_stamp.c 					get_network_stamp					stamp				 [ generic taking callback]
-											update_stamp_queue
-											get_fullstamp_from_queue_andclean stamp_t
-stampinput-livepcap.c		  		get_packet_livepcap			radpcap_packet_t [callback, writes to .raw]
-rawdata.c									deliver_rawdata_pcap		radpcap_packet_t, vcount
-rawdata.c										free_and_cherrypick  rdb
+pthread_mgr.c           thread_data_processing                            [ infinite loop ]
+pthread_dataproc.c       process_stamp                   rad_data         [ calls algo ]
+stampinput.c              get_next_stamp                 stamp            [ fn pointer ]
+stampinput-livepcap.c      livepcapstamp_get_next        stamp            [ wrapper ]
+create_stamp.c              get_network_stamp            stamp            [ generic taking callback]
+                              update_stamp_queue
+                              get_fullstamp_from_queue_andclean stamp_t
+stampinput-livepcap.c         get_packet_livepcap        radpcap_packet_t [callback, writes to .raw]
+rawdata.c                        deliver_rawdata_pcap    radpcap_packet_t, vcount
+rawdata.c                          free_and_cherrypick   rdb
 
-Consume data from rd queue ^  	[DATA_PROC thread]
+Consume data from rd queue ^      [DATA_PROC thread]
 ============================================================================================
-Produce live data to rd queue v	[MAIN thread]
+Produce live data to rd queue v   [MAIN thread]
 
-rawdata.c										insert_rdb_in_list	rdb
-rawdata.c										extract_vcount_stamp	vcount
-rawdata.c									fill_rawdata_pcap			rdb				[ pcap_loop callback ]
-rawdata.c 								pcap_loop 						pcap_hdr, pkt  [ infinite loop ]
-rawdata.c							capture_raw_data
-radclock_main.c 				  start_live
-radclock_main.c 				 main
+rawdata.c                          insert_rdb_in_list    rdb
+rawdata.c                          extract_vcount_stamp  vcount
+rawdata.c                       fill_rawdata_pcap        rdb              [ pcap_loop callback ]
+rawdata.c                    pcap_loop                   pcap_hdr, pkt    [ infinite loop ]
+rawdata.c                 capture_raw_data
+radclock_main.c          start_live
+radclock_main.c         main
 
 See also RADclockDoc_threads for more detail on the lower half of this summary.
 

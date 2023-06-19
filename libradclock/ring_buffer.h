@@ -81,6 +81,7 @@ struct Ring_Buffer_Producer_Data
     void* holding_buffer;
 
     int prior_PICN;
+    int prior_public_ntp;	// enable detection of change in public serving as a trigger
 
     struct Ring_Buffer_Prior_Data * prior_data;
     int prior_data_size;

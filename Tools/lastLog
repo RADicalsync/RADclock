@@ -19,6 +19,8 @@ echo -e "${BLU}Will filter $infile to extract the last $Nd launch instances to $
 
 ## Action parameters
 #  TODO: change mark to "Shared Memory exist" so always gets dates, then backtrack to get start
+#   Not easy to do though, but brute force implies a slow 2nd pass
+#  TODO: allow launch and reload to be distinguished, though may be a feature as is
 mark="configuration summary"	# unique string marking beginning of new launch output
 beforecontext=10				# number of context lines before mark line to include
 

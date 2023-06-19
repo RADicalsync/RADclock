@@ -122,35 +122,37 @@ thread_telemetry_consumer(void *c_handle)
 	handle = (struct radclock_handle *) c_handle;
 	
 	// Get pointer to shared memory space
-    void * shared_memory_handle = handle->telemetry_data.buffer;
+	void * shared_memory_handle = handle->telemetry_data.buffer;
 
 	// Allocate temp holding buffer
-    void * holding_buffer = malloc(RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE);
-    int holding_buffer_size = RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE;
+	void * holding_buffer = malloc(RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE);
+	int holding_buffer_size = RADCLOCK_TYPICAL_TELEMETRY_PACKET_SIZE;
 
 	// Get the current read position
-    int ring_read_pos = get_shared_memory_read_header(shared_memory_handle);
-    int last_packet_id = -1;
-    int packets_recorded = 0;
+	int ring_read_pos = get_shared_memory_read_header(shared_memory_handle);
+	int last_packet_id = -1;
+	int packets_recorded = 0;
 
 	while ((handle->pthread_flag_stop & PTH_TELEMETRY_CON_STOP) != PTH_TELEMETRY_CON_STOP)
 	{
 		// printf("Running telemetry consumer %d %d\n", holding_buffer, last_packet_id);
 		int read_bytes = 1;
 		// While packets exist in the ring buffer keep reading them
-        while (read_bytes > 0)
-            read_bytes = pull_telemetry_batch(&ring_read_pos, &last_packet_id, shared_memory_handle, &packets_recorded, 0, &holding_buffer_size, holding_buffer, -1);
+		while (read_bytes > 0)
+			read_bytes = pull_telemetry_batch(&ring_read_pos, &last_packet_id,
+			    shared_memory_handle, &packets_recorded, 0,
+			    &holding_buffer_size, holding_buffer, -1);
 
-		// Buffer was empty - sleep for a few ms to give the producer time to add content
-        msleep(SAMPLE_FREQUENCY_MS);
+		// Buffer was empty - sleep for a few ms to give producer time to add content
+		usleep(1000*SAMPLE_INTERVAL_MS);
 	}
 
-    // Release allocated memory
-    free(holding_buffer);
+	// Release allocated memory
+	free(holding_buffer);
 
-    //detach from shared memory if we are using it
+	// Detach from shared memory if we are using it
 	if (handle->telemetry_data.is_ipc_share)
-    	detach_shared_memory(shared_memory_handle);
+		detach_shared_memory(shared_memory_handle);
 
 	/* Thread exit */
 	verbose(LOG_NOTICE, "Thread telemetry consumer is terminating.");

@@ -199,8 +199,8 @@ struct radclock_handle {
 	/* Public ntp serving stats. Reported through telemetry */
 	uint64_t accepted_public_ntp;
 	uint64_t rejected_public_ntp;
-	// For telemetry - tracking delta in packet passing metrics
-    uint64_t prior_ntp_sent, prior_ntp_rejected;
+	/* For telemetry - tracking delta in packet passing metrics */
+	uint64_t prior_ntp_sent, prior_ntp_rejected;
 
 };
 

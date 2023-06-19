@@ -745,7 +745,7 @@ preferred_RADclock(struct radclock_handle *handle)
 
 	/* Even if only 1 server, this diagnostic check will return useful information */
 	if (s_RTThat < 0) {
-		verbose(LOG_WARNING, "No server passed checks, preferred server based on minimum RTT only");
+		verbose(LOG_NOTICE, "No server passed checks, preferred server based on minimum RTT only");
 		s_RTThat = s_mRTThat;
 	}
 
@@ -999,8 +999,8 @@ process_stamp(struct radclock_handle *handle)
 	handle->ntp_server[sID].minRTT = rad_error->min_RTT;
 
 
-	if ( VERB_LEVEL>1 ) {
-		verbose(VERB_DEBUG, "rad_data updated in process_stamp: ");
+	if ( VERB_LEVEL>2 ) {
+		verbose(VERB_DEBUG, "process_stamp: rad_data updated:");
 		printout_raddata(rad_data);
 	}
 
