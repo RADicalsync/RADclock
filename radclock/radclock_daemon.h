@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -46,11 +44,13 @@
 typedef enum {
 	RADCLOCK_SYNC_NOTSET,
 	RADCLOCK_SYNC_DEAD,
-	RADCLOCK_SYNC_LIVE } radclock_runmode_t;
+	RADCLOCK_SYNC_LIVE,
+} radclock_runmode_t;
 
 typedef enum {
 	RADCLOCK_UNIDIR,
-	RADCLOCK_BIDIR} radclock_syncalgo_mode_t;
+	RADCLOCK_BIDIR,
+} radclock_syncalgo_mode_t;
 
 
 struct radclock_handle;
@@ -125,7 +125,6 @@ struct radclock_handle {
 
 	/* Points to an array of RADclock parameter sets, one per server */
 	struct radclock_data *rad_data;
-
 	/* Corresponding RADclock error estimate sets */
 	struct radclock_error *rad_error;
 
@@ -134,13 +133,11 @@ struct radclock_handle {
 
 	/* Protocol related state on the daemon client side (NTP case) */
 	struct radclock_ntp_client		*ntp_client;
-	
 	/* Protocol related state on the daemon's server side (NTP case) */
 	struct radclock_ntp_server		*ntp_server;
 	
 	/* Raw data capture buffer for libpcap */
 	struct raw_data_queue *pcap_queue;
-
 	/* Raw data capture buffer for 1588 error queue */
 	struct raw_data_queue *ieee1588eq_queue;
 
@@ -167,7 +164,6 @@ struct radclock_handle {
 	pthread_t threads[10];		/* TODO: quite ugly implementation ... */
 	int	pthread_flag_stop;
 	pthread_mutex_t globaldata_mutex;
-	// pthread_mutex_t matchqueue_mutex;	// to manage use by both PROC and SHM
 
 	/* Configuration */
 	struct radclock_config *conf;
@@ -219,7 +215,7 @@ struct radclock_handle {
 #define RAD_DATA(h)  (SRAD_DATA(h,h->pref_sID))	// ptr to data of preferred s
 #define RAD_ERROR(h) (SRAD_ERROR(h,h->pref_sID))
 
-#define RAD_VM(x) (&(x->rad_vm))
+#define RAD_VM(h) (&(h->rad_vm))
 
 /* Old: based on h being a pointer to handle, awkward when also need to know s */
 //#define SADD_STATUS(h,s,y) (SRAD_DATA(h,s)->status = SRAD_DATA(h,s)->status | y )

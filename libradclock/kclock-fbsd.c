@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -44,7 +42,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <stddef.h>	// offesetof macro
+#include <stddef.h>		// offesetof macro
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -65,11 +63,6 @@ init_kernel_clock(struct radclock *clock)
 	int devnum;
 	char fname[30];
 
-	/* Kernel version 2 variables */
-/*
-	int err;
-	struct module_stat stat;
-*/
 	switch (clock->kernel_version) {
 
 	case 0:
@@ -105,52 +98,29 @@ init_kernel_clock(struct radclock *clock)
 }
 
 
-
-#ifdef HAVE_SYS_TIMEFFC_H
 /* Error code:  err = 1    was called for wrong kernel
  *                   -1    failed to recover FFdata
- *                    0    success [with warning if kernel data dodgy]
+ *                    0    success
  */
 int
 get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 {
 	int err;
 
-	/*
-	 * This feature exists since kernel version 2. If kernel too old, don't do
-	 * anything and return success
-	 */
-// XXX FIXME comment above is not quite true, should integrate previous kernel
-// clock access into this function !!
-	if (clock->kernel_version < 2)
+	if (clock->kernel_version < 2) {
+		logger(RADLOG_ERR, "calling get_kernel_ffclock with unfit kernel!");
 		return (1);
-	 
+	}
+
 	/* FreeBSD system call */
 	err = ffclock_getestimate(cest);
 	if (err < 0) {
 		logger(RADLOG_ERR, "Failed to recover FFdata from kernel");
-		return (1);
+		return (-1);
 	}
-
-	/* Sanity check warnings when FFdata not fully set */
-	if ((cest->update_time.sec == 0) || (cest->period == 0)) {
-		logger(RADLOG_WARNING, "FFdata never set by kernel");
-		printout_FFdata(cest);
-	}
-//	if (cest->secs_to_nextupdate == 0)
-//		logger(RADLOG_WARNING, "FFdata in kernel not yet set by daemon");
 
 	return (0);
 }
-#else
-int
-get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
-{
-	return (0);
-}
-#endif
-
-
 
 
 /*
@@ -161,20 +131,13 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
  * With this, no need to read the current time, rely on last_changed only.
  * XXX: is the comment above accurate and true?
  */
-#ifdef HAVE_SYS_TIMEFFC_H
+//#ifdef HAVE_SYS_TIMEFFC_H
 int
 set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 {
 	int err;
 
-	if (clock->kernel_version < 2) {
-		logger(RADLOG_ERR, "set_kernel_ffclock with unfit kernel!");
-		return (1);
-	}
-
-	/* Push */
 	switch (clock->kernel_version) {
-
 	case 0:
 	case 1:
 		err = syscall(clock->syscall_set_ffclock, cest);
@@ -195,13 +158,13 @@ set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 
 	return (0);
 }
-#else
-int
-set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
-{
-	return (0);
-}
-#endif
+//#else
+//int
+//set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+//{
+//	return (0);
+//}
+//#endif
 
 
 /* XXX Deprecated

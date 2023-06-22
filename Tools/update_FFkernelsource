@@ -1,14 +1,121 @@
-#!/usr/local/bin/bash
+#!/usr/bin/env bash
+
+# This file adopts the VM script move_into_srctree apart from the SourceDir
+# section which is specific to the RADclock tarball package
 
 if [ `id -u` -ne 0 ]; then
         echo "Sorry `id -un`, this must be run as root"
         exit 0
 fi
 
+Arch=`uname -m`
 OS=`uname -s`
 
-if [ $OS == FreeBSD ]; then
-	$OS/update_FFsource
-else
-	echo "This script only supports FreeBSD currently, you are on $OS! sorry."
+# Pi detection
+OnPi="No"
+if [[ $Arch == "aarch64" && $OS == "Linux" ]]; then
+	echo "I see $OS on $Arch, I infer you are on a Pi."
+	OnPi="Yes"
+fi
+
+# Determine install dir
+Based="$HOME/FFkernel_Work"
+case $OS in
+	FreeBSD)
+		OSv=`uname -r | cut -d'-' -f1`
+		Installd="/usr/src";;
+	Linux)
+		OSv=`uname -r | cut -d'.' -f1-2`	# VERSION.PATCHLEVEL currently running, assumed same as target
+		Installd="/usr/src/linux-source-$OSv"
+		SUBLEVEL=`grep "SUBLEVEL =" $Installd/Makefile | cut -d' ' -f3`;;  # SUBLEVEL of target
+esac
+
+#-----------------------------------------------------------------------------#
+# Determine source dir
+#MountPoint="V4_mountedfrom_Icaro"
+#Repo="$Based/$MountPoint/RADclock_mycurrent"
+#KernDir="$Repo/kernel"
+KernDir="kernel-source"
+
+case $OS in
+	FreeBSD)
+		Kfamily="freebsd";;
+	Linux)
+		if [ $OnPi == "No" ]; then
+			Kfamily="linux"
+		else
+			Kfamily="rpi"
+		fi;;
+esac
+KernDir="$KernDir/$Kfamily"
+
+echo	"Your kernel version options under $KernDir are :"
+Default=`ls $KernDir |tail -1`
+ls $KernDir
+read -p "Enter desired version (rtn to default to $Default) : " OSchosen
+if [[ $OSchosen == "" ]]; then
+	OSchosen="$Default"
+fi
+#echo "Installing kernel files from $OSchosen"
+FFsource="$KernDir/$OSchosen/CurrentSource"
+#-----------------------------------------------------------------------------#
+
+
+## Copy into source tree
+echo "  Copying from  $FFsource  -->  source tree rooted at $Installd"
+if [ $OS == "FreeBSD" ]; then
+	if [ $OSv == "11.2" ]; then
+		ls -l $FFsource
+		\cp $FFsource/if_*.c			$Installd/sys/dev/e1000/
+	else
+		ls -l $FFsource  | grep -v "if_"
+	fi
+	\cp $FFsource/{kern_*,subr_rtc}.c		$Installd/sys/kern/
+	\cp $FFsource/{timeffc,_ffcounter}.h	$Installd/sys/sys/
+	\cp $FFsource/bpf.{c,h}			$Installd/sys/net/
+	\cp $FFsource/FFCLOCK			$Installd/sys/$Arch/conf/
+	\cp $FFsource/ffclock.2			$Installd/lib/libc/sys/
+	\cp $FFsource/ffclock.4			$Installd/share/man/man4/
+fi
+
+if [ $OS == "Linux" ]; then
+	echo "  [ existing sublevel in $Installd is $SUBLEVEL ]"
+	CMD="cp "
+	$CMD $FFsource/drivers_Kconfig				$Installd/drivers/Kconfig
+	$CMD $FFsource/drivers_Makefile				$Installd/drivers/Makefile
+	# Transfer radclock and ffclock independently if they exist
+	if [ -e "$FFsource/radclock.c" ]; then
+		mkdir -pv  $Installd/drivers/radclock
+		$CMD $FFsource/{Kconfig,Makefile,radclock.c}	$Installd/drivers/radclock/
+		$CMD $FFsource/radclock.h 			$Installd/include/linux/
+	fi
+	if [ -e "$FFsource/ffclock.c" ]; then
+		mkdir -pv  $Installd/drivers/ffclock
+		$CMD $FFsource/{Kconfig,Makefile,ffclock.c}	$Installd/drivers/ffclock/
+		$CMD $FFsource/ffclock.h 			$Installd/include/linux/
+	fi
+#	$CMD $FFsource/{clocksource,timekeeper_internal,skbuff,syscalls}.h $Installd/include/linux/
+	$CMD $FFsource/{skbuff,syscalls}.h	$Installd/include/linux/
+	$CMD $FFsource/time.c					$Installd/kernel/time/
+	$CMD $FFsource/sockios.h				$Installd/include/uapi/linux/
+#	$CMD $FFsource/asm-generic_sockios.h	$Installd/include/uapi/asm-generic/sockios.h
+	$CMD $FFsource/sock.h					$Installd/include/net/
+#	$CMD $FFsource/{clocksource,timekeeping}.c	$Installd/kernel/time/
+	$CMD $FFsource/timekeeping.c			$Installd/kernel/time/
+	$CMD $FFsource/{skbuff,sock,dev}.c	$Installd/net/core/
+	$CMD $FFsource/socket.c					$Installd/net/
+	$CMD $FFsource/af_inet.c				$Installd/net/ipv4/
+	$CMD $FFsource/af_packet.c				$Installd/net/packet/
+# VDSO stuff dropped for now
+#	$CMD $FFsource/vgtod.h				$Installd/arch/x86/include/asm/
+#	$CMD $FFsource/vclock_gettime.c	$Installd/arch/x86/entry/vdso/
+#	$CMD $FFsource/vdso*					$Installd/arch/x86/entry/vdso/
+#	$CMD $FFsource/vdso32.lds.S		$Installd/arch/x86/entry/vdso/vdso32/
+	if [ $OnPi == "No" ]; then
+		# AMD specific
+		$CMD $FFsource/syscall_{32,64}.tbl	$Installd/arch/x86/entry/syscalls/
+	else
+		# ARM specific
+		$CMD $FFsource/unistd.h				$Installd/include/uapi/asm-generic/
+	fi
 fi

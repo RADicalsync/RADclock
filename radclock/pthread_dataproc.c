@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -743,7 +741,6 @@ preferred_RADclock(struct radclock_handle *handle)
 				}
 	}
 
-	/* Even if only 1 server, this diagnostic check will return useful information */
 	if (s_RTThat < 0) {
 		verbose(LOG_NOTICE, "No server passed checks, preferred server based on minimum RTT only");
 		s_RTThat = s_mRTThat;
@@ -803,7 +800,7 @@ process_stamp(struct radclock_handle *handle)
 	struct stamp_t *laststamp;		// access last stamp (with original Te,Tf)
 	struct bidir_algooutput *output;
 	struct bidir_algostate *state;
-	int pref_updated = 0;
+	int pref_updated;
 	int pref_sID_new;
 
 	/* Error control logging */
@@ -851,9 +848,12 @@ process_stamp(struct radclock_handle *handle)
 			}
 		}
 
-		/* **FreeBSD** Terminate if find a RTC reset, as currently can't handle this.
-		 * Detection can fail if reset occurs before the first setting of kernel data
-		 * Test is based on the preferred clock as it disciplines the FFclock.
+		/* Warn/terminate if detect a RTC reset, as currently can't handle this.
+		 * Hard core detection based on FFdata being wiped, like at boot time.
+		 * Soft detection based on the resetting of secs_to_nextupdate by FFclock RTC processing code,
+		 * which only works if the daemon's preferred clock has first set it the first time itself.
+		 * Hence a reset is missed if it occurs before this.
+		 * TODO: currently not OS-dependent neutral. Need to define these signals to daemon universally
 		 */
 		if ( get_kernel_ffclock(handle->clock, &cest) == 0) {
 			if ((cest.update_time.sec == 0) || (cest.period == 0)) {
@@ -1008,25 +1008,21 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Processing complete on the new stamp wrt the corresponding RADclock.
 	 * Reevaluate preferred RADclock
-	 * Preferred clock is updated if it has changed, or if this stamp is from it
+	 * For the new preferred clock, an "update" is noted if if this stamp is
+	 * from it, or if pref_sID has just changed regardless of stamp identity.
 	 */
-	 // Testing
-//	if (state->stamp_i == 300 || state->stamp_i == 2000)
-//		handle->servertrust = 2;
-//	else
-//		handle->servertrust = 0;
-//
-//	if (state->stamp_i == 1998) handle->servertrust = 4;
-
-	pref_sID_new = preferred_RADclock(handle);
-	if (pref_sID_new != handle->pref_sID) {
-		pref_updated = 1;
-		verbose(LOG_NOTICE, "Preferred clock changed from %d to %d",
-			handle->pref_sID, pref_sID_new);
-		handle->pref_sID = pref_sID_new;		// register change
+	if (handle->nservers > 1) {
+		pref_updated = 0;
+		pref_sID_new = preferred_RADclock(handle);
+		if (pref_sID_new != handle->pref_sID) {
+			pref_updated = 1;
+			verbose(LOG_NOTICE, "Preferred clock changed from %d to %d",
+				handle->pref_sID, pref_sID_new);
+			handle->pref_sID = pref_sID_new;		// register change
+		} else
+			if (sID == handle->pref_sID) pref_updated = 1;
 	} else
-		if (sID == handle->pref_sID) pref_updated = 1;
-
+		pref_updated = 1;
 
 
 	/*
@@ -1036,7 +1032,7 @@ process_stamp(struct radclock_handle *handle)
 	 *		- VM store update
 	 *		- FBclock kernel parameters update
 	 *
-	 * The preferred clock only is used here.
+	 * The preferred clock only is used here, and only if an update for it noted.
 	 */
   	if (handle->run_mode == RADCLOCK_SYNC_LIVE && pref_updated) {
 
@@ -1052,67 +1048,46 @@ process_stamp(struct radclock_handle *handle)
 				update_kernel_fixed(handle);
 				verbose(VERB_DEBUG, "Sync pthread updated kernel fixed pt data.");
 			} else {
-
-			// XXX Out of whack, need cleaning when make next version linux support
-			// FIXME
-	#ifdef WITH_FFKERNEL_FBSD
-				/* If hardware counter has changed, restart over again */
-				size_ctl = sizeof(hw_counter);
-				err = sysctlbyname("kern.timecounter.hardware", &hw_counter[0],
-						&size_ctl, NULL, 0);
-				if (err == -1) {
-					verbose(LOG_ERR, "Can''t find kern.timecounter.hardware in sysctl");
+				// TODO: great many things to do here to performm a clean shutdown or reset...
+				if ( get_currentcounter(handle->clock) == 1 ) {
+					verbose(LOG_NOTICE, "Hardware counter has changed, shutting down RADclock");
 					return (-1);
 				}
-				
-				// TODO: great many things to do here to performm a clean reset, this
-				// is a very partial placeholder only, also not yet upgraded to
-				// mRADclock
-				if (strcmp(handle->clock->hw_counter, hw_counter) != 0) {
-					verbose(LOG_WARNING, "Hardware counter has changed (%s -> %s)."
-						" Reinitialising radclock.", handle->clock->hw_counter,
-						hw_counter);
-					OUTPUT(handle, n_stamps) = 0;
-					//state->stamp_i = 0;
-					((struct bidir_algodata *)handle->algodata)->state[handle->pref_sID].stamp_i = 0;
 
-					NTP_SERVER(handle)->burst = NTP_BURST;
-					strcpy(handle->clock->hw_counter, hw_counter);
-
-				// TODO: algo needs to reset:  many things not done here, need big look
-					return (0);
-				}
-	#endif
-	
+				/* Examine FF form of new updated rad_data */
 				fill_ffclock_estimate(RAD_DATA(handle), RAD_ERROR(handle), &cest);
-				if ( VERB_LEVEL>2 ) printout_FFdata(&cest);
-				
-				if (handle->conf->adjust_FFclock == BOOL_ON) {
-					set_kernel_ffclock(handle->clock, &cest);
-					//stamp_firstpush = stamp_i;
-					verbose(VERB_DEBUG, "FF kernel data has been updated.");
+				if ( VERB_LEVEL>2 ) {
+					verbose(VERB_DEBUG, "updated raddata in FFdata form is :");
+					printout_FFdata(&cest);
 				}
-				
-				/* Check FFclock data from kernel is what you sent over */
-//				if ( VERB_LEVEL>2 ) { // check was updated as expected
-//					get_kernel_ffclock(handle->clock, &cest);
-//					printout_FFdata(&cest);
-//				}
-				
+
+				if (handle->conf->adjust_FFclock == BOOL_ON) {
+					if (!set_kernel_ffclock(handle->clock, &cest))
+						//stamp_firstpush = stamp_i;
+						verbose(VERB_DEBUG, "FF kernel data has been updated.");
+				}
+
+				/* Check FFclock data in the kernel now */
+				if ( VERB_LEVEL>2 ) {
+					verbose(VERB_DEBUG, "Kernel FFdata is now :");
+					get_kernel_ffclock(handle->clock, &cest);
+					printout_FFdata(&cest);
+				}
+
 				/* Check accuracy of RAD->FF->RAD inversion for Ca read */
 				long double ca_compare, Ca_compare, CaFF;
 				struct radclock_data inverted_raddata;
-				if ( VERB_LEVEL>2 ) {
+				if ( VERB_LEVEL>3 ) {
 				 	ca_compare = RAD_DATA(handle)->ca;
-				 	read_RADabs_UTC(RAD_DATA(handle), &RAD_DATA(handle)->last_changed, &Ca_compare, 0);
+				 	read_RADabs_UTC(RAD_DATA(handle), &(RAD_DATA(handle)->last_changed), &Ca_compare, 0);
 					verbose(LOG_NOTICE, "RADdata from daemon");
 					printout_raddata(RAD_DATA(handle));
-					
+
 					get_kernel_ffclock(handle->clock, &cest);
 					fill_radclock_data(&cest, &inverted_raddata);
 					verbose(LOG_NOTICE, "RADdata inverted from matching FFdata");
 					printout_raddata(&inverted_raddata);
-					
+
 					ca_compare -= inverted_raddata.ca;
 					read_RADabs_UTC(&inverted_raddata, &inverted_raddata.last_changed, &CaFF, 0);
 					Ca_compare -= CaFF;
@@ -1120,7 +1095,7 @@ process_stamp(struct radclock_handle *handle)
 							ca_compare*1e9, Ca_compare*1e9 );
 				}
 
-			}	// KV>=2
+			}
 
 			/* Adjust system FBclock if requested (and if not piggybacking on ntpd) */
 			if (handle->conf->adjust_FBclock == BOOL_ON) { // TODO: catch errors

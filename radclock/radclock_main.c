@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -77,8 +75,6 @@
 #include "ring_buffer.h"
 #include "ntp_auth.h"
 
-#include <sys/sysctl.h>
-
 /* Default PID lockfile (-P overrides this) */
 #define DAEMON_LOCK_FILE ( RADCLOCK_RUN_DIRECTORY "/radclock.pid" )
 
@@ -97,7 +93,6 @@ extern struct verbose_data_t verbose_data;
 long int jdbg_memuse = 0;
 struct rusage jdbg_rusage;
 #endif
-
 
 
 
@@ -129,10 +124,6 @@ static void usage(void) {
 		);
 	exit(EXIT_SUCCESS);
 }
-
-
-
-
 
 
 
@@ -382,7 +373,7 @@ signal_handler(int sig)
 
 
 /*
- * Function that fork the process and creates the running daemon
+ * Function that forks the process and creates the running daemon
  */
 static int
 daemonize(const char* lockfile, int *daemon_pid_fd)
@@ -396,7 +387,12 @@ daemonize(const char* lockfile, int *daemon_pid_fd)
 	JDEBUG_MEMORY(JDBG_MALLOC, str);
 
 	/* If already a daemon */
-	if( getppid() == 1 ) {
+	/* This is not needed. If the child process (daemon) has already been forked,
+	 * the program doesn't return to this point. If already a daemon, the init system
+	 * (e.g. systemd) handles it and prevents starting as daemon again.
+	 * In Linux, systemd, which has PID=1, starts this daemon as it's child. So, the
+	 * daemon always has PPID=1. This condition is thus invalid.
+	if (getppid() == 1) {
 		verbose(LOG_NOTICE, "Already a daemon");
 		return (0);
 	}
@@ -592,10 +588,9 @@ create_handle(struct radclock_config *conf, int is_daemon)
 
 	/*
 	 * Thread related stuff
-	 * Initialize and set thread detached attribute explicitely
+	 * Initialize and set thread detached attribute explicitly
 	 */
 	handle->pthread_flag_stop = 0;
-	//handle->matchqueue_mutex = 0;		// to manage use by both PROC and SHM
 	pthread_mutex_init(&(handle->globaldata_mutex), NULL);
 
 	handle->syncalgo_mode = RADCLOCK_BIDIR; // hardwired, as yet not really used
@@ -695,46 +690,67 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	struct radclock_error *rad_error)
 {
 	struct ffclock_estimate cest;
+	struct radclock_data rd;
+	struct radclock_error rde;
 	int err;
 
 	JDEBUG
 
-	/* Make sure we have detected the version of the kernel we are running on */
+	/* Detect the version of the kernel support we are running on */
 	clock->kernel_version = found_ffwd_kernel_version();
-
-	/* Make sure we are doing the right thing */
 	if (clock->kernel_version < 0) {
-		verbose(LOG_ERR, "The RADclock does not run live without Feed-Forward "
-				"kernel support");
+		verbose(LOG_ERR, "No Feed-Forward kernel support - cannot run live");
 		return (1);
 	}
 
-	/*
-	 * Attempt to retrieve some slightly better clock estimates from the kernel.
-	 * If successful, this overwrites the naive default set by radclock_create.
-	 * This is common to the radclock sync algo and any 3rd party application.
-	 * This feature has been introduced in kernel version 2.
+	/* Establish the link allowing raddata <--> FFdata exchange */
+	err = init_kernel_clock(clock);
+	if (err)
+		return (1);
+	verbose(LOG_NOTICE, "Feed-Forward clock support initialised");
+
+
+	/* Attempt to retrieve FFdata from the kernel
+	 * Provide verbose checking of raddata <--> FFdata correspondance
+	 * Use to overwrite the naive default set by radclock_create.
+	 * ** Currently suppressed due to RTC reset complications making such initialization
+	 *    dangerous.
 	 */
-// TODO is that really specific to kernel version >2 and which arch ?
-	err = 0;
-	if (clock->kernel_version >= 2)
-		err = get_kernel_ffclock(clock, &cest);
+	err = get_kernel_ffclock(clock, &cest);
+	if (err != 1) {		// if this kernel supports FFdata getting
 
-	if (err < 0) {
-		verbose(LOG_ERR, "Failed to get initial ffclock data from kernel");
-		return (1);
+		if (err < 0) {
+			verbose(LOG_ERR, "Failed to get initial ffclock data from kernel");
+			return (1);
+		}
+		verbose(LOG_NOTICE, "Initial retrieve of FFclock data successful");
+		if ( VERB_LEVEL > 1 )
+			printout_FFdata(&cest);
+
+		/* Sanity check warnings when FFdata not fully set */
+		if ((cest.update_time.sec == 0) || (cest.period == 0)) {
+			logger(RADLOG_WARNING, "kernel FFdata is uninitialized!");
+			printout_FFdata(&cest);
+		}
+
+		/* Debug code: check FFdata <--> rad_data mapping inverts as expected */
+		if ( VERB_LEVEL > 2 ) {
+			fill_radclock_data(&cest, &rd);
+			verbose(LOG_NOTICE, "  Conversion to raddata :");
+			printout_raddata(&rd);
+			fill_ffclock_estimate(&rd, &rde, &cest);
+			verbose(LOG_NOTICE, "  Inversion back to FFdata :");
+			printout_FFdata(&cest);
+		}
+
+		/* Override default rad_data value with current kernel version */
+		verbose(LOG_NOTICE, "  NOT Setting central rad_data to mirror FFdata");
+//		memcpy(&rad_data,&rd,sizeof(rd));
+//		verbose(LOG_NOTICE, "  Setting central rad_data to mirror FFdata");
+//		if ( VERB_LEVEL > 1 )
+//			printout_raddata(rad_data);
 	}
-	
-	/* Check FFclock data from kernel, map it to rad_data, and check mapping */
-	verbose(LOG_NOTICE, "clock_init_live: retrieved and mapped FFclock data");
-	if ( VERB_LEVEL>1 ) printout_FFdata(&cest);
-	fill_radclock_data(&cest, rad_data);
-	if ( VERB_LEVEL>2 ) {  // check conversion, and inversion, are as expected
-		printout_raddata(rad_data);
-		fill_ffclock_estimate(rad_data, rad_error, &cest);
-		printout_FFdata(&cest);
-	}
-	
+
 	err = radclock_init_vcounter_syscall(clock); // null if KV>1
 	if (err)
 		return (1);
@@ -742,13 +758,6 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	err = radclock_init_vcounter(clock);
 	if (err < 0)
 		return (1);
-
-	// TODO this could be revamped into one single function
-	err = init_kernel_clock(clock);
-	if (err)
-		return (1);
-	verbose(LOG_NOTICE, "Kernel clock support initialised");
-
 
 
 	/* Get information about FF status from kernel
@@ -1026,9 +1035,6 @@ start_live(struct radclock_handle *handle)
 	/*
 	 * To be able to provide the RADCLOCK timestamping mode, we need to refresh
 	 * the fixed point data in the kernel.  That's this guy's job.
-	 * XXX Update: with kernel version 2, the overflow problem is taking care of
-	 * by the kernel. The fixedpoint thread is deprecated and should be removed
-	 * in the future
 	 */
 	if ((handle->run_mode == RADCLOCK_SYNC_LIVE) &&
 			(handle->clock->kernel_version < 2)) {
@@ -1557,7 +1563,6 @@ main(int argc, char *argv[])
 
 	/* Clear thread stuff */
 	pthread_mutex_destroy(&(handle->globaldata_mutex));
-	//pthread_mutex_destroy(&(handle->matchqueue_mutex));
 
 	/* Detach IPC shared memory if were running as IPC server. */
 	if (handle->conf->server_ipc == BOOL_ON)

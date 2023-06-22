@@ -1,0 +1,82 @@
+name: RADclock build system
+
+on:
+  push:
+    branches: [ RADdev, master]
+  pull_request:
+    branches: [ RADdev, master]
+
+jobs:
+  kernel-amd64:
+    name: Build AMD64 kernel packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.7.4
+      - uses: actions/checkout@v2
+      - name: Build Debian AMD64 kernel packages
+        run: earthly +deb-kernel-build-patched
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Debian kernel AMD64 packages
+          path: artifacts/kernel-patched/*amd64.deb
+
+  kernel-arm64:
+    name: Build Pi (ARM64) kernel packages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.7.4
+      - uses: actions/checkout@v2
+      - name: Build ARM64 kernel packages
+        run: earthly +arm-kernel-build-patched
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Raspbian kernel ARM64 packages
+          path: artifacts/arm64-pi/*arm64.deb
+
+
+
+
+  build-radclock-amd64:
+    name: Build radclock for AMD64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.7.4
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Build radclock for AMD64
+        run: earthly +deb-build-radclock-with-kernel
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Debian radclock build
+          path: artifacts/radclock-with-kernel/amd64/
+
+
+  build-radclock-arm64:
+    name: Build radclock for ARM64
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup QEMU
+        id: qemu
+        uses: docker/setup-qemu-action@v1
+        with:
+          image: tonistiigi/binfmt:latest
+          platforms: all
+      - uses: earthly/actions/setup-earthly@v1
+        with:
+          version: v0.7.4
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Build radclock for arm64
+        run: earthly --platform=linux/arm64 +arm-crossbuild64-radclock-with-kernel
+      - uses: actions/upload-artifact@v2
+        with:
+          name: Debian radclock build (ARM64)
+          path: artifacts/radclock-with-kernel/arm64/

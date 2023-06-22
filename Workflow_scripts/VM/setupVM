@@ -1,0 +1,129 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+if [ `id -u` -ne 0 ]; then
+	echo "Sorry `id -un`, this must be run as root"
+	exit 0
+fi
+
+Arch=`uname -m`
+OS=`uname -s`
+OSv=`uname -r | cut -d'-' -f1`		# gives full OSv including sublevel in Linux case
+echo "Setting up working environment for FF and RADdev for a $OS $OSv system" 
+
+Based="FFkernel_Work"
+MountPoint="V4_mountedfrom_Icaro"
+DirToMount="/Users/darryl/Papers/TSCclock/Programs/V4"
+ToolDir="RADclock_mycurrent/Workflow_scripts/VM"
+ServerIP="172.16.20.1"         # IP of Icaro in VMware's subnet
+HostIP=`showmount -a $ServerIP |grep darryl |cut -d':' -f1`
+
+echo "Creating required directories in $Based"
+cd; 
+mkdir -pv $Based
+cd $Based
+mkdir -pv CurrentSource
+mkdir -pv OriginalSource_$OSv		# superceded
+mkdir -pv RADclock_working
+mkdir -pv FFclock_working
+mkdir -pv Testpkg
+mkdir -pv Replays
+
+
+echo
+echo "Setting up mounting of Dev directory $DirToMount on Icaro ($ServerIP) :"
+mkdir -pv $MountPoint
+case $OS in
+	FreeBSD)
+		grep -q nfs_client /etc/rc.conf		# returns {0,1,2} status if match {found, not found, doesnt exist}
+		if [ $? -gt 0 ]; then
+			echo '  nfs settings seem to be missing, adding to /etc/rc.conf'
+			echo 'nfs_client_enable="YES"'	>> /etc/rc.conf
+			echo 'rpcbind_enable="YES"'		>> /etc/rc.conf
+			echo 'rpc_lockd_enable="YES"'	>> /etc/rc.conf
+			echo 'rpc_statd_enable="YES"'	>> /etc/rc.conf
+		fi
+		echo "Trying to launch nfs client"
+		service nfsclient start
+		service lockd start
+		service lockd status ;;
+	Darwin | Linux)
+		echo "  Aah, on Linux, just hoping nfs already running..";;
+esac
+
+MountLine="$ServerIP:$DirToMount	/root/$Based/$MountPoint	nfs	rw	0	0"
+[[ -z $(grep darryl /etc/fstab) ]]	&& echo $MountLine >> /etc/fstab	# if not already there, put it in
+grep darryl /etc/fstab
+mount $MountPoint    # probably needs a reboot to force fstab to be reread
+#mount -t nfs -v $ServerIP:$DirToMount /root/$Based/$MountPoint
+
+df | grep $MountPoint
+if [ $? -eq 0 ]; then    # if previous command exits with success
+	echo "  $MountPoint is mounted"
+	echo
+	echo "Linking over and installing tool scripts from $ToolDir :"
+	if [ -z $quick_RAD_build ]; then
+		ln -s $MountPoint/$ToolDir/{setup*,*update*,save_*,bash*,create*,move_*,clean*,quick*,collect*,install*} .
+		cat $MountPoint/$ToolDir/id_rsa.pub > /root/.ssh/authorized_keys
+		#cp  $MountPoint/$ToolDir/.bashrc  ../		# this doesn't work, so created  fixupbash instead, look there
+		cp bashrc  ../.bashrc   # makes an actual copy, need this, but symlink still there also
+		source ../.bashrc		# doesn't seem to work
+		#fixupbash
+		#relocate&
+		#[[ $OS == FreeBSD ]] && cp $MountPoint/$ToolDir/FFCLOCK /usr/src/sys/amd64/conf/    # now in FFclock_working
+	else 
+		echo "  Seems to already be there, leaving it"
+	fi
+fi
+
+if [ $OS == FreeBSD ]; then
+	echo "Filling CurrentSource with links to source tree"
+	havekern=`ls -al CurrentSource | grep  kern_tc`
+	if [ -z "$havekern" ]; then
+	#if [ -z $(ls -al CurrentSource |grep kern_tc) ]; then
+		ln -s /usr/src/sys/kern/{kern_{ffclock,tc},subr_rtc}.c	CurrentSource/
+		ln -s /usr/src/sys/sys/{timeffc,_ffcounter}.h	CurrentSource/
+		ln -s /usr/src/sys/net/bpf.{c,h}				CurrentSource/
+		ln -s /usr/src/sys/dev/e1000/if_{em,igb}.c		CurrentSource/
+		ln -s /usr/src/lib/libc/sys/ffclock.2			CurrentSource/	# Makefile.inc wont change, leave it
+		ln -s /usr/src/share/man/man4/ffclock.4			CurrentSource/	# Makefile     wont change, leave it
+		cp CurrentSource/* OriginalSource_$OSv
+		# Not yet in kernel, but set up links so will be there when move current source into tree 
+		ln -s /usr/src/sys/$Arch/conf/FFCLOCK			CurrentSource/
+	else 
+		echo "  Seems to already be there, leaving it"
+	fi
+
+	echo "Recording source as OriginalSource_$OSv"
+	if [ -s "CurrentSource/kern_tc.c" ]; then
+		cp -p CurrentSource/* OriginalSource_$OSv
+		cp -pR OriginalSource_$OSv $MountPoint/OriginalFFfiles_FreeBSD/$OSv	# drop prefix
+	else
+		echo "  Source seems to be absent, you will have to fetch it first"
+	fi
+fi
+
+if [ $OS == "Linux" ]; then
+	echo "Filling CurrentSource with links to source tree"
+	havekern=`ls -al CurrentSource | grep  timekeeping`
+	if [ -z "$havekern" ]; then
+		collect_FFfiles_Linux		# by default, generates symlinks
+	else
+		echo "  Seems to already be there, leaving it"
+	fi
+
+#	OSbase=`uname -r | cut -d'.' -f1-2`
+#	LinuxDir="/usr/src/linux-source-$OSbase"
+#	ls $LinuxDir
+
+	echo "Recording source as OriginalSource_$OSv"
+	if [ -s "CurrentSource/timekeeping.c" ]; then
+		cp -p CurrentSource/* OriginalSource_$OSv
+		cp -pR OriginalSource_$OSv $MountPoint/OriginalFFfiles_Linux/$OSv/
+	else
+		echo "  Source seems to be absent, you will have to fetch it first"
+#		apt reinstall linux-source-$OSv	# gets latest sublevel, not the source matching current install..
+#		tar xaf linux-source-$OSv.tar.xz
+#		update_linuxSource -i			# verbose info only
+	fi
+fi

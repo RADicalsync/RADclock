@@ -1,0 +1,237 @@
+#!/bin/bash
+#
+# This script regenerates a kernel config file, and source if needed.  
+# Typically needed because of a bump in SUBLEVEL. 
+# Can be run from anywhere.
+#
+# options -i :  information only, don't install anything or touch configs
+#         -l :  insist on installing new source, then look at config
+#         -d :  try to test if new source actually needed to use existing debs, the look at config
+#       none :  don't install source unless there is none; generate a config
+#
+#
+# Use cases:
+# When compiling a new sublevel in the VM 
+#    update_linuxSource -l		# start from scratch, get source and rebuild config
+#    quick_FF_build 			# when FF source newly patched to the latest sublevel
+# When compiling a new sublevel using earthly 
+#    install_earthlyFF			# get latest debs and match to their sublevel
+#    update_linuxSource -d		# start from scratch only if needed, rebuild config
+# To check the config and regenerate if needed (no source changes, old .config saved to FFkernel_Work)
+# 	update_linuxSource
+
+echo -e "${BLU}Updating kernel source and regenerating a new config file${CLE}"
+
+OS=`uname -s`
+if [ $OS != "Linux" ]; then
+	echo "Sorry, this script is only meant for Linux at present, you are on $OS"
+	exit
+fi
+
+Based="$HOME/FFkernel_Work"
+############## Source section ################
+
+### Information gathering
+
+# Determine what source we have now
+echo -n "  Running image is `uname -r`"
+if [[ -d /sys/devices/system/ffclock ]]; then
+	echo "  - is a FFkernel"
+else
+	echo "  - is an Original kernel"
+fi
+
+OSv=`uname -r | cut -d'.' -f1-2`
+OSsub=`uname -r | cut -d'.' -f3`
+SourceDir="/usr/src/linux-source-$OSv"
+if [[ -e $SourceDir ]]; then
+	CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+	echo "  Current matching source  in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
+else
+	echo "  No source directory $SourceDir matching the running image"
+fi
+
+# Determine what the most recently acquired source is
+cd /usr/src
+Sname=`ls -tr |grep  linux-source | tail -1 |cut -d'_' -f1 |cut -d'-' -f3-`
+LatestSourceDir="/usr/src/linux-source-$Sname"
+LatestSUBLEVEL=`head $LatestSourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+echo "  Latest source in `pwd` has version $Sname, with SUBLEVEL $LatestSUBLEVEL"
+
+
+# Determine latest debs we have now, if any
+Kname=`ls -tr |grep  linux-image | tail -1 |cut -d'_' -f1 |cut -d'-' -f3-`
+if [[ "$Kname" == "" ]]; then
+	echo "  There are no .deb in /usr/src to use!"
+else
+	NewSUBLEVEL=`echo $Kname |cut -d'.' -f3`
+	echo "  Latest .deb packages in `pwd` have version $Kname, hence SUBLEVEL $NewSUBLEVEL"
+fi
+
+
+# Look at config files
+echo -e "${WHI}Comparing available config files $CLE"
+ls -altr /boot/config-$OSv*
+echo -e "${dGRY}`ls -latr $SourceDir/.config` $CLE"
+ls -altr $Based/kernelconfig_${OSv}*
+echo
+
+[[ "$1" == "-i" ]] && exit
+#===============================================================
+
+
+
+
+### Taking action
+
+# TODO: find a way to force a match to a desired sublevel: currently the reinstalls
+#       just fetch the latest - no control !   Seems to be impossible unless work with git tags
+
+
+# Determine what source we will move to
+if [[ "$1" == "-l" || "$CurrSUBLEVEL" == "" ]]; then
+	echo " Update to latest source required, will start clean"
+	apt update
+	apt upgrade
+	\rm -r *
+	apt reinstall linux-source-$OSv
+	ls -l
+	tar xaf linux-source-$OSv.tar.xz
+	CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+	echo "  Updated source in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
+	ls -l
+	echo "  Saving original source of FFfiles to OriginalSource_$OSv.$CurrSUBLEVEL"
+	cd $Based
+	mkdir OriginalSource_$OSv.$CurrSUBLEVEL
+	cp -p CurrentSource/* OriginalSource_$OSv.$CurrSUBLEVEL
+	cd /usr/src
+
+	# With new source, move old config out to avoid new one being based on it
+	saveName="/boot/config-$OSv.$CurrSUBLEVEL"
+	if [[ -e $saveName ]]; then
+		echo -e ">> ${GRE}Moving existing boot config $saveName out ${CLE}"
+		mv $saveName $Based/boot_$saveName
+	fi
+	echo "==================================================================="
+fi
+
+# Determine latest debs we have now, if any
+if [[ "$1" == "-d" ]]; then
+	[[ "$Kname" == "" ]] && exit			# no debs to use
+	# Ensure source matches new packages
+	if [[ $NewSUBLEVEL != $CurrSUBLEVEL ]]; then
+    	echo "  Updating source to match packages"  # don't clean out /usr/src, the debs are there!
+		apt update
+		apt upgrade
+		apt reinstall linux-source-$OSv
+		tar xaf linux-source-$OSv.tar.xz
+		CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+		echo "  Updated source  in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
+		echo "  Saving original source of FFfiles to OriginalSource_$OSv.$CurrSUBLEVEL"
+		cd $Based
+		mkdir OriginalSource_$OSv.$CurrSUBLEVEL
+		cp -p CurrentSource/* OriginalSource_$OSv.$CurrSUBLEVEL
+		cd /usr/src
+	fi
+
+	# With new source, move old config out to avoid new one being based on it
+	saveName="/boot/config-$OSv.$CurrSUBLEVEL"
+	if [[ -e $saveName ]]; then
+		echo -e ">> ${GRE}Moving existing boot config $saveName out ${CLE}"
+		mv $saveName $Based/boot_$saveName
+	fi
+	echo "==================================================================="
+fi
+
+
+
+############## Config file section ################
+echo
+
+# Ensure config of source matched the current (perhaps new) source 
+cd $SourceDir
+#if
+	if [[ $CurrSUBLEVEL == $OSsub ]]; then
+		echo "  New packages match the current sublevel $OSsub, expect config to stay the same"
+	fi
+#else
+	if [[ ! -e $SourceDir/.config ]]; then
+		echo "  No .config as yet, can't save or compare it"
+	else
+	  saveName="kernelconfig_${OSv}_${CurrSUBLEVEL}_old"
+	  oldconfig="$Based/$saveName"
+	  echo -e ">> ${GRE}Saving existing $SourceDir/.config to $saveName $CLE"
+	  cp $SourceDir/.config $oldconfig
+	fi
+
+	echo ">> Creating new config"
+	# With this function, when $SourceDir/.config is empty, it seeds it from
+	# /usr/lib/modules/5.10.149/kernel/kernel/configs.ko  , which seems to work!
+	# It is is not empty, it makes minimal changes: if good already, stays good.
+	make localmodconfig		# Update current config disabling modules not loaded (interactive)
+
+	# Although it seems logical to see a config with this, it fails every time.
+	# In particular, even if it builds, the boot fails with the "mkinitramfs" error
+	#make defconfig			# uses  linux-source-$OSv/arch/x86/configs/x86_64_defconfig
+
+	saveName="kernelconfig_${OSv}_${CurrSUBLEVEL}_new"
+	echo -e ">> ${GRE}Saving new $SourceDir/.config to $saveName $CLE"
+	cp $SourceDir/.config $Based/$saveName
+
+	echo
+	if [[ $oldconfig != "" ]]; then
+		echo ">> Comparing old and new configs"
+		$SourceDir/scripts/diffconfig   $oldconfig $SourceDir/.config
+		echo
+	fi
+#fi
+
+
+
+# Check config file has the desired settings [ it should have already ]
+option="DEBUG_INFO"
+if [[ `scripts/config -s $option` == "y" ]]; then	# specifying with --file option doesn't work ..
+	echo "DEBUG_INFO was set!, unsetting"
+	scripts/config --disable $option
+#if [[ `scripts/config -s $option` == "n" ]]; then
+#	echo "DEBUG_INFO was unset!, setting"
+#	scripts/config --enable $option
+else
+	echo "$option is good"
+fi
+
+option="SYSTEM_TRUSTED_KEYS"
+if [[ `scripts/config -s $option` != "" ]]; then
+	echo "$option not blank!, fixing"
+	scripts/config --set-str $option ""
+else
+	echo "$option is good"
+fi
+
+option="MODULE_SIG_KEY"		# Need to set this right for VMware to work
+if [[ `scripts/config -s $option` != "certs/signing_key.pem" ]]; then
+	echo "$option not set to default!, setting"
+	scripts/config --set-str $option "certs/signing_key.pem"
+else
+	echo "$option is good"
+fi
+
+
+# For interest, should be auto-generated anyway
+echo "Check if the signing key info is in source dir"
+if [[ -e $SourceDir/certs/signing_key.pem ]]; then
+	echo " signing_key.pem found in $SourceDir/certs"
+#	ls -l $SourceDir/certs/signing_key.pem
+else
+	echo " signing_key.pem not found in $SourceDir/certs, but don't worry, should be regenerated"
+fi
+
+
+
+## Refresh record of current source
+cd $Based
+echo "If the source dir has changed, you will need to rerun collect_FFfiles_Linux"
+#ls -altr CurrentSource
+
+
+exit

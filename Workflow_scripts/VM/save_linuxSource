@@ -1,0 +1,370 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+
+## Save the full contents of /usr/src after a trusted upgrade
+#  save_linuxSource
+#
+# options: $1  set to a nominal "-r" for restore, or the version you want directly
+#
+# Recovery workflow to take a basesystem (like 4.19.0) and upgrade via saved source
+#  save_linuxSource -r       # recover saved source and debs, you get to select the version
+#  install_earthlyFF -e      # use the debs you just recovered to get the new system
+#  quick_FF_build -n         # alternatively, compile the recovered source instead (slower!)
+#  quick_FF_build            # patch (using smart version match) then compile, to recover corresponding FFkernel
+#                            # !! ensure update_workingFFsource is pointed to the right repo !!
+
+
+if [[ -d /sys/devices/system/ffclock ]]; then
+	echo "** FYI: Running system is a FFkernel **"
+else
+	echo "** FYI: Running system is an Original kernel **"
+fi
+echo
+
+echo "============ Saving/Restoring key source files in /usr/src =============="
+Based="FFkernel_Work"
+Patchtype="Original"		# Assume default of an un-FF-patched kernel
+
+
+if [[ "$1" == "" ]]; then
+	OSfullv=`uname -r | cut -d'-' -f1`		# gives full OSv including sublevel in Linux case
+	OSfullv="5.10.149"		# hack
+	echo "** Running in Save mode: will save current version $OSfullv **"
+	grep FFC CurrentSource/timekeeping.c  >> /dev/null
+	if [ $? -ne 0 ]; then
+		echo "   Source is an original kernel"
+		echo "   [when this is done, consider clearing CurrentSource and running setupVM]"
+	else
+		echo "   Source is an FF kernel"
+		Patchtype="FF"
+	fi
+
+else
+#	OSfullv="4.19.260"
+	OSfullv="5.10.149"
+	read -p "** Running in Restore mode: use default $OSfullv [Yn] ? " ans
+	if [[ "$ans" == "n" ]]; then
+		OSfullv=$1
+		echo "   ok, using supplied version $OSfullv instead"
+	fi
+	read -p "** Default is to use an original kernel, use FF instead [Ny] ? " ans
+	if [[ "$ans" == "y" ]]; then
+		Patchtype="FF"
+	fi
+fi
+OSv=`echo $OSfullv | cut -d'.' -f1-2`		# VERSION.PATCHLEVEL = point release
+
+
+## Define base dirs
+MountPoint="V4_mountedfrom_Icaro"
+SaveBase="$HOME/$Based/$MountPoint/FullSource_Linux/$OSfullv/$Patchtype"
+Source="linux-source-$OSv"
+
+## Prepare save dirs
+srcSave="usr-src"
+debSave="debs"
+echo "   Saved files are under a base dir $SaveBase"
+echo
+#exit
+mkdir -p $SaveBase/$srcSave
+mkdir -p $SaveBase/$debSave
+
+
+### Copy over files
+cd /usr/src
+
+### Save
+if [[ "$1" == "" ]]; then
+
+	## Save the pkg .deb files:  these allow the system to be recovered
+	echo "Copying deb files to $debSave"
+	cp *.deb $SaveBase/$debSave
+
+	## Save the source:   this allows building of a new kernel
+	#  It will be tarred up for speed and to avoid case-insensitive filesystem issues
+	echo "Copying the source $Source to the base as a tgz"
+	tar -czf  $SaveBase/$Source.tgz  $Source
+	#cp linux-source-4.19.tgz V4_mountedfrom_Icaro/FullSource_Linux/4.19.260/
+
+	## Save the other files and dirs
+	#  Other files/dirs that commonly appear here I believe are regenerated and dont matter
+	echo "Copying other relevant files in /usr/src to $srcSave"
+	cp -R linux-config-$OSv $SaveBase/$srcSave		# as yet unused
+
+fi
+
+### Restore
+if [[ "$1" != "" ]]; then
+
+	## Recover the pkg .deb files:  these allow the system to be recovered
+	echo "Recovering deb files from $debSave"
+	cp $SaveBase/$debSave/*  .
+
+	## Recover the source:   this allows building of a new kernel
+	echo "Recovering the source $Source from the base"
+	tar -xzf  $SaveBase/$Source.tgz		# untar directly into /usr/src, no tgz copy
+
+	## Recover the other files and dirs
+	echo "Recovering other relevant files from $srcSave"
+	#cp -R $SaveBase/$srcSave/* .
+
+fi
+
+ls -l
+exit
+
+
+
+
+
+
+
+
+
+
+
+##################  Script to get around case-insensitive limitation of saving to Icaro
+###  Abandoned near completion (Oct 23, 2022) when realised could just tar up the source and save that.
+
+OSv=`uname -r | cut -d'-' -f1`		# gives full OSv including sublevel in Linux case
+
+Based="FFkernel_Work"
+MountPoint="V4_mountedfrom_Icaro"
+SaveBase="$HOME/$Based/$MountPoint/FullSource_Linux/$OSv/CaseSaves"
+
+# Define the basic file lists involved
+filList=("connmark" "dscp" "mark" "rateest" "tcpmss")
+netList=("dscp" "hl" "rateest" "tcpmss")
+ip4List=("ecn" "ttl")
+ip6List=("hl")
+litList=("Z6.0+pooncelock+pooncelock+pombonce.litmus")
+
+echo "===== Basic files ====="
+#echo ${filList[*]}
+#echo ${netList[*]}
+#echo ${ip4List[*]}
+#echo ${ip6List[*]}
+#echo ${litList[*]}
+
+## Define the sub-directories of source involved, classified according to filelist
+Source="/usr/src/linux-source-4.19"
+
+# exclude linux-headers-4.19.260/include/uapi/linux/netfilter/  as headers are recreated
+filDirs=("debian/hdrtmp/usr/src/linux-headers-4.19.260/include/uapi/linux/netfilter" \
+         "debian/headertmp/usr/include/linux/netfilter" \
+         "include/uapi/linux/netfilter" \
+         "/usr/include/linux/netfilter")
+
+netDirs=("net/netfilter")
+
+ip4Dirs=("debian/hdrtmp/usr/src/linux-headers-4.19.260/include/uapi/linux/netfilter_ipv4" \
+         "debian/headertmp/usr/include/linux/netfilter_ipv4" \
+         "include/uapi/linux/netfilter_ipv4" \
+         "/usr/include/linux/netfilter_ipv4")
+
+ip6Dirs=("debian/hdrtmp/usr/src/linux-headers-4.19.260/include/uapi/linux/netfilter_ipv6" \
+         "debian/headertmp/usr/include/linux/netfilter_ipv6" \
+         "include/uapi/linux/netfilter_ipv6" \
+         "/usr/include/linux/netfilter_ipv6")
+
+litDirs=("tools/memory-model/litmus-tests")
+
+
+echo "===== Corresponding Dirs ====="
+#echo ${filDirs[*]}
+#echo ${netDirs[*]}
+#echo ${ip4Dirs[*]}
+#echo ${ip6Dirs[*]}
+#echo ${litDirs[*]}
+
+
+echo "========================================="
+
+# Complete the files names in Lower case form
+for f in ${filList[*]}; do
+ filListL="$filListL xt_$f.h"
+done
+for f in ${netList[*]}; do
+ netListL="$netListL xt_$f.c"		# these are c files
+done
+for f in ${ip4List[*]}; do
+ ip4ListL="$ip4ListL ipt_$f.h"
+done
+
+# Complete the files names in Upper case form
+for f in ${filList[*]}; do
+ filListU="$filListU xt_`echo ${f} |tr "[:lower:]" "[:upper:]" `.h"
+done
+for f in ${netList[*]}; do
+ netListU="$netListU xt_`echo ${f} |tr "[:lower:]" "[:upper:]" `.c"	# c files
+done
+for f in ${ip4List[*]}; do
+ ip4ListU="$ip4ListU ipt_`echo ${f} |tr "[:lower:]" "[:upper:]" `.h"
+done
+
+#echo $filListL
+#echo $filListU
+#echo $netListL
+#echo $netListU
+#echo $ip4ListL
+#echo $ip4ListU
+
+## These lists are trivial, define completed Uppper and Lower directly
+ip6ListL="ip6t_hl.h"
+ip6ListU="ip6t_HL.h"
+litListL="Z6.0+pooncelock+pooncelock+pombonce.litmus"
+litListU="Z6.0+pooncelock+poonceLock+pombonce.litmus"
+#echo $ip6ListL
+#echo $ip6ListU
+#echo $litListL
+#echo $litListU
+
+
+
+
+
+### Save the filesets. Only need to do once for each Dir where found
+if [[ "$1" == "-s" ]]; then
+
+echo "** List fil:  files are: $filListL"
+for d in ${filDirs[*]:3:3}; do	# use the 4th one, it has a shorter name
+
+	SaveDir="$SaveBase/filL"
+	echo "  Saving Lower case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${filListL[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+
+	echo
+	SaveDir="$SaveBase/filU"
+	echo "  Saving Upper case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${filListU[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+done
+echo
+
+echo "** List net: files are: $netListL"
+for d in ${netDirs[*]:0:1}; do
+
+	SaveDir="$SaveBase/netL"
+	echo "  Saving Lower case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${netListL[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+
+	echo
+	SaveDir="$SaveBase/netU"
+	echo "  Saving Upper case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${netListU[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+done
+echo
+
+
+echo "** List ip4, files are: $ip4ListL"
+for d in ${ip4Dirs[*]:0:1}; do
+
+	SaveDir="$SaveBase/ip4L"
+	echo "  Saving Lower case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${ip4ListL[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+
+	echo
+	SaveDir="$SaveBase/ip4U"
+	echo "  Saving Upper case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${ip4ListU[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+done
+echo
+
+echo "** List ip6, files are: $ip6ListL"
+for d in ${ip6Dirs[*]:0:1}; do
+
+	SaveDir="$SaveBase/ip6L"
+	echo "  Saving Lower case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${ip6ListL[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+
+	echo
+	SaveDir="$SaveBase/ip6U"
+	echo "  Saving Upper case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${ip6ListU[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+done
+echo
+
+echo "** List lit, files are: $litListL"
+for d in ${litDirs[*]:0:1}; do
+
+	SaveDir="$SaveBase/litL"
+	echo "  Saving Lower case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${litListL[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+
+	echo
+	SaveDir="$SaveBase/litU"
+	echo "  Saving Upper case versions from $d to $SaveDir"
+	mkdir -p $SaveDir
+	for f in ${litListU[*]}; do
+		wc $Source/$d/$f
+		cp $Source/$d/$f  $SaveDir
+	done
+done
+echo
+
+fi   # save option
+
+
+### Restore the filesets. Need to do once for each Dir in lists
+if [[ "$1" == "-r" ]]; then
+
+	for d in ${filDirs[*]}; do
+
+		SaveDir="$SaveBase/filL"
+		echo "  Restoring Lower case versions to $d from $SaveDir"
+	#	mkdir -p $SaveDir
+		for f in ${filListL[*]}; do
+	#		wc $Source/$d/$f
+			cp $SaveDir/$f $Source/$d
+		done
+		ls -ltr $Source/$d   |tail -12
+
+		SaveDir="$SaveBase/filU"
+		echo "  Restoring Upper case versions to $d from $SaveDir"
+		for f in ${filListU[*]}; do
+			cp $SaveDir/$f $Source/$d
+		done
+		ls -ltr $Source/$d   |tail -12
+		echo
+
+	done
+	echo
+
+
+fi

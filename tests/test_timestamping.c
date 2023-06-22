@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2006-2011 Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2020 The RADclock Project (see AUTHORS file)
  *
  * This file is part of the radclock program.
  * 
@@ -33,6 +32,8 @@
 #include "radclock-private.h"
 #include "logger.h"
 
+#define BPF_PACKET_SIZE   170
+#define PCAP_TIMEOUT   15       // [ms]  Previous value of 5 caused huge delays
 
 
 int
@@ -51,20 +52,28 @@ main(int argc, char **argv)
 	clock = radclock_create();
 	radclock_init(clock);
 
-	/* Open a PCAP device. Look it up if not specified on the command line */
-	if_name = pcap_lookupdev(errbuf);
-	if (if_name == NULL) {
-		fprintf(stderr, "Cannot find free device, pcap says: %s\n", errbuf);
-		return (1);
+	/* Look for and open a PCAP device */
+	pcap_if_t *alldevs = NULL;
+	if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+		printf("Error in pcap_findalldevs: %s\n", errbuf);
+		exit(EXIT_FAILURE);
 	}
-	else
+	if (alldevs == NULL) {
+		fprintf(stderr, "Failed to find free device, pcap says: %s\n", errbuf);
+		exit(EXIT_FAILURE);
+	} else {
+		if_name = alldevs->name;
 		fprintf(stderr, "Found device %s\n", if_name);
+	}
 
-	/* No promiscuous mode, timeout on BPF = 5ms */
-	if ((phandle = pcap_open_live(if_name, 170, 0, 5, errbuf)) == NULL) {
+	/* No promiscuous mode */
+	if ((phandle = pcap_open_live(if_name, BPF_PACKET_SIZE, 0, PCAP_TIMEOUT, errbuf)) == NULL) {
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		return (1);
 	}
+	pcap_freealldevs(alldevs);		// if_name no longer needed
+
+
 
 	/* No need to test broadcast addresses */
 	err = pcap_compile(phandle, &fp, "port 123", 0, 0);

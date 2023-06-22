@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2019 The RADclock Project (see AUTHORS file)
  *
  * This file is part of the radclock program.
  */
@@ -135,12 +135,12 @@ struct radclock {			// variables of this type called `clock`
 
 	/* String identifying current hardware counter */
 	// Currently used in FBSD only, set in radclock_init_vcounter using sysctlbyname
-	char hw_counter[32];			// used to see if counter is a TSC or has changed
+	char hw_counter[32];			// records the current counter, see if is a TSC or has changed
 	
 	/* KV: the version of the {FF/RAD}clock kernel modifications */
 	// Interpretation of KV is OS dependent:   ( set to -1 if no support )
 	//			FBSD:    0,1,2,3
-	//			linux:	0,1,
+	//			linux:	0,1,2
 	int kernel_version;			// records output of found_ffwd_kernel_version()
 
 	/* Controls if algo's local counter period used when COMPuting time */
@@ -200,7 +200,7 @@ complex OS dependence, though what is covered here is the foundation of it.
 The main OS code dependency is controlled using the guard macros
 # WITH_FFKERNEL_{LINUX,FBSD,NONE} 
 only one of which is defined in the compile configuration.
-This is achieved by the includion of the lines
+This is achieved by the inclusion of the lines
 #undef/def WITH_FFKERNEL_FBSD
 #undef/def WITH_FFKERNEL_LINUX
 #undef/def WITH_FFKERNEL_NONE
@@ -228,13 +228,10 @@ The macros would ideally only appear within the above library files.
 One set of exceptions appear in pthread_dataproc.c, where
 WITH_FFKERNEL_NONE protects dummy definitions of IPC functions, and
 WITH_FFKERNEL_{LINUX,FBSD} maps NTP_ADJTIME to be the right function name.
-In addition WITH_FFKERNEL_FBSD protects code that only exists under FBSD:
-		pthread_dataproc.c: process_stamp   	deal with possible change of hw_counter
-
 
 More generically controlled OS dependence is very rare:
-  #ifdef linux						// once in radclock_private.h to define PRIV_DATA shortcut
-  #if defined (__FreeBSD__)	// twice in kclock.h so bintime, struct ffclock_estimate defined
+  #ifdef linux						// in radclock_private.h to define PRIV_DATA shortcut
+  #if defined (__FreeBSD__)	// in kclock.h so bintime, syscall functions, struct ffclock_estimate defined
 
 
 
@@ -343,19 +340,10 @@ KV=2	Removed:
 		  
 		Added:
 			- new semantics for vcount access (which breaks the description under KV=0 above):
-			 the standard ts field is the only timestamp present, and is a timeval
-			 or a vcount according to _SYSCLOCK or _RADCLOCK respectively.
-			 Hence the daemon Must now use _RADCLOCK in order to access raw timestamps.
-			
-	      - syscalls for all FF functions:
-	      
-syscall (kernel, kern_ffclock.c)  linked userspace fn		OS-dep wrapper {ffclock,kclock}-{fbsd,,}.c
----------------------------------------------------------------------------------------------------
-sys_ffclock_getcounter  		ffclock_getcounter(vcount) radclock_get_vcounter_syscall(clock,vc)
-sys_ffclock_setestimate			ffclock_setestimate(cest)	set_kernel_ffclock(clock, cest)
-sys_ffclock_getestimate			ffclock_getestimate(cest)	get_kernel_ffclock(clock, cest)
-
-
+			  the standard ts field is the only timestamp present, and is a timeval
+			  or a vcount according to _SYSCLOCK or _RADCLOCK respectively.
+			  Hence the daemon Must now use _RADCLOCK in order to access raw timestamps.
+	      - syscalls for all FF functions (see syscall section below)
 			- many advances on the kernel side, both for the FFclock suppport itself
 			  and bpf based timestamping, and tsmode processing. However these are
 			  FF changes rather than RAD changes.  See FFclockDoc_FreeBSD for details.
@@ -422,6 +410,41 @@ underlying physical counters.
 
 
 ==============================================================
+IPC:	syscalls, for KV>2  (FreeBSD)
+======================================
+
+syscall (kernel: kern_ffclock.c)  linked userspace fn		OS-dep wrapper {ffclock,kclock}-fbsd.c
+---------------------------------------------------------------------------------------------------
+sys_ffclock_getcounter  		ffclock_getcounter(vcount) radclock_get_vcounter_syscall(clock,vc)
+sys_ffclock_setestimate			ffclock_setestimate(cest)	set_kernel_ffclock(clock, cest)
+sys_ffclock_getestimate			ffclock_getestimate(cest)	get_kernel_ffclock(clock, cest)
+
+
+
+==============================================================
+IPC:	syscalls, for KV>1  (Linux)
+======================================
+
+Linux does not use syscalls for the get/set of FFdata in the kernel, instead
+using the lower latency netlink capability.  On the other hand it adds a new
+syscall, sys_get_vcounter_latency , however this is a diagnostic tool for syscall
+latency benchmarking, it is not used by the deamon or the library.
+
+syscall (kernel: time.c) 	userspace calling method					 			OS-dep wrapper kclock-linux.c
+---------------------------------------------------------------------------------------------------
+sys_get_vcounter  			syscall(LINUX_SYSCALL_GET_VCOUNTER,vc)  			radclock_get_vcounter_syscall(clock,vc)
+sys_get_vcounter_latency	syscall(LINUX_SYSCALL_GET_VCOUNTER_LATENCY,vc)  N/A (not used)
+
+The syscall numbers corresponding to these calls are made accessible via the macros
+LINUX_SYSCALL_GET_VCOUNTER*  in configure.ac .  In the case of sys_get_vcounter this
+value is fetched in radclock_init_vcounter_syscall()  and registered under the handle as
+clock->syscall_get_vcounter .
+It seems that access via userspace fn wrappers is not automatically provided, unlike in FreeBSD.
+
+
+
+
+==============================================================
 IPC:	FFcounter reading
 ======================================
 Main files:		radclock-read.c,	ffkernel-{,,,}.c
@@ -442,6 +465,10 @@ if bypass is desired and available, otherwise
 The FBSD KV dependence of the syscall access in radclock_get_vcounter_syscall is
 	KV=0,1:	via clock->syscall_get_vcounter  // initialized in radclock_init_vcounter_syscall
 	KV=2,3:	ffclock_getcounter					// no init, links to syscall: sys_ffclock_getcounter
+
+The Linux KV dependence of the syscall access in radclock_get_vcounter_syscall is
+	KV=0,1:	via clock->syscall_get_vcounter  // initialized in radclock_init_vcounter_syscall
+	KV=2:		ffclock_getcounter					// no init, links to syscall: sys_ffclock_getcounter
 
 
 
@@ -563,11 +590,37 @@ ffkernel-fbsd.c:
 	sysctlbyname("kern.sysclock.ffclock.version",&version,&size_ctl,NULL,0)) // detect,store, report KV
  has_vm_vcounter:
 	sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&passthrough_counter,..) // missing in kernel
+ get_currentcounter
+	sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)   // get current tc, see if changed
  radclock_init_vcounter:
-	sysctlbyname("kern.timecounter.hardware", &hw_counter[0], ..)   // look to see if tc there
 	sysctlbyname("kern.sysclock.available", &nameavail[0], &size_ctl, NULL, 0);
-	sysctlbyname("kern.sysclock.active", &nameavail[0], &size_ctl, NULL, 0);
-	sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",&passthrough_counter,..)
+	sysctlbyname("kern.sysclock.active",    &nameavail[0], &size_ctl, NULL, 0);
+	sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass", &passthrough_counter,..)
+
+
+==============================================================
+IPC:	Use of SYSFS for Linux, KV>0
+======================================
+
+The SYSFS device tree associated with FF components is summarized in FFclockDoc_Linux.
+A short summary of relevant devices is:
+
+ clocksource [ existing ]
+    attribute  passthrough_clocksource  [new]
+ ffclock   	 [ new ]
+    attribute  version_ffclock
+	 attribute	tsmode_ffclock
+
+Access by the FF clock daemon is via normal files. A complete list of sysfs use is:
+
+ffkernel-linux.c:
+ found_ffwd_kernel_version:
+   /sys/devices/system/ffclock/ffclock0/version_ffclock	// existence tested for in configure.ac
+ get_currentcounter:
+	/sys/devices/system/clocksource/clocksource0/current_clocksource
+ radclock_init_vcounter:
+	/sys/devices/system/clocksource/clocksource0/passthrough_clocksource
+
 
 
 
@@ -761,13 +814,12 @@ Simplified Code:
 		  set_kernel_fixedpoint(handle->clock, &fpdata))  // OS-dependent implementations
 			  ioctl(PRIV_DATA(clock)->dev_fd, BIOCSRADCLOCKFIXED, fpdata);
   else
-	  if HAVE_SYS_TIMEFFC_H			//	FBSD, KV>1
-	  		check for hw_counter change;
+	  check for hw_counter change;
 	  fill_ffclock_estimate				// transform rad_data to FFclock format
 	  set_kernel_ffclock					// wrapper for syscall
 		  ffclock_setestimate(cest)  	// links to syscall sys_ffclock_setestimate
 
-The push to the kernel is disabled if  conf->ajust_FFclock is set to OFF.
+The push to the kernel is disabled if  conf->adjust_FFclock is set to OFF.
 
 
 Pulling FFclock data from the kernel is only well supported under FBSD, KV>1

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2019 The RADclock Project (see AUTHORS file)
  *
  * This file is part of the radclock program.
  */
@@ -280,10 +280,10 @@ The code first echos the current counter and the mode taken from the kernel.
 If the mode is active, this implies that the TSC is the counter, and so the daemon
 can select rdtsc() (but this assumption is tested).
 If not, but if TSC is the tc counter and an internal configuration
-variable  activatePT  indicates bypass is desirable, then the daemon first activates
+variable  activateBP  indicates bypass is desirable, then the daemon first activates
 the mode.
 
-If activatePT=0, it is still easy to activate bypass at any time using
+If activateBP=0, it is still easy to activate bypass at any time using
 	sysctl kern.sysclock.ffclock.ffcounter_bypass=1
 
 The daemon calls radclock_init_vcounter but does not in fact use the counter reading calls,

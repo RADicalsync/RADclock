@@ -1,6 +1,5 @@
 /*
- * Copyright (C) 2006-2011 Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
  *
  * This file is part of the radclock program.
  *
@@ -45,56 +44,64 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-//#include <pcap.h>			// includes <net/bpf.h>
-#include <net/bpf.h>			// not needed if just using tsmode presets in radclock.h
+//#include <net/bpf.h>      // not needed if just using tsmode presets in radclock.h
+#include <pcap.h>           // includes <net/bpf.h>
 
 /* RADclock API and RADclock packet capture API */
-#include <radclock.h>		// includes <pcap.h>
+#include <radclock.h>       // includes <pcap.h>
 
 /* For testing, but is outside the library, don't need for basic use */
 #include <radclock-private.h>
-#include "kclock.h"              // struct ffclock_estimate, get_kernel_ffclock
+#include "kclock.h"         // struct ffclock_estimate, get_kernel_ffclock
 
 #define BPF_PACKET_SIZE   108
-
+#define PCAP_TIMEOUT   15   // [ms]  Previous value of 5 caused huge delays
 
 void
 usage(char *progname)
 {
 	fprintf(stdout, "%s: [-v] [-L] [-i <interface>] -o <filename> [-t <tsmode preset>]"
-	" [-c <custom tsmode code>] [-f <pkt filter string>] \n"
-					, progname);
+	" [-c <custom tsmode code>] [-f <pkt filter string>] \n", progname);
 	fflush(stdout);
 	exit(-1);
 }
 
 
+/* Use pcap to open a bpf device
+ * If a device not specified by caller, then look for one.
+ */
 pcap_t *
 initialise_pcap_device(char * network_device, char * filtstr)
 {
 	pcap_t * phandle;
 	struct bpf_program filter;
+	pcap_if_t *alldevs = NULL;
 	char errbuf[PCAP_ERRBUF_SIZE];  /* size of error message set in pcap.h */
 
-	/* pcap stuff, need to get access to global RADclock data */
-	/* Use pcap to open a bpf device */
+	/* Look for available device if needed */
 	if (network_device == NULL) {
-		//if network device has not been specified by user
-		if ((network_device = pcap_lookupdev(errbuf)) == NULL) {
-			/* Find free device */
-			fprintf(stderr,"Failed to find free device, pcap says: %s\n",errbuf);
+		//if ((network_device = pcap_lookupdev(errbuf)) == NULL) { // deprecated
+		if (pcap_findalldevs(&alldevs, errbuf) == -1) {
+			printf("Error in pcap_findalldevs: %s\n", errbuf);
 			exit(EXIT_FAILURE);
 		}
-		else
+		if (alldevs == NULL) {
+			fprintf(stderr,"Failed to find free device, pcap says: %s\n", errbuf);
+			exit(EXIT_FAILURE);
+		} else {
+			network_device = alldevs->name;
 			fprintf(stderr, "Found device %s\n", network_device);
+		}
 	}
 
 	/* No promiscuous mode, timeout on BPF = 5ms */
-	phandle = pcap_open_live(network_device, BPF_PACKET_SIZE, 0, 5, errbuf);
+	phandle = pcap_open_live(network_device, BPF_PACKET_SIZE, 0, PCAP_TIMEOUT, errbuf);
 	if (phandle == NULL) {
 		fprintf(stderr, "Open failed on live interface, pcap says: %s\n", errbuf);
 		exit(EXIT_FAILURE);
 	}
+	if (alldevs)
+		pcap_freealldevs(alldevs);    // network_device no longer needed
 
 	/* No need to test broadcast addresses */
 	if (filtstr == NULL) {
@@ -111,53 +118,11 @@ initialise_pcap_device(char * network_device, char * filtstr)
 		}
 	}
 	if (pcap_setfilter(phandle,&filter) == -1 )  {
-		fprintf(stderr, "pcap filter setting failure, pcap says: %s\n",
-				pcap_geterr(phandle));
+		fprintf(stderr, "pcap filter setting failure, pcap says: %s\n", pcap_geterr(phandle));
 		exit(EXIT_FAILURE);
 	}
 	return phandle;
 }
-
-
-/* This routine interprets the contents of the timeval-typed ts field from
- * the pcap header according to the BPF_T_FORMAT options, and converts the
- * timestamp to a long double.
- * The options where the tv_usec field have been used to store the fractional
- * component of time (MICROTIME (mus, the original tval format), and
- * and NANOTIME (ns)) both fit within either 32 or 64 bits tv_usec field,
- * whereas BINTIME can only work in the 64 bit case.
- */
-static void
-ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
-{
-	static int limit = 0;					// limit verbosity to once-only
-	//long double two32 = 4294967296.0;	// 2^32
-	
-	*timestamp = pcapts->tv_sec;
-	
-	switch (BPF_T_FORMAT(tstype)) {
-	case BPF_T_MICROTIME:
-		if (!limit) fprintf(stdout, "converting timestamp as a microtime\n");
-		*timestamp += 1e-6 * pcapts->tv_usec;
-		break;
-	case BPF_T_NANOTIME:
-		if (!limit) fprintf(stdout, "converting timestamp as a nanotime\n");
-		*timestamp += 1e-9 * pcapts->tv_usec;
-		break;
-	case BPF_T_BINTIME:
-		if (!limit) fprintf(stdout, "converting timestamp as a bintime\n");
-		if (sizeof(struct timeval) < 16)
-			fprintf(stderr, "Looks like timeval frac field is only 32 bits, ignoring!\n");
-		else {
-//			*timestamp += ((long double)((long long unsigned)pcapts->tv_usec))/( two32*two32 );
-			bintime_to_ld(timestamp, (struct bintime *) pcapts);	// treat the ts as a bintime
-		}
-		break;
-	}
-	
-	limit++;
-}
-
 
 
 int
@@ -169,12 +134,12 @@ main (int argc, char *argv[])
 	radclock_local_period_t	 lpm = RADCLOCK_LOCAL_PERIOD_OFF;
 
 	/* Pcap */
-	pcap_t *pcap_handle = NULL; /* pcap handle for interface */
-	char *network_device = NULL; /* points to physical device, eg xl0, em0, eth0 */
+	pcap_t *pcap_handle = NULL;     /* pcap handle for interface */
+	char *network_device = NULL;    /* points to physical device, eg em0 */
 
 	/* Captured packet */
-	struct pcap_pkthdr header;           /* The header that pcap gives us */
-	const u_char *packet;                /* The actual packet */
+	struct pcap_pkthdr header;      /* The header that pcap gives us */
+	const u_char *packet;           /* The actual packet */
 	vcounter_t vcount;
 	struct timeval tv;
 	long double currtime;
@@ -191,7 +156,7 @@ main (int argc, char *argv[])
 	 * overwritten by a command line argument.
 	 */
 	pktcap_tsmode_t tsmode = PKTCAP_TSMODE_FFNATIVECLOCK;
-	u_int custom = 0x3012;	// like PKTCAP_TSMODE_FFNATIVECLOCK but returns bintime
+	u_int custom = 0x3012;    // like PKTCAP_TSMODE_FFNATIVECLOCK but returns bintime
 
 	/* Misc */
 	int verbose_flag = 0;
@@ -203,7 +168,7 @@ main (int argc, char *argv[])
 	long double tvdouble=0 , cdiff, frac;
 
 	/* parsing the command line arguments */
-	while ((ch = getopt(argc, argv, "vo:i:t:c:Lf:")) != -1)
+	while ((ch = getopt(argc, argv, "vo:i:t:c:lf:")) != -1)
 		switch (ch) {
 		case 'o':
 			output_file = optarg;
@@ -220,7 +185,7 @@ main (int argc, char *argv[])
 		case 'c':    //  custom bpf tsmode selection, to override default
 			custom = (u_int) strtol(optarg,NULL,16);	// base16
 			break;
-		case 'L':    //  local period mode to ON, else the default is OFF
+		case 'l':    //  local period mode to ON, else the default is OFF
  			lpm = RADCLOCK_LOCAL_PERIOD_ON;
 			fprintf(stdout, "Activating plocal refinement if available.\n");
  			break;
@@ -252,9 +217,7 @@ main (int argc, char *argv[])
 	printf("----------------------------------------------------------------\n");
 
 	radclock_register_pcap(clock, pcap_handle);
-	
-	
-	
+
 	/* tsmode is typically set by use of the pktcap_tsmode presets described in
 	 * radclock.h   The classic choice is PKTCAP_TSMODE_FFNATIVECLOCK, which
 	 * uses the native FFclock.  This is the normal radclock, which is the most
@@ -271,16 +234,20 @@ main (int argc, char *argv[])
 	 * Alternative values can be set on the command line using -c .
 	 */
 	printf("------------------- Setting the packet tsmode ------------------\n");
-	//custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;	// this is PKTCAP_TSMODE_FFNATIVECLOCK
+	//custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // this is PKTCAP_TSMODE_FFNATIVECLOCK
 	//custom = BPF_T_NANOTIME  | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // same but upping to ns resolution
 	pktcap_set_tsmode(clock, pcap_handle, tsmode, custom);
-	
+	// Reuse custom as a tstype argument for  ts_format_to_double  below
+	if (tsmode == PKTCAP_TSMODE_FFNATIVECLOCK)
+		custom = 0x3010;
+//		custom = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // not available in any .h
+
+
 	printf("------------------- Checking what it was finally set to ---------\n");
 	pktcap_get_tsmode(clock, pcap_handle, &tsmode);
 	printf("----------------------------------------------------------------\n");
 
 
-	
 
 	/* Open output file to store output */
 	if ((output_fd = fopen(output_file,"w")) == NULL) {
@@ -291,7 +258,7 @@ main (int argc, char *argv[])
 		fprintf(output_fd, "%% column 1: RAW vcount underlying the timestamp\n");
 		fprintf(output_fd, "%% column 2: Time - Absolute time from kernel using chosen clock\n");
 		fprintf(output_fd, "%% column 3: Time - RADclock Absolute clock at that raw timestamp\n");
-		fprintf(output_fd, "%% column 4: diff:  kernel - radclock [s] \n");
+		fprintf(output_fd, "%% column 4: diff:  kernel - RADclock [s] \n");
 		fprintf(output_fd, "%% column 5: Fractional part of diff expressed in mus\n");
 		fprintf(output_fd, "%% column 6: Generation number of sms used\n");
 		fflush(output_fd);
@@ -311,8 +278,8 @@ main (int argc, char *argv[])
 
 		/* Block until the next packet, return the raw and ts timestmaps */
 		ret = radclock_get_packet(clock, pcap_handle, &header,
-				(unsigned char **) &packet, &vcount, &tv);
-				
+		    (unsigned char **) &packet, &vcount, &tv);
+
 		if (ret) {
 			fprintf(stderr, "WARNING: problem getting packet\n");
 			return 0;
@@ -324,52 +291,54 @@ main (int argc, char *argv[])
 			gen = sms->gen;
 		else
 			fprintf(stderr," Warning, SMS is down.\n");
-			
-			
+
+
 		/* Read the corresponding UTC time (with maximum resolution as a long
 		 * double `currtime'), based on the given vcount raw timestamp, from
 		 * your radclock.
 		 */
 		radclock_vcount_to_abstime(clock, &vcount, &currtime);
-		
+
 		/* Convert tv to double for comparison */
-		ts_format_to_double(&tv, custom, &tvdouble);
+		ts_format_to_double(&tv, custom, &tvdouble);    // custom currently ignored if Linux
 		cdiff = (currtime - tvdouble);
 		frac = cdiff - (int) cdiff;
-		
+
 		/* Output the kernel's absolute timestamp, the raw, radclocks's abs time */
 		fprintf(output_fd, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
-							(long long unsigned) vcount,
-							tv.tv_sec, (long long unsigned)tv.tv_usec,
-							currtime,
-							cdiff, 1e6*frac,
-							gen);
-							
+		    (long long unsigned) vcount,
+		    tv.tv_sec, (long long unsigned)tv.tv_usec,
+		    currtime,
+		    cdiff, 1e6*frac,
+		    gen);
+
 		fflush(output_fd);
-		
-		
+
 		if (verbose_flag) {
+			if (count_pkt == 0)
+				fprintf(stdout, "   Shared raw        kernel ts                "
+				    "        radclock ts       ( radclock  -  kernel  ) \n");
 			fprintf(stdout, "(%llu)  %ld.%.6llu  %.9Lf (diff %3.9Lf %3.1Lf mus) (smsgen: %u) \n",
-							(long long unsigned) vcount,
-							tv.tv_sec, (long long unsigned)tv.tv_usec,
-							currtime,
-							cdiff, 1e6*frac,
-							gen);
+			    (long long unsigned) vcount,
+			    tv.tv_sec, (long long unsigned)tv.tv_usec,
+			    currtime,
+			    cdiff, 1e6*frac,
+			    gen);
 		}
-		
+
 		/* Collect some statistics */
 		count_pkt++;
-		if ( fabs(1e9*frac) > 1 ) count_err_ns++;		// keep track of #errors worse than 1ns
+		if ( fabs(1e9*frac) > 1 ) count_err_ns++;   // keep track of #errors worse than 1ns
 
 		if (verbose_flag) {
 			if ( count_pkt%4 == 0 ) {
 				fprintf(stdout, "Number of packets sniffed : %ld  \t #(null, ns-err) = (%ld %ld) \n",
-									count_pkt, count_pkt_null, count_err_ns);
+				    count_pkt, count_pkt_null, count_err_ns);
 				fflush(stdout);
 			}
 		} else {
 			fprintf(stdout, "\r Number of packets sniffed : %ld  \t #(null, ns-err) = (%ld %ld)",
-									count_pkt, count_pkt_null, count_err_ns);
+			    count_pkt, count_pkt_null, count_err_ns);
 			fflush(stdout);
 		}
 	}

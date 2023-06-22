@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -56,7 +54,7 @@
 #define PTH_FIXEDPOINT_STOP		0x0001000
 #define PTH_VM_UDP_SERV_STOP		0x0010000
 #define PTH_TELEMETRY_CON_STOP	0x0100000
-#define PTH_SHM_CON_STOP			0x1000000
+#define PTH_SHM_CON_STOP		0x1000000
 #define PTH_STOP_ALL			(PTH_DATA_PROC_STOP | PTH_TRIGGER_STOP | \
 		PTH_FIXEDPOINT_STOP | PTH_NTP_SERV_STOP | PTH_VM_UDP_SERV_STOP | \
 		PTH_TELEMETRY_CON_STOP | PTH_SHM_CON_STOP)

@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -77,13 +75,7 @@ extern pthread_mutex_t alarm_mutex;
 extern pthread_cond_t alarm_cwait;
 
 
-/* Initilize the client socket info, create the timer
- * mRADclock:  is a mix of one-off and s-specific stuff.
- *		Probably best to keep a single fn and loop on s for needed bits
- *    Hopefully can stick with a single signal catching structure,
- *    but when signal caught and pass back to TRIGGER, how tell which s-timer
- *		caused it?
- */
+/* Initilize the client socket info, create the timer */
 int
 ntp_client_init(struct radclock_handle *handle)
 {
@@ -259,23 +251,25 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 		verbose(LOG_ERR, "NTPclient: xmt = last_time !! pkt id not unique! "
 							"last_time =%10.9Lf, time = %10.9Lf, vcount= %llu",
 							last_time, time, (long long unsigned) vcount);
-		return (1);  // return to try again
+		//return (1);  // return to try again
 	}
 
 	UTCld_to_NTPtime(&time, &xmt);
 
-	//verbose(LOG_DEBUG, "last nonce: %10ld.%10lu [s]", last_xmt.l_int, last_xmt.l_fra);
-	//verbose(LOG_DEBUG, "xmt  nonce: %10ld.%10lu [s]", xmt.l_int, xmt.l_fra);
+	//verbose(LOG_DEBUG, "last nonce: %10lu.%10lu [s]", last_xmt.l_int, last_xmt.l_fra);
+	//verbose(LOG_DEBUG, "xmt  nonce: %10lu.%10lu [s]", xmt.l_int, xmt.l_fra);
 
-	/* Check, and ensure, that xmt timestamp unique, needed for use as a nonce */
-	if ( last_time > 0 && xmt.l_int == last_xmt.l_int
-							 && xmt.l_fra == last_xmt.l_fra) {
+	/* Check, and ensure, that xmt timestamp unique, needed for use as a nonce
+	 * This only protects against uniqueness wrt the previous packet, not globally
+	 */
+//	if ( last_time > 0 && xmt.l_int == last_xmt.l_int
+	if ( xmt.l_int == last_xmt.l_int && xmt.l_fra == last_xmt.l_fra ) {
 		verbose(LOG_WARNING, "NTPclient: xmt nonce not unique: %10lu.%10lu [s], "
 				"vcount= %llu", xmt.l_int, xmt.l_fra, (long long unsigned) vcount);
 		xmt.l_fra += 1;
 		if (xmt.l_fra == 0) xmt.l_int += 1;		// if overflowed, advance second
 
-		verbose(LOG_WARNING,"  nonce fraction increased to %10lu [s]", xmt.l_fra);
+		verbose(LOG_WARNING,"  nonce fraction increased to %10lu", xmt.l_fra);
 	}
 
 	pkt->xmt.l_int = htonl(xmt.l_int);

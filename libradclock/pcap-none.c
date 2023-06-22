@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -55,5 +53,13 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 {
 	return (1);
 }
+
+
+void
+ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
+{
+	return;
+}
+
 
 #endif

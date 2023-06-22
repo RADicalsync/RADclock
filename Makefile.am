@@ -1,7 +1,5 @@
 #
-# Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
-# Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-# All rights reserved.
+# Copyright (C) 2006 The RADclock Project (see AUTHORS file)
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are met:
@@ -30,8 +28,8 @@ ACLOCAL_AMFLAGS = -I m4
 
 DIST_SUBDIRS = libradclock radclock examples man tests
 
-EXTRA_DIST = Documentation Tools FreeBSD python-module
-#EXTRA_DIST = python-module debian redhat
+EXTRA_DIST = Documentation Tools FreeBSD debian
+#EXTRA_DIST = python-module redhat
 
 
 SUBDIRS = $(DIST_SUBDIRS)
@@ -60,23 +58,26 @@ dist-hook:
 #	@echo "Copying the python module and wall clock into the tarball"
 #	cp $(srcdir)/python-gui/tscclock_wallclock.py $(distdir)/python-module/
 #	cp -R $(srcdir)/python-gui/img $(distdir)/python-module/
-	@echo "Copying kernel patches into the tarball"
-	mkdir $(distdir)/kernel-patches
-	mkdir $(distdir)/kernel-patches/freebsd
-	for d in `ls $(srcdir)/kernel/freebsd`; do \
-		mkdir $(distdir)/kernel-patches/freebsd/$$d; \
-		cp -r $(srcdir)/kernel/freebsd/$$d/* $(distdir)/kernel-patches/freebsd/$$d/ ; \
-	done
-	mkdir $(distdir)/kernel-patches/linux
-	for d in `ls $(srcdir)/kernel/linux`; do \
-		mkdir $(distdir)/kernel-patches/linux/$$d; \
-		cp $(srcdir)/kernel/linux/$$d/* $(distdir)/kernel-patches/linux/$$d/ ; \
-	done
-	mkdir $(distdir)/kernel-patches/raspbian
-	for d in `ls $(srcdir)/kernel/raspbian`; do \
-		mkdir $(distdir)/kernel-patches/raspbian/$$d; \
-		cp $(srcdir)/kernel/raspbian/$$d/* $(distdir)/kernel-patches/raspbian/$$d/ ; \
-	done
+	@echo "Copying kernel source and (perhaps) patches into the tarball"
+	mkdir -p $(distdir)/kernel-source/freebsd
+	cp -r $(srcdir)/kernel/freebsd/FreeBSD-1* $(distdir)/kernel-source/freebsd/
+#	for d in `ls $(srcdir)/kernel/freebsd`; do \
+#		mkdir $(distdir)/kernel-patches/freebsd/$$d; \
+#		cp -r $(srcdir)/kernel/freebsd/$$d/* $(distdir)/kernel-patches/freebsd/$$d/ ; \
+#	done
+	mkdir $(distdir)/kernel-source/linux
+	cp -r $(srcdir)/kernel/linux/4* $(distdir)/kernel-source/linux/
+	cp -r $(srcdir)/kernel/linux/5* $(distdir)/kernel-source/linux/
+#	for d in `ls $(srcdir)/kernel/linux`; do \
+#		mkdir $(distdir)/kernel-patches/linux/$$d; \
+#		cp $(srcdir)/kernel/linux/$$d/* $(distdir)/kernel-patches/linux/$$d/ ; \
+#	done
+	mkdir $(distdir)/kernel-source/rpi
+	cp -r $(srcdir)/kernel/rpi/4* $(distdir)/kernel-source/rpi/
+#	for d in `ls $(srcdir)/kernel/rpi`; do \
+#		mkdir $(distdir)/kernel-patches/rpi/$$d; \
+#		cp $(srcdir)/kernel/rpi/$$d/* $(distdir)/kernel-patches/rpi/$$d/ ; \
+#	done
 #	@echo "Pushing version number in packaging scripts"
 #	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/debian/changelog
 #	sed -i -e 's/_RADCLOCK_VERSION_/$(PACKAGE_VERSION)/' $(distdir)/redhat/radclock.spec

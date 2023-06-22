@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -72,8 +70,10 @@
 
 typedef uint64_t vcounter_t;
 
-typedef enum { RADCLOCK_LOCAL_PERIOD_ON, RADCLOCK_LOCAL_PERIOD_OFF }
-		radclock_local_period_t;
+typedef enum {
+	RADCLOCK_LOCAL_PERIOD_ON,
+	RADCLOCK_LOCAL_PERIOD_OFF,
+} radclock_local_period_t;
 
 struct radclock;
 

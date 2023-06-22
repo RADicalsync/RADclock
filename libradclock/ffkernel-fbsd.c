@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -36,9 +34,6 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
-#ifdef HAVE_SYS_TIMEFFC_H
-#include <sys/timeffc.h>	// this instead of kclock.h, as need syscalls only
-#endif
 #include <sys/socket.h>
 
 #include <net/ethernet.h>	// ETHER_HDR_LEN
@@ -56,27 +51,23 @@
 
 #include "radclock.h"
 #include "radclock-private.h"
+#include "kclock.h"
 #include "logger.h"
 
 
-
-
-/* Kernel patches version 2 set the timestamping mode with new IOCTL calls.
- * This is based on CURRENT, but should be standard soon for standard header
- * inclusion, and avoid repeating everything in here.
+/* I don't think this is needed, if HAVE_SYS_TIMEFFC_H fails,
+ * would be calling the ffkernel-none.c instead, or we should be!
  */
+//#ifndef HAVE_SYS_TIMEFFC_H
+//int ffclock_getcounter(vcounter_t *vcount)
+//{
+//	*vcount = 0;
+//	return EINVAL;
+//}
+//#endif
 
-#ifndef HAVE_SYS_TIMEFFC_H
-int ffclock_getcounter(vcounter_t *vcount)
-{
-	*vcount = 0;
-	return EINVAL;
-}
-#endif
 
-
-// TODO move out of the library and use IPC call to retrieve the value from
-// radclock if needed ??
+// TODO: move out of library and use IPC call to retrieve it if needed?
 int
 found_ffwd_kernel_version (void)
 {
@@ -88,19 +79,18 @@ found_ffwd_kernel_version (void)
 
 	/* Sysctl for version 2 and 3*/
 	ret = sysctlbyname("kern.sysclock.ffclock.version", &version, &size_ctl, NULL, 0);
+
+	/* For versions <2 */
 	if (ret < 0) {
 
 		/* Sysctl for version 1 */
 		ret = sysctlbyname("kern.ffclock.version", &version, &size_ctl, NULL, 0);
-		
 		if (ret < 0) {
 			/* The old way we used before explicit versioning. */
 			ret = sysctlbyname("net.bpf.bpf_pktcap_tsmode", &version, &size_ctl, NULL, 0);
-
 			if (ret == 0)
 				version = 0;
-			/* If all the above failed, no kernel support compiled */
-			else
+			else  // no kernel support
 				version = -1;
 		}
 	}
@@ -110,24 +100,16 @@ found_ffwd_kernel_version (void)
 
 	/* A quick reminder for the administrator. */
 	switch (version) {
-	/* Version 3 is version 2 with the extended BPF header */
-	case 3:
-	case 2:
-		break;
-
-	case 1:
 	case 0:
-		logger(RADLOG_WARNING, "The Feed-Forward kernel support is very old. "
-				"You should update your kernel.");
+	case 1:
+		logger(RADLOG_WARNING, "The Feed-Forward kernel support is very old, update! ");
 		break;
-
+	case 2:
+	case 3:
+		break;
 	case -1:
 	default:
-#if defined (__FreeBSD__) && defined (HAVE_SYS_TIMEFFC_H)
-		// not sure when this would ever run, typically WITH_FFKERNEL_FBSD would fail
-		logger(RADLOG_NOTICE, "sys/timeffc.h present, but ");
-#endif
-		logger(RADLOG_NOTICE, "No Feed-Forward kernel support detected");
+		logger(RADLOG_NOTICE, "Feed-Forward kernel support not recognized");
 		break;
 	}
 	return (version);
@@ -153,10 +135,9 @@ has_vm_vcounter(struct radclock *clock)
 	case 2:
 		size_ctl = sizeof(passthrough_counter);
 		ret = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",
-				&passthrough_counter, &size_ctl, NULL, 0);
+		    &passthrough_counter, &size_ctl, NULL, 0);
 		if (ret == -1) {
-			logger(RADLOG_ERR, "Cannot find kern.sysclock.ffclock.ffcounter_bypass "
-					"in sysctl");
+			logger(RADLOG_ERR, "Cannot find kern.sysclock.ffclock.ffcounter_bypass in sysctl");
 			return (0);
 		}
 		break;
@@ -164,7 +145,7 @@ has_vm_vcounter(struct radclock *clock)
 	case 1:
 		size_ctl = sizeof(passthrough_counter);
 		ret = sysctlbyname("kern.timecounter.passthrough", &passthrough_counter,
-				&size_ctl, NULL, 0);
+		    &size_ctl, NULL, 0);
 		if (ret == -1) {
 			logger(RADLOG_ERR, "Cannot find kern.timecounter.passthrough in sysctl");
 			return (0);
@@ -177,23 +158,21 @@ has_vm_vcounter(struct radclock *clock)
 	}
 
 	if (passthrough_counter == 0) {
-		logger(RADLOG_ERR, "Timecounter not in pass-through mode. Cannot init "
-				"virtual machine mode");
+		logger(RADLOG_ERR, "Timecounter not in passthrough mode. Cannot init virtual machine mode");
 		return (0);
 	}
 	logger(RADLOG_NOTICE, "Found timecounter in pass-through mode");
 
 	size_ctl = sizeof(timecounter);
 	ret = sysctlbyname("kern.timecounter.hardware", &timecounter[0],
-			&size_ctl, NULL, 0);
+	    &size_ctl, NULL, 0);
 	if (ret == -1) {
 		logger(LOG_ERR, "Cannot find kern.timecounter.hardware in sysctl");
 		return (0);
 	}
 
 	if ((strcmp(timecounter, "TSC") != 0) && (strcmp(timecounter, "ixen") != 0))
-		logger(RADLOG_WARNING, "Timecounter is neither TSC nor ixen. "
-				"There must be something wrong!!");
+		logger(RADLOG_WARNING, "Timecounter is neither TSC nor ixen - something wrong!!");
 	else
 		logger(RADLOG_WARNING, "Timecounter is %s", timecounter);
 
@@ -202,22 +181,26 @@ has_vm_vcounter(struct radclock *clock)
 
 
 
-
-# ifdef HAVE_RDTSC
-#  ifdef HAVE_MACHINE_CPUFUNC_H
-#   include <machine/cpufunc.h>
-#  else
-#   error "FreeBSD with rdtsc() defined but no machine/cpufunc.h header"
-#  endif
-# else
-static inline uint64_t	// same definition as in cpufunc.h
-rdtsc(void)
-{
-    u_int32_t low, high;
-    __asm __volatile("rdtsc" : "=a" (low), "=d" (high));
-    return (low | ((u_int64_t)high << 32));
-}
-# endif
+/* Ensure rdtsc() is defined
+ * If we can't find it, we define here based on the definition in cpufunc.h
+ */
+#define DefinedLocalRDTSC 0
+#ifdef HAVE_RDTSC
+#	ifdef HAVE_MACHINE_CPUFUNC_H
+# 		include <machine/cpufunc.h>
+#	else
+# 		error "FreeBSD with rdtsc() defined but no machine/cpufunc.h header"
+#	endif
+#else
+#	define DefinedLocalRDTSC 1
+	static inline uint64_t	// same definition as in cpufunc.h
+	rdtsc(void)
+	{
+		 u_int32_t low, high;
+		 __asm __volatile("rdtsc" : "=a" (low), "=d" (high));
+		 return (low | ((u_int64_t)high << 32));
+	}
+#endif
 
 inline vcounter_t
 radclock_readtsc(void)
@@ -225,7 +208,7 @@ radclock_readtsc(void)
 	return (vcounter_t) rdtsc();
 }
 
-// TODO we could afford some cleaning in here
+/* First argument not used, needed to match template for clock->get_vcounter */
 inline int
 radclock_get_vcounter_rdtsc(struct radclock *clock, vcounter_t *vcount)
 {
@@ -239,7 +222,7 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 {
 	struct module_stat stat;
 	int err;
-	
+
 	switch (clock->kernel_version) {
 	case 0:
 	case 1:
@@ -259,9 +242,10 @@ radclock_init_vcounter_syscall(struct radclock *clock)
 	/* kernel provides ffclock_getcounter through libc */
 	case 2:
 	case 3:
+		logger(RADLOG_NOTICE, "ffclock_getcounter syscall available");
 		break;
-
 	default:
+		logger(RADLOG_ERR, "ffclock_getcounter syscall unavailable");
 		return (1);
 	}
 	return (0);
@@ -291,14 +275,47 @@ radclock_get_vcounter_syscall(struct radclock *clock, vcounter_t *vcount)
 	}
 
 	if (ret < 0) {
-		logger(RADLOG_ERR, "error on syscall get_vcounter: %s", strerror(errno));
+		logger(RADLOG_ERR, "error on syscall ffclock_getcounter: %s", strerror(errno));
 		return (-1);
 	}
 
 	return (0);
 }
 
+/* Get the current hardware counter used by the kernel.
+ * If it has changed, record the new one and flag this.
+ * Return codes:  {-1,0,1} = {couldn't access, no change or initialized, changed}
+ * Assumes KV>1 .
+ */
+int get_currentcounter(struct radclock *clock)
+{
+	char hw_counter[32];
+	size_t size_ctl;
+	int ret;
 
+	/* Get name of current counter */
+	size_ctl = sizeof(hw_counter);
+	ret = sysctlbyname("kern.timecounter.hardware", &hw_counter[0], &size_ctl, NULL, 0);
+	if (ret == -1) {
+		logger(RADLOG_ERR, "Cannot find kern.timecounter.hardware from sysctl");
+		return (-1);
+	}
+
+	/* If different from registered value, register the new one */
+	if (strcmp(clock->hw_counter, hw_counter) != 0) {
+		if ( clock->hw_counter[0] == '\0' ) {
+			logger(RADLOG_NOTICE, "Hardware counter used is %s", hw_counter);
+			strcpy(clock->hw_counter, hw_counter);
+		}	else {
+			logger(RADLOG_WARNING, "Hardware counter has changed : (%s -> %s)",
+			    clock->hw_counter, hw_counter);
+			strcpy(clock->hw_counter, hw_counter);
+			return (1);
+		}
+	}
+
+	return (0);
+}
 
 
 /*
@@ -312,27 +329,22 @@ radclock_init_vcounter(struct radclock *clock)
 	int bypass_active;
 	int ret;
 
-	/* Retrieve name of hardware counter used by the kernel timecounter */
-	size_ctl = sizeof(clock->hw_counter);
-	ret = sysctlbyname("kern.timecounter.hardware", &clock->hw_counter[0],
-		&size_ctl, NULL, 0);
-	if (ret == -1) {
-		logger(RADLOG_ERR, "Cannot find kern.timecounter.hardware in sysctl");
-		return (-1);
-	}
-	logger(RADLOG_NOTICE, "Timecounter used is %s", clock->hw_counter);
-
-	/* Retrieve available and current sysclock [a reasonable place to do this] */
+	/* Retrieve available and current sysclock.
+	 * Not the job of this function, but a reasonable place to do this. */
 	char nameavail[32];
 	size_ctl = sizeof(nameavail);
 	sysctlbyname("kern.sysclock.available", &nameavail[0], &size_ctl, NULL, 0);
-	logger(RADLOG_NOTICE, "\t Available sysclocks: %s", nameavail);
+	logger(RADLOG_NOTICE, "Available sysclocks: %s", nameavail);
 
 	size_ctl = sizeof(nameavail);
 	sysctlbyname("kern.sysclock.active", &nameavail[0], &size_ctl, NULL, 0);
 	logger(RADLOG_NOTICE, "\t Active sysclock: %s", nameavail);
 	//logger(RADLOG_NOTICE, "\t Active sysclock: %s [sn = %u]", nameavail, strlen(nameavail));
 
+
+	/* Retrieve and register name of counter used by the kernel timecounter */
+	if ( get_currentcounter(clock) == -1 )
+		return (-1);
 
 	/* Retrieve value of kernel PT mode */
 	bypass_active = 0;
@@ -343,10 +355,9 @@ radclock_init_vcounter(struct radclock *clock)
 
 	case 1:
 		size_ctl = sizeof(bypass_active);
-		ret = sysctlbyname("kern.timecounter.passthrough", &bypass_active,
-				&size_ctl, NULL, 0);
+		ret = sysctlbyname("kern.timecounter.passthrough", &bypass_active, &size_ctl, NULL, 0);
 		if (ret == -1) {
-			logger(RADLOG_ERR, "Cannot find kern.timecounter.passthrough in sysctl");
+			logger(RADLOG_ERR, "Cannot find kern.timecounter.passthrough from sysctl");
 			return (-1);
 		}
 		break;
@@ -354,8 +365,7 @@ radclock_init_vcounter(struct radclock *clock)
 	case 2:
 	case 3:
 		size_ctl = sizeof(bypass_active);
-		ret = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass",
-			&bypass_active, &size_ctl, NULL, 0);
+		ret = sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass", &bypass_active, &size_ctl, NULL, 0);
 		if (ret == -1) {
 			logger(RADLOG_ERR, "Cannot find kern.sysclock.ffclock.ffcounter_bypass");
 			bypass_active = 0;
@@ -366,17 +376,22 @@ radclock_init_vcounter(struct radclock *clock)
 
 
 	/* Make decision on mode and assign corresponding get_vcounter function.
-	 *  Here activatePT authorizes deamons to activate the kernal PT option if
+	 *  Here activateBP authorizes deamons to activate the kernal PT option if
 	 *  appropriate, but not to deactivate it.
-	 *  Sufficient for now to keep activatePT an internal parameter (see algo Doc)
+	 *  Sufficient for now to keep activateBP an internal parameter (see algo Doc)
 	 *  If want to make a config parameter later, must read it in clock_init_live
 	 *  where handle->conf is available and pass here as 2nd argument.
 	 */
-	int activatePT = 0;		// user's intention regarding passthrough=bypass
+	int activateBP = 0;		// user's intention regarding passthrough=bypass
 
-	if ( (bypass_active == 0 && activatePT == 0) || clock->kernel_version<3) {
+	if ( DefinedLocalRDTSC )
+		logger(RADLOG_NOTICE, "rdtsc() not found, have defined locally in daemon");
+	else
+		logger(RADLOG_NOTICE, "system rdtsc() found");
+
+	if ( (bypass_active == 0 && activateBP == 0) || clock->kernel_version < 3) {
 		clock->get_vcounter = &radclock_get_vcounter_syscall;
-		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter with syscall.");
+		logger(RADLOG_NOTICE, "Initialising get_vcounter with syscall.");
 		//goto profileit;
 		return (0);
 	}
@@ -394,7 +409,7 @@ radclock_init_vcounter(struct radclock *clock)
 			sysctlbyname("kern.sysclock.ffclock.ffcounter_bypass", NULL, NULL, &bypass_active, size_ctl);
 		}
 		clock->get_vcounter = &radclock_get_vcounter_rdtsc;
-		logger(RADLOG_NOTICE, "Initialising radclock_get_vcounter using rdtsc()");
+		logger(RADLOG_NOTICE, "Initialising get_vcounter using rdtsc()");
 	}
 
 //profileit:
@@ -450,7 +465,7 @@ radclock_init_vcounter(struct radclock *clock)
 //	}
 //
 //	} // HAVE_RDTSC
-	
+
 
 	return (0);
 }

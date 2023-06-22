@@ -1,7 +1,5 @@
 dnl
-dnl Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
-dnl Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
-dnl All rights reserved.
+dnl Copyright (C) 2006 The RADclock Project (see AUTHORS file)
 dnl
 dnl Redistribution and use in source and binary forms, with or without
 dnl modification, are permitted provided that the following conditions are met:
@@ -38,7 +36,7 @@ dnl This should set the target_cpu, target_os and target_vendor variables
 AC_CANONICAL_TARGET
 
 dnl Init and check for automake version
-AM_INIT_AUTOMAKE(1.8)
+AM_INIT_AUTOMAKE([1.8 foreign])
 
 dnl Init libtool magic
 dnl TODO: see if we need to activate this or not
@@ -73,7 +71,7 @@ LIBRADCLOCK_LIBS="\$(top_builddir)/libradclock/libradclock.la"
 
 
 dnl ===========================================================================
-dnl Extra option to the configure script
+dnl Extra options to the configure script
 dnl ===========================================================================
 
 AC_ARG_WITH([jdebug],
@@ -86,12 +84,26 @@ if test "$jdebug" = "yes"; then
 	AC_DEFINE([WITH_JDEBUG], [1], [Define to 1 if with extra debug output])
 fi
 
-dnl Kernel support forced or auto-detect
-AC_ARG_WITH([radclock-kernel],
-			[AS_HELP_STRING([--with-radclock-kernel],
-							[Force compilation of radclock kernel support])],
-							[tscexts=yes],
-							[tscexts=no])
+dnl Determination of the kind of FF kernel support to compile for
+dnl  - either specified via the defined option (FFexts=yes; osversion passed as argument)
+dnl  - or auto-detected later (FFexts=no now, (FFexts,osversion) autodetect attempted later)
+dnl Note if no arg is passed, then bizarrely $withval evaluates to "yes" !
+AC_ARG_WITH([FFclock-kernel],
+			[AS_HELP_STRING([--with-FFclock-kernel],
+						  [Specify version of FFclock kernel support])],
+		  [if test "$withval" = "yes"; then
+				osversion=4.19.0
+				FFexts=yes
+		  else
+				osversion=$withval
+				FFexts=yes
+		  fi],
+		  [FFexts=no])
+
+
+
+
+
 
 
 
@@ -103,7 +115,7 @@ AC_SUBST([ADD_INCLS])
 AC_SUBST([ADD_LIBS])
 AC_SUBST([PACKAGE_NAME])
 AC_SUBST([PACKAGE_VERSION])
-AC_SUBST([CFLAGS], "${CFLAGS} -Wall -g -I /usr/src/sys -I /usr/local/include/ -lwolfssl -L/usr/local/lib/")
+AC_SUBST([CFLAGS], "${CFLAGS} -Wall -g -I /usr/src/sys -I /usr/local/include/ -I /usr/include/libnl3 -lwolfssl -L/usr/local/lib/")
 
 
 
@@ -136,65 +148,50 @@ AC_CHECK_HEADERS([ifaddrs.h])
 dnl ===========================================================================
 dnl rdtsc() detection. Always messy, different for OS detected by autoconf
 dnl ===========================================================================
-case $target_os in
 
-	freebsd*)
-		AC_CHECK_HEADERS([sys/timeffc.h])
-		AC_CHECK_HEADERS([sys/types.h])
-		AC_CHECK_HEADERS([machine/cpufunc.h],
-						 [],
-						 [],
-						 [#ifdef HAVE_SYS_TYPES_H
-						  #include <sys/types.h>
-						  #endif])
-		AC_CHECK_DECL([rdtsc],
-					  [AC_DEFINE([HAVE_RDTSC],
-								 [1],
-								 [Define to 1 if you have rdtsc()])],
-					  [],
-					  [#include <sys/types.h>
-					   #include <machine/cpufunc.h>
-					   ])
-		;;
+if test "$target_cpu" = "aarch64" || "$target_cpu" = "arm64"; then
+	AC_DEFINE([NO_TSC_ONPLATFORM], [1], [No TSC on platform, period])
+else
+	case $target_os in
 
-dnl 3 headers to test in Linux, but seems it is not available anymore anyway
-	linux*)
-		AC_CHECK_HEADER([asm/msr.h])
-		if test "$ac_cv_header_asm_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtscll],
-						  [AC_DEFINE([HAVE_RDTSCLL_ASM],
+		freebsd*)
+			AC_CHECK_HEADERS([sys/timeffc.h])
+			AC_CHECK_HEADERS([sys/types.h])
+			AC_CHECK_HEADERS([machine/cpufunc.h],
+							 [],
+							 [],
+							 [#ifdef HAVE_SYS_TYPES_H
+							  #include <sys/types.h>
+							  #endif])
+			AC_CHECK_DECL([rdtsc],
+						  [AC_DEFINE([HAVE_RDTSC],
 									 [1],
-									 [Define to 1 if rdtscll() in asm/msr.h])],
+									 [Define to 1 if you have found rdtsc()])],
 						  [],
-						  [#include <asm/msr.h>])
-		fi
+						  [#include <sys/types.h>
+							#include <machine/cpufunc.h>
+							])
+			;;
 
-		AC_CHECK_HEADER([asm-x86/msr.h])
-		if test "$ac_cv_header_asm_x86_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtscll],
-						  [AC_DEFINE([HAVE_RDTSCLL_ASM_X86],
-									 [1],
-									 [Define to 1 if rdtscll() in asm-x86/msr.h])],
-						  [],
-						  [#include <asm-x86/msr.h>])
-		fi
+		linux*)
+			dnl WIP: This finds asm/msr.h, but not sure it has what we need
+			dnl Previously also checked for c_cv_header_asm_x86{,_64}_msr_h
+			AC_CHECK_HEADER([asm/msr.h])
+			if test "$ac_cv_header_asm_msr_h" = "yes"; then
+				AC_CHECK_DECL([rdtsc],
+							  [AC_DEFINE([HAVE_RDTSC_ASM],
+										 [1],
+										 [Define to 1 if rdtsc() in asm/msr.h])],
+							  [],
+							  [#include <asm/msr.h>])
+			fi
+			;;
 
-		AC_CHECK_HEADER([asm-x86_64/msr.h])
-		if test "$ac_cv_header_asm_x86_64_msr_h" = "yes"; then
-			AC_CHECK_DECL([rdtscll],
-						  [AC_DEFINE([HAVE_RDTSCLL_ASM_X86_64],
-									 [1],
-									 [Define to 1 if rdtscll() in asm-x86_64/msr.h])],
-						  [],
-						  [#include <asm-x86_64/msr.h>])
-		fi
-		;;
+		*)
+			;;
+	esac
 
-	*)
-		;;
-esac
-
-
+fi
 
 
 
@@ -260,19 +257,20 @@ AC_CHECK_LIB([xenstore],
 
 
 dnl ===========================================================================
-dnl OS version, RADclock patched? and version
+dnl Autodetection of OS version, FFkernel detection, and FFkernel version
+dnl "ffsupportversion" is local to this file, only used for verbose output
 dnl ===========================================================================
 ffsupportversion=none
-if test "$tscexts" = "no"; then
+if test "$FFexts" = "no"; then
 case "$target_os" in
 	linux*)
 		osversion=$(uname -r | sed -e 's/\([0-9]*.[0-9]*.[0-9]*\)-.*/\1/')
-		if test -e /sys/devices/system/ffclock/ffclock0/version; then
-			tscexts=yes
-			ffsupportversion=`cat /sys/devices/system/ffclock/ffclock0/version`
+		if test -e /sys/devices/system/ffclock/ffclock0/version_ffclock; then
+			FFexts=yes
+			ffsupportversion=`cat /sys/devices/system/ffclock/ffclock0/version_ffclock`
 		else
 			if test -e  /proc/sys/net/core/radclock_default_tsmode ; then
-				tscexts=yes
+				FFexts=yes
 				ffsupportversion=0
 			fi
 		fi
@@ -284,16 +282,16 @@ case "$target_os" in
 		# Version 2 and 3
 		ffsupportversion=`sysctl -n kern.sysclock.ffclock.version`
 		if test $ffsupportversion ; then
-			tscexts=yes
+			FFexts=yes
 		else
 			# Version 1
 			ffsupportversion=`sysctl -n kern.ffclock.version`
 			if test $ffsupportversion ; then
-				tscexts=yes
+				FFexts=yes
 			else
 				ext=`sysctl -n net.bpf.bpf_radclock_tsmode`
 				if test $ext ; then
-					tscexts=yes
+					FFexts=yes
 					ffsupportversion=0
 				fi
 			fi
@@ -302,7 +300,7 @@ case "$target_os" in
 esac
 fi
 
-AM_CONDITIONAL([MK_FFKERNEL], [test "x$tscexts" = "xyes"])
+AM_CONDITIONAL([MK_FFKERNEL], [test "x$FFexts" = "xyes"])
 
 
 
@@ -317,6 +315,7 @@ case $target_os in
 
 	linux*)
 		netlink=yes
+#		genl=yes
 
 		AC_CHECK_HEADERS([linux/netlink.h],
 						 [],
@@ -330,37 +329,26 @@ case $target_os in
 						 [],
 						 [netlink=no],
 						 [#include <sys/socket.h>])
-		AC_CHECK_LIB([nl], [nl_handle_alloc], [], netlink=no)
-		AC_MSG_CHECKING([nl_recv for four or three params])
-		AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[#include <sys/socket.h>
-											 #include <linux/netlink.h>
-											 #include <netlink/netlink.h>]],
-										   [[nl_recv(NULL,NULL,NULL,NULL);]])],
-						  [nl_recv=four],
-						  [nl_recv=unknown])
-		if test "${nl_recv}" = "four"; then
-			AC_DEFINE([WITH_NL_RECV_FOUR_PARM], [], [nl_recv takes 4 params])
-			AC_MSG_RESULT([four])
-		else
-			AC_MSG_RESULT([three])
-		fi
+		AC_CHECK_LIB([nl-3], [nl_socket_alloc], [], [netlink=no])
+		AC_CHECK_LIB([nl-genl-3], [genl_ctrl_resolve], [], [genl=no])
+#		AC_SEARCH_LIBS([nl_socket_alloc], [nl3,nl-3,nl3_3.4], [], [netlink=no])
 
 		if test "${netlink}" = "no"; then
 			AC_DEFINE([WITH_FFKERNEL_NONE],
 					  [1],
-					  [Define to 1 if NOT detected patched radclock kernel])
+					  [Define to 1 if NOT detected patched FFclock kernel])
 			AM_CONDITIONAL([MK_FFKERNEL_NONE], [test 1 = 1])
 		else
-			if test "$tscexts" = "yes"; then
-				LIBRADCLOCK_LIBS="${LIBRADCLOCK_LIBS} -lnl"
+			if test "$FFexts" = "yes"; then
+				LIBRADCLOCK_LIBS="${LIBRADCLOCK_LIBS} -lnl-3 -lnl-genl-3"
 				AC_DEFINE([WITH_FFKERNEL_LINUX],
 						  [1],
-						  [Define to 1 if detected patched radclock kernel])
+						  [Define to 1 if detected patched FFclock kernel])
 				AM_CONDITIONAL([MK_FFKERNEL_LINUX], [test 1 = 1])
 			else
 				AC_DEFINE([WITH_FFKERNEL_NONE],
 						  [1],
-						  [Define to 1 if NOT detected patched radclock kernel])
+						  [Define to 1 if NOT detected patched FFclock kernel])
 				AM_CONDITIONAL([MK_FFKERNEL_NONE], [test 1 = 1])
 			fi
 		fi
@@ -369,25 +357,25 @@ case $target_os in
 
 	freebsd*)
 
-		if test "$tscexts" = yes; then
+		if test "$FFexts" = yes; then
 			AC_DEFINE([WITH_FFKERNEL_FBSD],
 					  [1],
-					  [Define to 1 if detected patched radclock kernel])
+					  [Define to 1 if detected patched FFclock kernel])
 			AM_CONDITIONAL([MK_FFKERNEL_FBSD], [test 1 = 1])
 		else
 			AC_DEFINE([WITH_FFKERNEL_NONE],
 					  [1],
-					  [Define to 1 if NOT detected patched radclock kernel])
+					  [Define to 1 if NOT detected patched FFclock kernel])
 			AM_CONDITIONAL([MK_FFKERNEL_NONE], [test 1 = 1])
 		fi
 		;;
 
-dnl	 Darwin* and other OS without kernel extensions
+dnl	Darwin* and other OS without kernel extensions
 dnl	darwin*|unknown*)
 	*)
 		AC_DEFINE([WITH_FFKERNEL_NONE],
 				  [1],
-				  [Define to 1 if NOT detected patched radclock kernel])
+				  [Define to 1 if NOT detected patched FFclock kernel])
 		AM_CONDITIONAL([MK_FFKERNEL_NONE], [test 1 = 1])
 		;;
 esac
@@ -400,13 +388,15 @@ AC_SUBST([LIBRADCLOCK_LIBS])
 
 dnl ===========================================================================
 dnl Initialise IOCTLs
+dnl It would be ideal to extract these from already patched kernel files, but
+dnl this is simple and works without the need for installed FF files.
 dnl ===========================================================================
 
 ioctlcount=0
 syscall_get_vcounter_number=0
 syscall_get_vcounter_latency_number=0
 
-if test "$tscexts" = "yes"; then
+if test "$FFexts" = "yes"; then
 case "$target_os" in
 	freebsd*)
 		case "$osversion" in
@@ -429,7 +419,7 @@ case "$target_os" in
 		esac
 		AC_DEFINE_UNQUOTED([FREEBSD_RADCLOCK_IOCTL],
 						   [$ioctlcount],
-						   [Define the first radclock specific ioctl number
+						   [Define the first FFclock specific ioctl number
 							(freebsd specific)])
 		;;
 	
@@ -539,11 +529,43 @@ case "$target_os" in
 					;;
 				esac
 			;;	
+			4.19.*)
+				# SYSCALLS now named ffclock_getcounter_ but keep old names here
+				case "$target_cpu" in
+					i386 | i486 | i586 | i686)
+						syscall_get_vcounter_number=387
+						syscall_get_vcounter_latency_number=388
+					;;
+					x86_64)
+						syscall_get_vcounter_number=335
+						syscall_get_vcounter_latency_number=336
+					;;
+					aarch64 | arm64)
+						syscall_get_vcounter_number=294
+						syscall_get_vcounter_latency_number=295
+					;;
+				esac
+			;;
+			5.10.*)
+				case "$target_cpu" in
+					i386 | i486 | i586 | i686)
+						syscall_get_vcounter_number=441
+						syscall_get_vcounter_latency_number=442
+					;;
+					x86_64)
+						syscall_get_vcounter_number=441
+						syscall_get_vcounter_latency_number=442
+					;;
+				esac
+			;;
+			# Set to zero and raise an error if it's not a supported kernel
 			*)
 				syscall_get_vcounter_number=0
 				syscall_get_vcounter_latency_number=0
+				AC_MSG_ERROR([No valid syscall numbers found for kernel version $osversion!])
 			;;
 		esac
+		# These are internal names, not necc. the actual syscall names
 		AC_DEFINE_UNQUOTED([LINUX_SYSCALL_GET_VCOUNTER],
 						   [$syscall_get_vcounter_number],
 						   [Define get_vcounter_syscall number (Linux specific)])
@@ -570,27 +592,26 @@ AC_OUTPUT
 AC_MSG_NOTICE([----------------------------------------])
 AC_MSG_NOTICE([RADClock version $PACKAGE_VERSION])
 AC_MSG_NOTICE([Found target arch: $target_cpu])
-AC_MSG_NOTICE([Compiling for $target_os])
-AC_MSG_NOTICE([Feed-forward kernel: $tscexts (version: $ffsupportversion)])
+AC_MSG_NOTICE([Compiling for $target_os, osversion: $osversion])
+AC_MSG_NOTICE([Feed-forward kernel: $FFexts (version: $ffsupportversion)])
 
 case $target_os in
 	
 	linux*)
-	if test "$tscexts" = yes
-	then
+	if test "$FFexts" = yes; then
 		AC_MSG_NOTICE([get_counter syscall number: $syscall_get_vcounter_number])
-		AC_MSG_NOTICE([get_counter_latency syscall number:
-					   $syscall_get_vcounter_latency_number])
-		if test "$netlink" = no
-		then
-		AC_MSG_NOTICE([**ERROR** - Netlink library (libnl) not found])
+		AC_MSG_NOTICE([get_counter_latency syscall number: $syscall_get_vcounter_latency_number])
+		if test "$netlink" = no; then
+			AC_MSG_NOTICE([**ERROR** - Netlink library (libnl) not found])
+		fi
+		if test "$genl" = no; then
+			AC_MSG_NOTICE([**ERROR** - Generic Netlink library (genl) not found])
 		fi
 	fi
 	;;
 
 	freebsd*)
-	if test "$tscexts" = yes
-	then
+	if test "$FFexts" = yes; then
 		AC_MSG_NOTICE([ioctl Count Starting At $ioctlcount])
 	fi
 	;;

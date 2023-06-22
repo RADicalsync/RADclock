@@ -1,0 +1,397 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+#####
+# This script is the glue that enables FFfile ports - kept in the normal RADclock,
+# repo, to easily track FreeBSD CURRENT, residing under /usr/src in a suitable VM.
+# When a port is ready, this script is used to commit them in both repos, then
+# update main, check to see if any FFfiles have changed again, and seed the next
+# port iteration.
+# The overall process is seeded by a once-ever call to portloop with the
+# SeedingCURRENT parameter set.
+#
+# NOTE: By `port' here we mean both a WD holding a port just made after retracking
+# some commits in main, or simply the current state of the CURRENT WD in RADrepo,
+# due to subsequent changes made for whatever reason (committed or not).
+# It is not retrack's job to reproduce the commit sequence of RADrepo, only to
+# take a given tipofspear WD there (already tested and hence present in the VM
+# as well), and to update it (in both repos) wrt main advancement.
+# Thus if considerable work has been done on CURRENT in RADrepo since a port
+# (hence probably much of it committed), the WD (commited or not) is still
+# suitable for being retracked at any time.  Of course, retrack can also be used
+# when there are No changes in RADrepo, just to see how far ahead main has moved,
+# and whether/how FFiles are impacted.
+#
+# Draft ports are perfected in the usual way within Xcode, then tested in the VM
+# via the VM scripts as usual. When the OSv in the VM has 'CURRENT' in it,
+# update_workingFFsource knows to pull the source from kernel/freebsd/FreeBSD-CURRENT
+#
+# Retrack Quick summary:
+#   Check phase:  examines both repos and gives info
+#                 performs checks, option to exit
+#   Phase 1:  commit on RADrepo if needed
+#             commit on FFport  if needed
+#             advance main
+#             check changes sent last FFport base, option to exit
+#   Phase 2:  rebase FFport to seed next port, matching WD reseed on RADrepo
+#
+#
+# The following starting point is assumed:
+# VM:
+#   CURRENT is cloned to a 'CURRrepo' in the VM then copied to /usr/src where
+#   it and FF-patched current be built directly.
+#   Available branches are
+#     main:    pulled to keep up to date, never pushed to
+#     FFport:  a local branch used to test/finalise the current draft/port
+#   FFport is only ever one commit away from main because of ongoing rebasing
+#   following main updates.
+#   When first created, the FFfiles are manually extracted via CurrentSource
+#   symlink dir and copied as usual to OriginalFFfiles_FreeBSD
+#
+# Icaro:
+#   Portloop is first called to bring FreeBSD-CURRENT up to date in the usual way.
+#   This makes sense as the first time is a big jump from a release, or very old
+#   CURRENT, up to the present day.  It involves a little manual work as
+#   verbosely described in portloop.  The end result is an up to date port,
+#   N1+ in RADrepo, and corresponding port "MN1+" the current WD on FFport
+#   (M=Main, a reminder that CURRrepo is the entire src tree, against which the
+#   FFport has been tested.)
+#   Portloop prompts you to insert the CURRrepo hash corresponding to MN1.
+#   Unlike subsequent iterations, N1+ is already committed, but as usual MN1+ is not.
+#
+# Once seeded, retrack is then called, to:
+#      - commit N1+  on RADrepo as is  (aon master), or do nth if WD already clean
+#      - commit MN1+ on CURRrepo       (FFport branch)
+#      - pull the latest main, and check if FFfiles have been changed
+#   If not changed, retrack exits. It can be reexecuted at any time with no
+#   harm done. Each time main will be updated until at last this involves a
+#   FFfile change, at which point MN2 has been found and the second phase begins:
+#      - commit N2 on RADrepo as is, auto recording commit hash of MN2 in the message
+#      - rebase FFport to main, forming a draft MNP2 of MN2+  (NP=NaivePort)
+#      - copy the FFfiles of that draft as NP2 over the WD on RADrepo
+#   BUT!  if changes are found you have an option to look at them first to see
+#         if you want to proceed with phase 2 now, or leave for later when ready/worth-it
+#
+#  NOTE: is appropriate to not rebase FFport if main advances but has no changes
+#  (or no accepted changes). Advancing would imply you had compiled and tested
+#  against the new full tree - which you haven't, and wouldn't want to do for
+#  every little advance.  Makes sense to allow main to advance a lot until sth
+#  substantial enough to warrant the effort for deeper porting/testing.
+#
+#  The iteration is then complete.
+#  The next (normal) iteration begins by perfecting/testing NP2 until is is ready
+#  to be committed as N2+, calling retrack again to do that.
+#  By the end of the ith iteration we have  (let j=i+1):
+#     RADrepo:master:   commits Ni+, Nj, and WD is a NPj  precursor to Nj+
+#     CURRrepo:FFport:  commits MNi+,    and WD is MNPj
+#                             [ committed or not, depends if rebase conflicted ]
+#
+# Notes:
+#  - retrack begins by examining RADrepo and CURRrepo without making
+#    any changes, with an option to then exit at that point.
+#    Should always do this first to check things carefully.
+#
+#  - retrack only adds CURRENT to RADrepo, any other files you want added to the
+#    RADrepo commit you have to do manually before invocation. Or better, do the
+#    commit you want on RADrepo first, leaving WD the way you want it. If not
+#    clean it is ok, retrack will fail (succeed?) to create a new commit if
+#    remaining changes are outside CURRENT dir
+#
+#  - it is normal to have a commit on CURRrepo with the same commit title if
+#    no rebase occurred since the last time, due either to retrack either not
+#    having been rerun, since, or run but no FFfile changes found.
+#    You can add a second line in the message to explain [ automate? ]
+#
+#  - If after running, you need to do a tweaks, then can do commit --amend
+#    separately without any interference, provided no FFfiles are involved.
+#    Eg, commit message updates on either repo, or VM tool updates in RADrepo.
+#
+#  - retrack does not need to know how to flatten/reinsert FFfiles from/into
+#    the tree, it gets this for free using existing VM scripts/setup .
+#
+#  - is NOT exclusively for commits which are well finished, or even compilable,
+#    that is RADrepo's job. Here it is just about keeping up with main.
+#    A canonical use case is in fact when the code doesn't compile or run
+#    correctly: want to track to see if that can fix the problem (due to a
+#    buggy CURRENT). If it doesn't fix it, still have the problem but at least
+#    are upto date.
+#
+#  - if the WD on FFport becomes erroneous for some reason, then provided that
+#    the WD in RADrepo is good, can use retrack to get things right again.
+#    First run to check, exit and fix as suggested if needed, then run again.
+#    If changes on main have been missed, can easily restart via:
+#    delete FFport, checkout the true base (hash is in RADrepo messages),
+#    update FFsource, run retrack.  Done! the outputs and tests tell you everything.
+#
+#  - currently supports FreeBSD only, but is almost entirely generic, easily
+#    generalised to Linux once its CURRENT tracking workflow in the VM is known.
+#
+OS=`uname -s`
+if [ $OS != FreeBSD ]; then
+	echo "This script currently supports a FreeBSD workflow only! you are on $OS"
+	exit
+fi
+
+# Base parameters
+BaseDir="$HOME/FFkernel_Work"
+MountPoint="$BaseDir/V4_mountedfrom_Icaro"
+RealRepo="$MountPoint/RADclock_mycurrent"
+TestRepo="$MountPoint/TestingGround/PortloopRepo"
+
+# Input parameters
+OS='freebsd'
+Repo=$RealRepo		# select from {Real,Test}Repo
+
+# Set dirs
+ND="FreeBSD-CURRENT"
+NewFF="kernel/$OS/$ND/CurrentSource/"	# name matches portloop convention
+
+
+# Test inputs
+echo -e "${BLU}======================= Testing State =======================${CLE}"
+abort="False"
+
+echo
+echo "==== Examining RADrepo, typically expect uncommited Ni+ in FreeBSD-CURRENT on master ===="
+echo
+
+cd $Repo
+pwd
+git status -uno    # suppress showing untracked files, avoid annoying ignored files not working
+git logo -4
+git status | grep Changes > /dev/null
+if [ $? -eq 1 ]; then
+	echo "** WD is clean [ normal if just after initial portloop ]"
+fi
+
+
+echo
+echo "==== Examining CURRrepo, expect uncommited MNi+ on FFport branch ===="
+echo
+FFportClean="False"
+
+cd /usr/src
+MNi=`git merge-base FFport main |head -c 12`  # commit where FFport branched off main
+git checkout --quiet FFport            # should be there already
+FFportHEAD=`git logo -1                |cut -d' ' -f1`
+MAINHEAD=`  git show -s --oneline main |cut -d' ' -f1`
+AgeFFport=`git logo $MNi..$FFportHEAD  |wc -l |tr -d ' '`
+AgeMain=`  git logo $MNi..$MAINHEAD    |wc -l |tr -d ' '`
+
+git status
+git logo -3
+echo
+echo -n "FFport branched off main at $MNi    "
+echo    "( [$AgeFFport, $AgeMain] commits back from [FFport, main] HEAD )"
+
+git status | grep Changes > /dev/null
+if [ $? -eq 1 ]; then
+	echo "** WD is unexpectedly clean, assuming MNi+ already committed here"
+	FFportClean="True"
+else
+	echo "Believe MNi = $MNi with the WD being its already tested MNi+ "
+fi
+
+
+echo
+echo "==== Comparing repos, expect FFiles to match ===="
+echo
+
+mkdir -p $BaseDir/WD_FFport
+cp -p $BaseDir/CurrentSource/*  $BaseDir/WD_FFport
+diff $BaseDir/WD_FFport $Repo/$NewFF > /dev/null
+if [ $? -ne 0 ]; then
+	echo "**** FAIL!  forget to test the latest changes?"
+	echo "**** Run update_workingFFsource; move_into_srctree to see changes and avoid chaos ****"
+else
+	echo "They match!"
+fi
+\rm -r $BaseDir/WD_FFport
+
+
+echo
+read -p "--- Good to go [Yn] ? " ans
+[[ "$ans" == "n" ]] && exit
+
+echo "========================== Testing Done =========================="
+echo
+
+
+
+
+echo
+echo "==== RADrepo, committing Ni+ ===="
+echo
+
+cd $Repo
+#git status | grep Changes > /dev/null      # found any changes, not just in NewFF dir
+git diff $NewFF > /dev/null
+if [ $? -eq 0 ]; then
+	echo "** WD clean (wrt CURRENT dir), assuming Ni+ already committed"
+else
+	git add $NewFF                # changes outside CURRENT not included here
+
+	SM="FFfile port Ni+ of $OS main commit #$MNi"		# Standard Message header
+	read -p "Was the port conflict-free and can be committed with a standard message? [Ny] ? " ans
+	if [[ "$ans" == "y" ]]; then
+		CM="The port was conflict-free."
+		git commit  -m"$SM" -m"$CM"
+	else
+		read -p "Were the conflicts trivial? [Ny] ? " ans
+		if [[ "$ans" == "y" ]]; then
+			CM="Port had trivial conflicts, with no FF changes required."
+			git commit  -m"$SM" -m"$CM"
+		else
+			CM="The port has conflicts requiring some changes to FFfiles."
+			git commit -e -m"$SM" -m"$CM"		# edit this draft
+		fi
+	fi
+	echo
+	git logo -5
+fi
+
+
+echo
+echo "==== CURRrepo, committing MNi+ ===="
+echo
+
+cd /usr/src
+git logo -3
+
+if [ "$FFportClean" == "True" ]; then
+	echo "** WD is clean, nothing to do, assuming MN+ already committed"
+else
+	git add .                 # all changed included, will capture any new FFfile
+	SM="Port MNi+ of FF code based off main commit #$MNi"
+	read -p "Happy to commit with a standard message? [Ny] ? " ans
+	if [[ "$ans" == "y" ]]; then
+		git commit  -m"$SM"
+	else
+		git commit -e -m"$SM"		# edit this draft
+	fi
+	echo
+	git logo -3
+fi
+
+
+#MNi="cd9e5d43333c"      # if this were the true base, see what has changed since
+
+echo
+echo "==== CURRrepo, update main, test for changes in FFfiles since $MNi, decide if proceed ===="
+echo
+NoFFchange='False'
+
+#echo
+#read -p "** Good to proceed [Yn] ? " ans
+#[[ "$ans" == "n" ]] && exit
+
+## Record the FF source of FFport's current base!
+git checkout --quiet $MNi
+mkdir -p $BaseDir/FFsource_old
+cp -p $BaseDir/CurrentSource/*  $BaseDir/FFsource_old  2> /dev/null # FFCLOCK probably present
+rm -f $BaseDir/FFsource_old/FFCLOCK	# get rid of it silently if present
+
+## Record the FF source of the latest main
+git checkout --quiet main
+git pull --ff-only
+echo "Here is the latest main: "
+git logo -2
+MNi=`git logo -1 |cut -d' ' -f1`	# get candidate MN(i+1) hash
+
+mkdir -p $BaseDir/FFsource_new
+cp -p $BaseDir/CurrentSource/*  $BaseDir/FFsource_new  2> /dev/null # FFCLOCK will be absent
+diff $BaseDir/FFsource_new  $BaseDir/FFsource_old  > /dev/null
+if [ $? -eq 0 ]; then
+	NoFFchange='True'
+	echo
+	echo "**** No change in FFfiles after update, skipping rebase of FFport and further setup"
+	echo "**** Use retrack again later to see if updates needing porting, will idempotently do no harm."
+fi
+
+# There is change, but may be trivial. Provide option to skip to avoid rebase noise.
+# Will leave main advanced, FFport unchanged, no new code in RADrepo (same WD).
+if [ "$NoFFchange" == "False" ]; then
+	echo "Changes entail `diff $BaseDir/FFsource_new  $BaseDir/FFsource_old |wc -l` FFfile lines"
+	read -p "Take a look to see if worth updating base? [Yn] ?" ans
+	if [ "$ans" == "n" ]; then
+		echo "Fine, proceeding to rebase"
+	else
+		echo
+		echo "Ok stopping, here are the changes: "
+		echo
+		diff $BaseDir/FFsource_new  $BaseDir/FFsource_old
+		NoFFchange='True'
+	fi
+fi
+\rm -r $BaseDir/FFsource_new  $BaseDir/FFsource_old
+
+
+
+echo
+echo "==== RADrepo, commit new Ni ===="
+echo
+
+if [ "$NoFFchange" == "True" ]; then
+	echo "Skipping"
+else	# should test if RAD and CURR agree first !!
+	cd $Repo
+	cp $BaseDir/CurrentSource/*  $Repo/$NewFF   # still on FFport!  Using cp: results in a union of files, preserving FFCLOCK
+	git add $NewFF
+	# no port detail needed, is just a copy of (the FFfiles of) a main commit
+	git commit  -m"Commit new Ni FFfiles extracted from main MNi commit $MNi."
+fi
+
+echo
+echo "==== CURRrepo, rebase FFport ===="
+echo
+
+cd /usr/src
+git checkout FFport           # main is clean, can change branch
+if [ "$NoFFchange" == "True" ]; then
+	echo "Skipping"
+else
+	git rebase main       # a single commit away, no need to iterate through multiple commits if a conflict
+	git logo -2
+
+	git status | grep Changes > /dev/null
+	if [ $? -eq 1 ]; then
+		echo "** WD is clean, indicating no conflicts"
+	else
+		echo "** rebase failed, indicating conflicts, fix via normal VM workflow."
+	fi
+	echo
+fi
+
+echo
+echo "==== RADrepo, copy over FFport WD over as a new Naive Port for completion and testing ===="
+echo
+
+cd $Repo
+if [ "$NoFFchange" == "True" ]; then
+	echo "Skipping"
+else
+	cp $BaseDir/CurrentSource/*  $Repo/$NewFF		# using cp: results in a union of files, preserving FFCLOCK
+	echo "Done"
+fi
+
+echo
+echo "-------------------------- Summary after this iteration ---------------------------"
+echo " *** RADrepo ***"
+git logo -6
+echo
+echo " *** CURRrepo ***"
+cd /usr/src
+git branch -v
+
+MNi=`git merge-base FFport main |head -c 12`  # commit where FFport branched off main
+FFportHEAD=`git logo -1                |cut -d' ' -f1`
+MAINHEAD=`  git show -s --oneline main |cut -d' ' -f1`
+AgeFFport=`git logo $MNi..$FFportHEAD  |wc -l |tr -d ' '`
+AgeMain=`  git logo $MNi..$MAINHEAD    |wc -l |tr -d ' '`
+
+echo
+echo -n "FFport branched off main at $MNi    "
+echo    "( [$AgeFFport, $AgeMain] commits back from [FFport, main] HEAD )"
+
+echo "-----------------------------------------------------------------------------------"
+

@@ -1,0 +1,811 @@
+/*
+ * Copyright (C) 2021 The RADclock Project (see AUTHORS file)
+ *
+ * This file is part of the radclock program.
+ */
+
+FFclock Linux documentation.
+Written by Darryl Veitch
+================================
+
+Convention to point within code:
+	/dir/dir/file : functionorstructureinfile
+
+Glossary:
+ KV = Kernel Version  ( of the RADclock/FFclock modified kernel )
+ IPC = Inter-Process Communication
+ OS = Operating System
+ SMS = SHared Memory
+ FF = FeedForward
+ FB = FeedBack
+ FFcounter = a FF compatible counter
+ algo = algorithm, the RADclock clock synchronization algorithm
+ tc = "timecounter"
+		or the current timecounter structure variable
+      or the current counter available in the current tc variable
+ Ca = Absolute FF clock
+ Cd = Difference FF clock
+
+
+
+Works in Progress:
+  - leapsecond
+  - correct reaction to a tc change
+
+==============================================================
+Summary
+=======
+
+This documents the FFclock Linux kernel code, focussing on kernel version 2
+and above.  The code includes the synthesis of a FF compatible counter, support
+for a full featured FF system clock interfacing with a FF clock daemon,
+in-kernel FF packet timestamping support with multiple variants (including one
+which functions as a difference clock), and the provision of a universal FF/FB
+system clock interface.
+The main source files are in RADclockrepo/kernel/linux/4.19.0/CurrentSource
+...
+The main associated header files are
+...
+
+On the radclock library side, the main files in RADclockrepo/radclock/libradclock/ are
+	radapi-base.c
+	radapi-pcap.c
+	{kclock,ffkernel,pcap}-fbsd.c
+The main associated header files are
+	kclock.h
+	radclock.h							// external processes include this to use RADclock
+
+In addition there is related code in RADclockrepo/radclock/radclock/ in
+	radclock_main.c
+	sync_bidir.c
+with
+	sync_algo.h
+
+This Document does not reproduce background material provided in FFclockDoc_FreeBSD.txt .
+Instead it focusses on giving a compact overview of the current Linux code.
+
+==============================================================
+Introduction
+============
+
+The kernel versioning parameter lives in the pure FF file kern_ffclock.c
+	static int ffclock_version = 3;     // declare value of KV, the kernel version of the FF code
+and is accessible by a daemon via the FF-expanded sysctl tree.
+
+
+
+==============================================================
+FFCLOCK symbol and File Breakdown
+======================================
+
+
+
+==============================================================
+Timekeeping in Linux Overview and comparison to BSD
+======================================
+
+There are many differences between Linux and FreeBSD, but also some commonalities.
+Some of the functions and structures which correspond strongly are as follows.
+
+Linux								BSD							meaning
+-------------------------------------------------------------------------------
+# clocksource.h            timetc.h
+struct clocksource	   	struct timecounter		abstraction of a hardware counter
+
+# timekeeper_internal.h    kern_tc.c
+struct timekeeper				struct timehands			tk/th state variable to track different forms
+                                                   of time using a cs/tc as a basis
+# timekeepering.c				kern_tc.c
+tk_core	                  *timehands              main extern accessing the current tk/th `clock`
+
+clocksource_delta()        tc_delta()					read the current cs/tc and rtn # counter ticks since
+                                                   last recorded in  cycle_last/th_offset_count,
+                                                   valid if read often enough to avoid wrapping
+
+timekeeping_advance        tc_windup					the main fn that advances time from one
+                                                   `tc-tick` to the next
+-------------------------------------------------------------------------------
+
+The differences are many and are described in the next section.
+
+
+
+==============================================================
+Architecture of tk code and FFcode integration
+======================================
+
+One of the principles of the FF implementation is that it should not alter normal
+FB system clock code in any way, but instead operate a separate parallel system
+that ties into the system clock in a RO fashion.
+Most of the FF code is therefore `self-referential`, the tie-ins amounting
+to the strategic placement of key FFclock code within the existing structure.
+This also enables the Linux FF code to parallel that of FreeBSD as much as possible
+in a natural way, as most of it refers to the same FF-specific variables and
+functions, with the same names. Bintime is not used in Linux. Needed definitions
+are supplied in ffclock.h .
+
+The FreeBSD timehands (th) system for timekeeping was rigidly tc-tick based, with all
+updates mediated via tc_windup, enabling the FFcode to stay synchronous with it
+in a simple way, with obvious strategic placement :
+	tc_windup
+		define new tick-start with measured delta, and advance th to it
+		ffclock_windup(delta,reset_{FBbootime,UTC});	// normal update with old counter
+		process any change in tc
+		ffclock_change_tc(th,ncount);						// redo the same tick with new counter
+
+In Linux, the updating of the current tk is spread out over many functions.
+A consistent theme however is the splitting of functionality according to :
+  1) cs reading and updating of the counter record (tk->tkr_mono.cycle_last)
+  2) advancing of `real-time` clocks and other variables within tk
+How 2 is performed is also split:
+  2a) simple advance to `now` using current counter & parameters with no update
+  2b) updating to reflect new parameters, or special conditions like RTC resets and suspend
+Furthermore, how each of 1, 2a, 2b is effected depends on the situation, sometimes
+they are performed within a workhorse function like timekeeping_forward_now(),
+at other times they are performed directly - complicated!
+
+The strategy for FFclock integration employs two core functions, designed to
+follow the FreeBSD implementation as much as possible yet to be well suited to
+the above Linux themes and complexities.
+The commonalities are :
+
+Linux				  FreeBSD				role
+-------------------------------------------------------------------------------
+# timekeeping.c  kern_tc.c
+ffclock_windup	  ffclock_windup    advances to next tick using the cs/tc delta already
+											  calculated for tk/th use, ensuring a common base,
+											  updates managed in a separate fftimehands (ffth) cyclic buffer
+
+ffclock_reset    ffclock_change_tc handles major reset following a counter change,
+                                   including TSC counters as a special case
+
+-------------------------------------------------------------------------------
+Main differences in the Linux version compared to FreeBSD:
+
+ffclock_windup:  UTC/UPclock reset branch removed, now integrated into ffclock_reset
+                 New boolean arg, allowing FFdata processing to be optionally skipped for this tick.
+ffclock_reset:	  Handles both counter and UTC resets, and their combinations.
+                 Allows UTC resets to be specified in absolute, or delta form, to keep
+                 all bintime conversion and processing hidden within FF functions.
+Invocations:     No longer simply aligned as in tc_windup(), instead bespoke as below.
+Update schedule: tk updates and advances are not so rigidly tied to the HZ grid.
+                 Many of the fns can be invoked asynchronously, and even timekeeping_advance()
+                 may be invoked in a tickless form, with the time between updates
+                 (better seen as an `advance` from the last update rather than the last `tick`)
+                 could be large, perhaps 100's of ms. Functions need to be prepared to
+                 process larger intervals efficiently.
+
+A complete set of the tk updating functions, listing the key operations/functions achieving
+1, 2a, 2b, and the ffclock function and parameters achieving the integration, is below.
+These include linking to the three places where cycle_last is altered, requiring a close
+tie-in:   tk_setup_internals, timekeeping_forward_now, logarithmic_accumulation .
+Typically each function will have a call to ffclock_windup to bring
+FFclocks up to date using current parameters, which also simplifies following
+calculations (this was also achieved in FreeBSD), then call ffclock_reset as needed
+to deal with any reset requirement.
+
+Of the calls to ffclock_windup, only that in timekeeping_advance() processes any
+outstanding FFdata update, the others block this to ensure a simple advance only.
+This is for speed and simplicity, and because they are invoked in rare
+special cases where an update may now be irrelevant in any case, to be
+imminently overridden by a subsequent call to ffclock_reset, which is built on
+the assumption that a simple update has just been performed.  This is consistent
+with the intent of timekeeping_forward_now : a simple advance to now with no
+complications.
+
+============ tk updating function and FFclock function integration =============
+
+ timekeeping_init(void)
+	tk_setup_internals(tk, default_clock)
+	ffclock_init();									// initial setup of ffclock variables
+//	ffclock_windup  not needed, period=0 anyway so can't advance, just initializing
+	ffclock_reset(tk, 0, &wall_time, NULL);	// initialize, set UTC to wall_time
+	timekeeping_update(tk, TK_MIRROR | TK_CLOCK_WAS_SET);
+
+ timekeeping_advance(enum timekeeping_adv_mode mode)
+ 	offset = clocksource_delta(...)
+	while (offset >= tk->cycle_interval)
+	  offset = logarithmic_accumulation(tk, offset, shift, &clock_set);
+		  ffclock_windup(interval, 0);	// advance interval cycles, perform any FFdata update
+// ffclock_reset not needed, nothing actually reset, this is a pure advance
+	timekeeping_update(tk, clock_set);
+
+ change_clocksource(struct clocksource *new)
+	timekeeping_forward_now(tk)
+		ffclock_windup(delta, 1);	// advance delta, ignore any FFdata update
+	tk_setup_internals(tk,new)
+	ffclock_reset(tk, cycle_last, NULL, NULL); // cs change
+	timekeeping_update(tk, TK_CLEAR_NTP | TK_MIRROR | TK_CLOCK_WAS_SET);
+
+ timekeeping_suspend(void)
+	timekeeping_forward_now(tk);
+		ffclock_windup(delta, 1);
+// ffclock_reset not needed, nothing actually reset
+	timekeeping_update(tk, TK_MIRROR);
+
+ timekeeping_resume(void)
+	cycle_now = tk_clock_read(&tk->tkr_mono);
+	ffclock_windup(delta, 1);
+	ffclock_reset(tk, 0, NULL, &ts_delta);		// shift UTC by ts_delta
+	timekeeping_update(tk, TK_MIRROR | TK_CLOCK_WAS_SET);
+
+ do_settimeofday64(const struct timespec64 *ts)
+	timekeeping_forward_now(tk);
+		ffclock_windup(delta, 1);
+	ffclock_reset(tk, 0, ts, NULL);				// reset UTC to ts
+	timekeeping_update(tk, TK_CLEAR_NTP | TK_MIRROR | TK_CLOCK_WAS_SET);
+
+ timekeeping_inject_offset(const struct timespec64 *ts)
+	timekeeping_forward_now(tk);
+		ffclock_windup(delta, 1);
+// ffclock_reset(tk, 0, NULL, ts);	dont use!  seems specialized, may disrupt FFclocks
+	timekeeping_update(tk, TK_CLEAR_NTP | TK_MIRROR | TK_CLOCK_WAS_SET);
+
+// Only used in  drivers/rtc/class.c:rtc_resume(dev)
+timekeeping_inject_sleeptime64(const struct timespec64 *delta)
+	timekeeping_forward_now(tk);
+		ffclock_windup(delta, 1);
+	ffclock_reset(tk, 0, NULL, delta);			// shift UTC by delta
+	timekeeping_update(tk, TK_CLEAR_NTP | TK_MIRROR | TK_CLOCK_WAS_SET);
+
+do_adjtimex(struct timex *txc)
+	timekeeping_inject_offset(&txc.time);
+		ffclock_windup(delta, 1);
+//    ffclock_reset(tk, 0, NULL, ts);	dont use!  seems specialized, may disrupt FFclocks
+	timekeeping_update(tk, TK_MIRROR | TK_CLOCK_WAS_SET);
+
+
+Notes:
+ - all of these functions have a critical section, covering all the lines quoted above,
+	protected by  timekeeper_lock.  Thus the ffclock code is also under this protection,
+	so it need not worry about tk changing during its operations.
+ - logarithmic_accumulation  is a more sophisticated form of timekeeping_forward_now
+ - timekeeping_advance  operates on a shadow tk before pointer-swapping with current tk
+    this is Linux`s version of the fftimehands cyclic buffer.  Other fns dont do this,
+    thus they modify the current tk.
+ -
+
+=========================================
+
+
+
+
+==============================================================
+Timekeeper (tk) Mechanism: Overview
+======================================
+
+In linux ns plays a key role as a kind of equivalent to FreeBSD`s bintime: a
+high resultion format to ease integer arithmetic.
+Many variables hold ns, in particular ktime variables  ( linux/ktime.h )
+	/* Nanosecond scalar representation for kernel time values */
+	typedef s64	ktime_t;
+are designed to work with absolute time measured in [ns] natively. Some simple operations are
+#define ktime_sub(lhs, rhs)	((lhs) - (rhs))
+#define ktime_add(lhs, rhs)	((lhs) + (rhs))				// no protection if overflow
+#define ktime_add_unsafe(lhs, rhs)	((u64) (lhs) + (rhs))// blocks overflow
+#define ktime_add_ns(kt, nsval)		((kt) + (nsval))		// nsval in ns
+#define ktime_sub_ns(kt, nsval)		((kt) - (nsval))
+static inline ktime_t ktime_set(const s64 secs, const unsigned long nsecs)
+	secs * NSEC_PER_SEC + (s64)nsecs;	// convert from explicit (sec,ns) --> ktime
+
+In addition other variables hold `shifted ns`, where ns is multiplied
+by 2^shift to enable sub-ns precision in calculations.
+Note that a 64bit ns field holds +- 9.22 billion [s] = 292 years, so can include the UTC absolute time, but that
+shifted ns typically are used only for intervals.
+To convert from counter units to ns, a (mult,shift) pair is generated based on an input counter freq.
+In the case of a shifted ns variable, one applies the mult but doesnt use shift until some other conversion later.
+In the clocksource struct the pair is generated once only (unless freq changes) and held within the cs struct,
+and represents the naive `counter in time units` causal clock.
+
+In the timekeeper struct, a cs is held,  but so is a dedicated (mult,shift) which is updated by ntp
+to track drift.  The (cs,mult,shift) are packaged into a tk_read_base struct) member of tk.
+To ease calculations operations often allow  ns fields to be added and processed into sec + ns variables in
+such a way that the ns field can hold more than 1sec of time. `Normalisation` is then required to put excess or
+negative ns into the matching sec field.  These normalised (sec,ns) pairs are not necessarily within the
+same struct, like a timespec, sometimes they are in separate variables! it gets complicated!
+This design creates a lot of complexity, bintime is clearly superior as the most natural
+form of integer arithmetic one could imagine, which maximizes available resolution.
+
+
+# In clocksource.h:
+
+struct clocksource {
+	u64 (*read)(struct clocksource *cs);
+	u64 mask;
+	u32 mult;
+	u32 shift;
+	u64 max_idle_ns;
+	u32 maxadj;
+#ifdef CONFIG_ARCH_CLOCKSOURCE_DATA
+	struct arch_clocksource_data archdata;
+#endif
+	u64 max_cycles;
+	const char *name;
+	struct list_head list;
+	int rating;
+	int (*enable)(struct clocksource *cs);
+	void (*disable)(struct clocksource *cs);
+	unsigned long flags;
+	void (*suspend)(struct clocksource *cs);
+	void (*resume)(struct clocksource *cs);
+	void (*mark_unstable)(struct clocksource *cs);
+	void (*tick_stable)(struct clocksource *cs);
+
+	/* private: */
+#ifdef CONFIG_CLOCKSOURCE_WATCHDOG
+	/* Watchdog related data, used by the framework */
+	struct list_head wd_list;
+	u64 cs_last;
+	u64 wd_last;
+#endif
+	struct module *owner;
+};
+
+
+# In linux/include/linux/timekeeper_internal.h
+
+struct tk_read_base {
+	struct clocksource	*clock;
+	u64			mask;
+	u64			cycle_last;
+	u32			mult;			// dedicated mult that is used instead of the clock->mult for tk operations
+	u32			shift;
+   // Used to store the delta advance since the last call to update_wall_time
+	u64			xtime_nsec;	// is in shifted units, need to >>shift  to get ns; is based on this mult
+									// holds only ns part after normalization, the sec component is offloaded to  tk.{xtime,raw}_sec
+	ktime_t		base;			// total # of ns since epoch
+	u64			base_real;
+};
+
+The only places where the 'original' clock-internal  clock->mult is used rather than the dedicated
+tkr_{mono,raw}.mult is in :
+	timekeeping_adjust  // checks if difference between the two mults is under tkr_mono.clock->maxadj
+	tk_setup_internals  /* The timekeeper keeps its own mult values for the currently active clocksource.
+	                     * These value will be adjusted via NTP to counteract clock drifting. */
+
+The clock->mult is only changed (I think) via  clocksource.c:clocks_calc_mult_shift(), called mainly in:
+	clocksource.c:
+		__clocksource_register_scale		// Used to install new clocksources
+			__clocksource_update_freq_scale  only when a freq is changed
+
+
+/* Structure holding internal timekeeping values */
+struct timekeeper {
+	struct tk_read_base	tkr_mono;	/* The readout base structure for CLOCK_MONOTONIC */
+	struct tk_read_base	tkr_raw;		/* The readout base structure for CLOCK_MONOTONIC_RAW */
+	u64				xtime_sec;			/* Current CLOCK_REALTIME time [s] */ // #[ns] held in tkr_mono.xtime_nsec
+	u64				raw_sec;				/*    CLOCK_MONOTONIC_RAW time [s] */ // #[ns] held in tkr_raw.xtime_nsec
+	unsigned long	ktime_sec;			/* Current CLOCK_MONOTONIC time in seconds */ // #[s] in tkr_mono.
+	struct timespec64	wall_to_monotonic;/* CLOCK_REALTIME to CLOCK_MONOTONIC offset */
+
+	ktime_t			offs_real;			/* Offset clock monotonic -> clock realtime */
+	ktime_t			offs_boot;			/* Offset clock monotonic -> clock boottime */
+	ktime_t			offs_tai;			/* Offset clock monotonic -> clock tai */
+	s32			tai_offset;				/* The current UTC to TAI offset in seconds */
+
+	unsigned int clock_was_set_seq;  /* The sequence number of clock was set events */
+	u8			cs_was_changed_seq;		/* The sequence number of clocksource change events */
+	ktime_t		next_leap_ktime;		/* CLOCK_MONOTONIC time value of a pending leap-second */
+
+	/* The following members are for timekeeping internal use */
+	u64			cycle_interval;	/* Number of clock cycles in one tick ("NTP interval") */
+	u64			xtime_interval;	/* Number of clock shifted nano seconds in one NTP interval. */
+	s64			xtime_remainder;	/* Shifted nano seconds left over when rounding cycle_interval */
+	u64			raw_interval;		/* Shifted raw nano seconds accumulated per NTP interval. */
+
+	/* The ntp_tick_length() value currently being used.
+	 * This cached copy ensures we consistently apply the tick length for an entire tick, as ntp_tick_length may
+	 * change mid-tick, and we don't want to apply that new value to the tick in progress. */
+	u64			ntp_tick;
+	s64			ntp_error;			/* Difference between accumulated time and NTP time in     ntp shifted ns */
+	u32			ntp_error_shift;	/* Shift conversion between clock shifted nano seconds and ntp shifted ns */
+	u32			ntp_err_mult;
+	/* Flag used to avoid updating NTP twice with same second */
+	u32			skip_second_overflow;
+
+#ifdef CONFIG_DEBUG_TIMEKEEPING
+	long			last_warning;	/* Warning ratelimiter (DEBUG_TIMEKEEPING) */
+	/* These simple flag variables are managed without locks, which is racy, but they are ok since we don't
+	 * really care about being super precise about how many events were seen, just that a problem was observed. */
+	int			underflow_seen;	/* Underflow warning flag (DEBUG_TIMEKEEPING) */
+	int			overflow_seen;		/* Overflow  warning flag (DEBUG_TIMEKEEPING) */
+#endif
+};
+
+
+
+# In kernel/time/timekeeping.c:
+
+struct tk_fast {
+	seqcount_t		seq;
+	struct tk_read_base	base[2];
+};
+
+
+
+
+==============================================================
+FFclock:  core timing implementation
+======================================
+
+The fundamental objective of the core timing component is to implement a
+FF counter in the kernel, and to synthesize a number of FFclocks based on it.
+The FFcounter, and with it these FFclocks, will be advanced frequently enough
+so that the underlying cs used in the FFcounter will not overflow.
+We rely on the structure of the underlying timekeeper code to ensure this, by
+exploiting the same cs reads made by it.
+
+The fundamental tasks required to establish the FFclock system are:
+
+ data structure choice
+ initialization
+ daemon communication
+ advancement  (nominally per-tick)
+ counter change management
+ UTC reset management
+ suspend management
+ integration into tk code
+
+The ffclock core files are:
+
+Linux						FreeBSD				role
+-------------------------------------------------------------------------------
+ffclock.h				timeff.c				distribute FF types and varibles
+ffclock.c				kern_ffclock.c		FF-only code not requiring tk access
+timekeeping.c			kern_tc.c			tk code, and integrated FFcode
+
+We now describe these via contrasting with FreeBSD. We ignore minor variable
+name changes, and very minor code changes, though in many cases they are
+each identical.
+
+-------------
+# ffclock.h
+Similarities :
+
+struct ffclock_estimate
+extern uint8_t ffcounter_bypass;
+extern int ffclock_tsmode;		// needed in sock.c
+void ffclock_read_counter(ffcounter *ffcount);
+
+Differences :
+
+Contains netlink support allowing  FFclock <--> daemon FFdata transfer.
+FreeBSD does not use netlink
+Contains bintime support (struct bintime, and bintime_{add,addx,sub,mul,clear,isset,cmp})
+FreeBSD has this natively
+
+Does not have any of the sysclock support, and associated internal ffclock reading
+functions and their support, or the snapshot code used in bpf based timestamping.
+
+
+-------------
+# ffclock.c
+Similarities :
+
+extern struct ffclock_estimate ffclock_estimate;
+extern struct bintime ffclock_boottime;
+extern int8_t ffclock_updated;
+extern struct rw_semaphore ffclock_mtx;		// is a mtx in FreeBSD
+
+Handles sysfs code  (sysctl in FreeBSD) with similar variables and analogous fns
+static DEFINE_SPINLOCK(ffclock_lock);
+static int ffclock_version = 2;
+
+Differences :
+
+Most of ffclock.c concerns netlink support which is absent in FreeBSD.
+Most of kern_ffclock.c concerns the internal ffclock reading functions, and
+callbacks for sysclock and counter reading syscalls.
+
+
+-------------
+# timekeeping.c
+Similarities :
+
+struct ffclock_estimate ffclock_estimate;
+struct bintime ffclock_boottime;	/* Feed-forward boot time estimate. */
+uint32_t ffclock_status;		/* Feed-forward clock status. */
+int8_t ffclock_updated;			/* New estimates are available. */
+DECLARE_RWSEM(ffclock_mtx);	/* semaphore on ffclock_estimate: declare&init */
+
+struct fftimehands
+static struct fftimehands ffth[10];
+static struct fftimehands *volatile fftimehands = ffth;
+static void ffclock_init(void)
+static void ffclock_convert_delta(ffcounter ffdelta, uint64_t period, struct bintime *bt)
+void ffclock_read_counter(ffcounter *ffcount)
+static void ffclock_windup(unsigned int delta, int skip_update)	// see above for differences
+
+Differences :
+
+  ffclock_reset(struct timekeeper *tk, u64 ncount, ...
+integates the functionality of ffclock_change_tc and UTC reset functions, as
+described above, but still largely follows ffclock_change_tc() .
+
+Many differences in the detailed integration into the tk code, also as described
+earlier.
+
+
+
+
+
+==============================================================
+FF algo data kernel <--> daemon translation
+======================================
+
+The same fftimehands structure is used as in FreeBSD, see the other docs for details.
+
+==============================================================
+Setting of FFclock data
+======================================
+
+
+==============================================================
+Global Variables
+======================================
+
+
+==============================================================
+Timecounter structure and hardware counters
+======================================
+This section describes the existing mechanism: no changes were made.
+
+
+==============================================================
+Timecounter (tc) Mechanism:  Changing Timecounters
+======================================
+
+
+==============================================================
+FFcounter timestamping bypass mode
+======================================
+
+
+==============================================================
+FF clock status setting
+======================================
+
+
+==============================================================
+FF and system clock reading
+======================================
+
+
+/* Difference clock */
+
+
+/* Absolute FF clock */
+
+
+/* UTC clocks versus Uptime clocks */
+
+			  
+/* Uptime clock versus FF difference clock */
+
+
+/* System Clock */
+
+
+
+==============================================================
+IOCTL:    for KV>1
+======================================
+
+The only use of ioctl is via the packet capture access mediated through pcap.
+The related functions are in pcap-linux.c :
+
+#define SIOCSFFCLOCKTSMODE 	0x8908		// defined in uapi/asm-generic/sockios.h
+#define SIOCGFFCLOCKTSMODE 	0x8909		// defined in uapi/asm-generic/sockios.h
+#define SIOCGFFCLOCKSTAMP 		0x89b2		// defined in uapi/linux/sockios.h
+
+Getting and setting the tsmode		[ note these can also be get/set using sysfs, see below ]
+ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_int custom)
+ 		if (ioctl(pcap_fileno(p_handle), SIOCSFFCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
+ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
+		if (ioctl(pcap_fileno(p_handle), SIOCGFFCLOCKTSMODE, (caddr_t)(&bd_tstamp)) == -1) {
+
+Obtaining the packet data:
+ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
+		if (ioctl(pcap_fileno(p_handle), SIOCGFFCLOCKSTAMP, (caddr_t)vcount) == -1) {
+
+
+
+==============================================================
+Syscalls:    for KV>1
+======================================
+
+The regular FFcode <--> userland interactions are achieved by syscalls for KV≥2,
+when faster alternatives are not available.
+
+Unlike in FreeBSD, syscalls are not used for the get/set of FFdata in the kernel,
+instead lower latency netlink facility is used. On the other hand a new syscall,
+sys_ffclock_getcounter_latency, is added. This is a diagnostic tool for syscall latency
+benchmarking, not currently used.
+
+There are two syscalls. The relationship to functions mediating their use in
+the daemon are summarized in RADclockDoc_library, repeated here:
+
+syscall (kernel: time.c) 	userspace calling method					 			OS-dep wrapper kclock-linux.c
+---------------------------------------------------------------------------------------------------
+sys_ffclock_getcounter  			syscall(LINUX_SYSCALL_ffclock_getcounter,vc)  			ffclock_getcounter_syscall(clock,vc)
+sys_ffclock_getcounter_latency	syscall(LINUX_SYSCALL_ffclock_getcounter_LATENCY,vc)  N/A (not used)
+
+File involved files and their roles are as follows :
+time.c		//  SYSCALL_DEFINEx macros are in syscalls.h ;  they add a sys_ prefixed to syscall name
+  SYSCALL_DEFINE1(ffclock_getcounter, vcounter_t __user *, vcounter)		// named matches BSD syscall
+  SYSCALL_DEFINE3(ffclock_getcounter_latency, vcounter_t __user *, vcounter, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
+
+For amd64 architectures, the files  asm/unistd_{32,64}.h  are auto-generated from the specification in:
+syscall_64.tbl    [ syscall number defined and ABI family ]
+	335	64	ffclock_getcounter				sys_ffclock_getcounter
+	336	64	ffclock_getcounter_latency		sys_ffclock_getcounter_latency
+syscall_32.tbl    [ syscall number defined and ABI family specified for i386 support on amd64 arch? ]
+	i386	ffclock_getcounter			sys_ffclock_getcounter				sys_ffclock_getcounter
+	i386	ffclock_getcounter_latency	sys_ffclock_getcounter_latency	sys_ffclock_getcounter_latency
+
+syscalls.h		[ placed under entry for kernel/time.c where the fns are defined ]
+  asmlinkage long sys_ffclock_getcounter(vcounter_t __user *vcounter);
+  asmlinkage long sys_ffclock_getcounter_latency(vcounter_t __user *vcounter, u64 __user *vcount_lat, u64 __user *tsc_lat);
+
+
+
+
+==============================================================
+SYSFS:
+======================================
+
+The SYSFS device tree associated with FF components is defined in clocksource.{h,c}  and ffclock.{h,c}
+The provided controls are cs level controls that can impact the FF clock and the FF daemon,
+such as a change of cs.
+
+Note that the declaration:   // see include/linux/sysfs.h
+static DEVICE_ATTR_{RO,WO,RW}(name)  (make once only) means it ie expecting callback functions named as :
+ name_store()  fn to handle W
+ name_show()   fn to handle R  as needed
+
+An existing "clocksource" sysfs device defined in  clocksource.c  has relevant attributes, including
+the current and available underlying clocksources.
+A new "ffclock" sysfs device is also defined in  radclock.c  with three attributes:
+
+device_ffclock with a registered ffclock_subsys, with attributes (listed in  static struct attribute *ffclock_attrs[])
+	-> version_ffclock_ [attribute]		[RO]
+	-> tsmode_ffclock_  [attribute]		[RW]
+	-> bypass_ffclock_  [attribute]		[RW]
+
+The related variables are :
+ radclock.h
+	#define FFCLOCK_VERSION 2			// TODO: Rename as for bsd, or change BSD to be a macro like here?
+	extern uint8_t ffcounter_bypass;
+	#define RADCLOCK_TSMODE_SYSCLOCK	1		// leave normal pcap ts field, hide vcount in padded hdr
+	#define RADCLOCK_TSMODE_RADCLOCK	2		// fill ts with RADclock Abs clock, hide vcount in hdr
+	#define RADCLOCK_TSMODE_FAIRCOMPARE	3	// as _SYSCLOCK, but ts and raw timestamps back-to-back
+	void ffclock_read_counter(ffcounter *ffcount);
+ radclock.c
+  int sysfs_ffclock_version = FFCLOCK_VERSION;		// TODO: move to .h to mirror bsd?
+  int sysfs_ffclock_tsmode  = RADCLOCK_TSMODE_SYSCLOCK;
+  static char override_bypass[8];
+  uint8_t ffcounter_bypass;
+
+The callback procedures are
+  static ssize_t version_ffclock_show(struct device *dev, struct device_attribute *attr, char *buf)
+  	- get sysfs_ffclock_version
+  static ssize_t tsmode_ffclock_show(struct device *dev, struct device_attribute *attr, char *buf)
+  	- get sysfs_ffclock_tsmode
+  static ssize_t tsmode_ffclock_store(struct device *dev, struct device_attribute *attr, char *buf, size_t count)
+  	- set sysfs_ffclock_tsmode
+  static ssize_t bypass_ffclock_show(struct device *dev, struct device_attribute *attr, char *buf)
+	- get the ffcounter reading mode (value of ffcounter_bypass)
+  static ssize_t bypass_ffclock_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+	- set the ffcounter reading mode (value of ffcounter_bypass)
+
+
+From the commandline sysfs variables can be inspected via looking at associated files:
+	cat /sys/devices/system/clocksource/clocksource0/{current,available}_clocksource
+	cat /sys/devices/system/ffclock/ffclock0/{version_ffclock,tsmode_ffclock,bypass_ffclock}
+
+and written to by simply overwritting the associated file:
+	echo tsc | sudo tee /sys/devices/system/clocksource/clocksource0/current_clocksource > /dev/null  # change cs to tsc
+	echo 1   | sudo tee /sys/devices/system/ffclock/ffclock0/bypass_ffclock              > /dev/null  # activate bypass
+
+
+
+//In KV1 an existing "clocksource" sysfs device defined in  clocksource.c  had a new ffclock attribute added:
+//
+//device_clocksource with a registered clocksource_subsys
+//	-> passthrough_ [attribute]		[RW]		// added to  static struct attribute *clocksource_attrs[]
+//
+//The related variables are :
+// clocksource.h
+//	struct clocksource {
+//		#define VCOUNTER_PT_NO		0
+//		#define VCOUNTER_PT_YES		1
+//		uint8_t vcounter_passthrough;			// an integer representation of the string used to pass the mode
+//		..
+//	}
+// clocksource.c
+//	static char override_passthrough[8];	// holds the current passthrough mode value, = {"0","1"}  TODO: dumb name
+//
+//The callback procedures are
+//  static ssize_t passthrough_clocksource_show(struct device *dev, struct device_attribute *attr, char *buf)
+//	- get the vcounter reading mode (value of  curr_clocksource->vcounter_passthrough)
+//  static ssize_t passthrough_clocksource_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
+//	- set the override_passthrough, and then translate corresponding values to curr_clocksource->vcounter_passthrough
+
+
+
+
+==============================================================
+Universal (FF/FB) System Clock Support
+======================================
+
+Not implemented.
+
+
+==============================================================
+bpf and pcap
+======================================
+
+The timestamp mode system uses that used in FreeBSD.
+
+It is a simple system with the following components:
+
+ffclock.h:  ffclock_fill_timestamps()   declaration  // so visible in af_packet.c for pkt timestamping.
+				BPF_T_ tsmode defines
+				extern int ffclock_tsmode;		// needed in sock.c
+ffclock.c:  int ffclock_tsmode = BPF_T_NANOTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVECLOCK;  // init
+timekeeping.c
+   ffclock_fill_timestamps(ffcounter ffc, long tsmode, ffcounter *rawts, ktime_t *ts) // definition
+
+The tsmode specifies the timestamping type requested.
+
+/* Time stamping flags */
+// FORMAT flags 	[ mutually exclusive, not to be ORed ]
+#define	BPF_T_MICROTIME	0x0000
+#define	BPF_T_NANOTIME		0x0001
+#define	BPF_T_BINTIME		0x0002
+#define	BPF_T_NONE			0x0003	// relates to ts only, FFRAW independent
+#define	BPF_T_FORMAT_MASK	0x0003
+// FFRAW flag
+#define	BPF_T_NOFFC			0x0000   // no FFcount
+#define	BPF_T_FFC			0x0010   // want FFcount
+#define	BPF_T_FFRAW_MASK	0x0010
+// FLAG flags   [ can view bits as ORable flags ]
+#define	BPF_T_NORMAL		0x0000	// UTC, !FAST
+#define	BPF_T_FAST			0x0100   // UTC,  FAST
+#define	BPF_T_MONOTONIC	0x0200	// UPTIME, !FAST
+#define	BPF_T_MONOTONIC_FAST	0x0300// UPTIME,  FAST
+#define	BPF_T_FLAG_MASK	0x0300
+// CLOCK flags   [ mutually exclusive, not to be ORed ]
+#define	BPF_T_SYSCLOCK		0x0000	// read current sysclock
+#define	BPF_T_FBCLOCK		0x1000   // read FB
+#define	BPF_T_FFCLOCK		0x2000   // read mono FF (standard reads are mono)
+#define	BPF_T_FFNATIVECLOCK	0x3000	// read native FF
+#define	BPF_T_FFDIFFCLOCK	0x4000	// read FF difference clock
+#define	BPF_T_CLOCK_MASK	0x7000
+
+// Extract FORMAT, FFRAW, FLAG, CLOCK  bits
+#define	BPF_T_FORMAT(t)	((t) & BPF_T_FORMAT_MASK)
+#define	BPF_T_FFRAW(t)		((t) & BPF_T_FFRAW_MASK)
+#define	BPF_T_FLAG(t	)	((t) & BPF_T_FLAG_MASK)
+#define	BPF_T_CLOCK(t)		((t) & BPF_T_CLOCK_MASK)
+
+In linux, the FORMAT values BPF_T_NONE and BPF_T_NANOTIME only are respected.
+Use of FAST is not recommended, as its behaviour under linux is not as originally intended.
+This is a consequence of creating FFclock timestamps only as needed via
+ffclock_fill_timestamps, rather than more deeply integrated in the pkt timestamping system.
+
+
+
+==============================================================
+Device drivers
+======================================
+
+
+==============================================================
+Leapsecond system  [ kernel, and kernel<-->daemon ]
+======================================
+
+
+==============================================================
+PPS stuff:
+======================================

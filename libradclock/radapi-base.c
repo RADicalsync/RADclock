@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -65,6 +63,8 @@ radclock_create(void)
 	/* SMS stuff */
 	clock->ipc_sms_id = 0;
 	clock->ipc_sms = NULL;
+
+	clock->hw_counter[0] = '\0';
 
 // TODO present 3 function pointers instead?
 	/* Feed-forward clock kernel interface */
@@ -257,6 +257,12 @@ radclock_init(struct radclock *clock)
 	if (err < 0)
 		return (-1);
 
+	/* Establish the link allowing raddata <--> FFdata exchange */
+	err = init_kernel_clock(clock);
+	if (err < 0)
+		return (-1);
+	logger(RADLOG_NOTICE, "Feed-Forward clock support initialised");
+
 	/* SMS on library side */
 	err = sms_init_reader(clock);
 	if (err)
@@ -392,7 +398,7 @@ fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data
 	bintime_to_ld(&rad_data->ca, &cest->update_time);
 	
 	/* need long double version of phat here */
-	tmp = ((long double) cest->period) / (1LLU << 32);
+	//tmp = ((long double) cest->period) / (1LLU << 32);
 	tmp = tmp / (1LLU << 32);
 	rad_data->ca -= tmp * rad_data->last_changed;
 }

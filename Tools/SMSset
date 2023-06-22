@@ -1,4 +1,4 @@
-#!/usr/local/bin/bash
+#!/usr/bin/env bash
 
 # Enable easy adjustment of the ipc_server parameter within radclock.conf
 # It looks for the conf file in the currect dir and prompts otherwise

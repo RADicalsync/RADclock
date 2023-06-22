@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+# options -n :  use existing source, don't update FFfiles or overwrite with them
+#         -f :  Linux:  select faster (non-clean) compile options
+#         -nf:  if you want both: must be in this order !
+#         -c :  FreeBSD: select clean (slower) compile option
+#         -w :  FreeBSD: build world
+#
+# TODO:  is a mess: process these properly at the head of the file, and use to define stable
+#        keywords like "fast" "current" for use in script
+
+if [ `id -u` -ne 0 ]; then
+	echo "Sorry `id -un`, this must be run as root"
+	exit 0
+fi
+
+
+## Process options
+if [[ "$1" == "-n" || "$1" == "-nf" ]]; then
+	source="current"
+fi
+if [[ "$1" == "-f" || "$1" == "-nf" ]]; then
+	compile="fast"
+fi
+
+## Select source Dir
+OS=`uname -s`
+case $OS in
+	FreeBSD)
+		OSv=`uname -r | cut -d'-' -f1`
+		SourceDir="/usr/src";;
+	Linux)
+		OSv=`uname -r | cut -d'.' -f1-2`
+		SourceDir="/usr/src/linux-source-$OSv";;
+esac
+
+
+# Determine if will patch this kernel or not
+Based="$HOME/FFkernel_Work"
+if [[ "$source" == "current" ]]; then
+	echo "=== Will build and install the current kernel $SourceDir for $OS ==="
+else	
+	echo "=== Will update FF source, copy it to source tree at $SourceDir for $OS, then build and install ==="
+	update_workingFFsource  # pass explicit argument here as a hack if not finding desired version
+	echo
+	#update_linuxSource -l		# a hack, dont do this unless it works for you
+	echo "=============================================================="
+	cd $Based
+	move_into_srctree
+fi
+
+## Set up log files
+cp -f $Based/build.log $Based/build_backup.log
+rm $Based/build.log			# wipe log file to start afresh
+
+
+pushd $SourceDir 
+echo
+
+echo -e "${BLU}==== Building and Installing the Kernel ====${CLE}"
+#-----------------------------------------------------------------------------#
+if [ $OS == "Linux" ]; then
+
+	CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
+
+	# Careful: if you build clean, then stuff gets cleared that causes pkg-source
+	#    change detection to fail ("cannot represent change" error) causing deb-pkg to exit.
+	# On the other hand bindeb-pkg still successfully builds despite the failure
+	echo -e " *** ${RED}Remember${CLE} to answer any interactive qns regarding new packages!!"
+	echo -e " *** Use:  tail -f build.log  to monitor and check compile progressing"
+
+	cmd="make bindeb-pkg"		# select pkg creation command
+	if [[ "$compile" == "fast" ]]; then
+		echo -e "Now trying to build ${BOLD}fast${CLE}, executing $cmd"
+		$cmd > $Based/build.log 2>&1
+	else
+		echo -e "Now trying to build ${BOLD}clean${CLE}, executing 'make clean; $cmd' "
+		make clean > $Based/build.log
+		$cmd >> $Based/build.log 2>&1
+	fi
+
+	
+	if [ $? -eq 0 ]; then
+		echo "Build successful, now installing generated deb packages"
+		echo 
+
+		echo "First check to see if deb creation altered configuration: "
+		ConfigFile="$SourceDir/.config"
+		echo "Check in source config file $ConfigFile"
+		grep signing_key $ConfigFile >> /dev/null
+		if [ $? -ne 0 ]; then
+			echo -e "  - signing_key not found in $ConfigFile, ${lRED}re-inserting${CLE}"
+			scripts/config --set-str MODULE_SIG_KEY certs/signing_key.pem
+		fi
+	
+		ConfigFile="/boot/config-$OSv.$CurrSUBLEVEL"
+		echo "Check in boot   config file $ConfigFile"
+		grep signing_key $ConfigFile >> /dev/null
+		if [ $? -ne 0 ]; then
+			echo "  - signing_key not found in $ConfigFile"
+		fi
+
+		# Installation
+		tail -3 $Based/build.log
+		echo
+		InstallPkg="dpkg -i `ls -t ../linux-image-$OSv*.deb |head -1`"
+		echo -e "** Installing image with: ${YEL}$InstallPkg${CLE}"
+		$InstallPkg
+		echo
+		InstallPkg="dpkg -i `ls -t ../linux-headers-$OSv*.deb |head -1`"
+		echo -e "** Installing headers with: ${YEL}$InstallPkg${CLE}"
+		$InstallPkg
+		echo
+		InstallPkg="dpkg -i `ls -t ../linux-libc-dev_$OSv*.deb |head -1`"
+		echo -e "** Installing libc-dev with: ${YEL}$InstallPkg${CLE}"
+		$InstallPkg
+
+
+		# Configuration checks, but no action taken
+		echo
+		echo "Ready to reboot, final check on configuration to ensure success: "
+		ConfigFile="$SourceDir/.config"
+		echo "Check in source config file $ConfigFile"
+		grep signing_key $ConfigFile >> /dev/null
+		if [ $? -ne 0 ]; then
+			echo -e "  - signing_key not found in $ConfigFile, ${lRED}re-inserting${CLE}"
+			scripts/config --set-str MODULE_SIG_KEY certs/signing_key.pem
+			#cat /root/FFkernel_Work/RPi_toolkit/sshaccessline >> /boot/firmware/sysconf.txt
+		fi
+	
+		ConfigFile="/boot/config-$OSv.$CurrSUBLEVEL"
+		echo "Diff between boot and source config:"
+		diff $SourceDir/.config $ConfigFile  |grep SIG_KEY
+		echo "===================================="
+
+		echo "Check in boot config file $ConfigFile"
+		grep signing_key $ConfigFile >> /dev/null
+		if [ $? -ne 0 ]; then
+			echo "  - signing_key not found in $ConfigFile"
+			#cp $SourceDir/.config $ConfigFile 
+		fi
+
+
+		echo
+		echo -e ${GRE}All good${CLE}, you can snapshot then reboot your new FFtest kernel with "shutdown -r now"
+	else
+		echo
+		echo -e "** ${dRED}build failed${CLE} ** inspect build.log to find out why"
+	fi
+fi
+#-----------------------------------------------------------------------------#
+
+
+#-----------------------------------------------------------------------------#
+if [ $OS == "FreeBSD" ]; then
+
+if [ "$1" == "-w" ]; then
+	read -p "So you want to build the world? big job! risk it fast? [Ny] ?" ans
+	if [ "$ans" == "y" ]; then
+		echo " Executing 'make -j2 -DNO_CLEAN buildworld'"
+		make -j2  -DNO_CLEAN buildworld > $Based/buildworld.log
+	else
+		echo " Ok. executing 'make -j2  buildworld'"
+		make -j2  buildworld > $Based/buildworld.log
+	fi
+else
+	echo "Skipping world build"
+fi
+
+if [ $? -eq 0 ]; then    # if previous command exits with success
+	if [ "$1" == "-w" ]; then
+		tail -3 $Based/buildworld.log
+		echo Buildworld successful!
+		echo
+	fi
+
+	if [[ "$1" == "-c" ]] || [[ "$1" == "-w" ]]; then
+		echo "Now trying to build clean, executing 'make -j2  buildkernel KERNCONF=FFCLOCK'"
+		make -j2  buildkernel KERNCONF=FFCLOCK > $Based/build.log
+	else
+		echo "Now trying to build fast, executing 'make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK'"
+		make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK > $Based/build.log
+	fi
+
+	if [ $? -eq 0 ]; then    # if previous command exits with success
+		tail -3 $Based/build.log 
+		#if [ "$1" == "-w" ]; then
+		if [ "-w" == "-w" ]; then
+			echo Build successful, now executing 'make installkernel KERNCONF=FFCLOCK'
+			make installkernel KERNCONF=FFCLOCK		> $Based/install.log
+			echo All good, you can snapshot then reboot
+		else
+			echo Build successful, now executing 'make installkernel KERNCONF=FFCLOCK  KODIR=/boot/FFtest'
+			make installkernel KERNCONF=FFCLOCK KODIR=/boot/FFtest	> $Based/install.log
+			nextboot -k FFtest
+			echo
+			echo All good, you can snapshot then reboot your new FFtest kernel [should fallback to this one if fails]
+		fi
+	else
+		echo
+		echo '** build failed ** inspect build.log to find out why'
+	fi
+else
+	echo
+	echo '** buildworld failed ** inspect buildworld.log to find out why'
+fi
+
+fi		# OS=FreeBSD
+#-----------------------------------------------------------------------------#
+
+popd

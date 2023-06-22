@@ -1,8 +1,6 @@
 /*
- * Copyright (C) 2006-2012, Julien Ridoux and Darryl Veitch
- * Copyright (C) 2013-2020, Darryl Veitch <darryl.veitch@uts.edu.au>
- * All rights reserved.
- *
+ * Copyright (C) 2006 The RADclock Project (see AUTHORS file)
+ * 
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
@@ -31,10 +29,7 @@
 
 #include "../config.h"
 
-/*
- * This is very strongly inspired by the bintime structure in FreeBSD. See
- * sys/time.h there for the details.
- */
+/* Ensure bintime defined (is standard in FreeBSD, but not linux) */
 #if defined (__FreeBSD__)
 #include <sys/time.h>
 #else
@@ -46,7 +41,7 @@ struct bintime {
 
 
 #if defined (__FreeBSD__) && defined (HAVE_SYS_TIMEFFC_H)
-#include <sys/timeffc.h>			// in userland, defines syscalls only
+#include <sys/timeffc.h>			// in userland, defines syscalls (only)
 #endif
 
 /* This is THE interface data structure with FF code.
@@ -60,6 +55,10 @@ struct bintime {
  *
  * The native FFclock corresponds to the native RADclock Ca(t), namely the
  * clock WithOut leaps since boot added in.
+ * Raw timestamp type correspondance
+ *    daemon:   typedef uint64_t vcounter_t  [ libradclock/radclock.h ]
+ *		FreeBSD:  typedef uint64_t ffcounter   [ timeffc.h ]
+ *		Linux:	 typedef u64 		ffcounter   [ radclock.h ]
 */
 struct ffclock_estimate {
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
@@ -113,5 +112,21 @@ struct radclock_fixedpoint
  */
 int set_kernel_fixedpoint(struct radclock *clock, struct radclock_fixedpoint *fp);
 
+
+#define	TWO32 ((long double)4294967296.0)	// 2^32
+
+static inline void
+bintime_to_ld(long double *time, struct bintime *bt)
+{
+	*time = bt->sec;
+	*time += (long double)(bt->frac) / TWO32 / TWO32;
+}
+
+static inline void
+ld_to_bintime(struct bintime *bt, long double *time)
+{
+	bt->sec = (time_t)*time;
+	bt->frac =  (*time - bt->sec) * TWO32 * TWO32;
+}
 
 #endif 	/* _KCLOCK_H */
