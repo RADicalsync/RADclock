@@ -38,6 +38,9 @@
 
 #include <linux/uaccess.h>
 #include <linux/compat.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
 #include <asm/unistd.h>
 
 #include <generated/timeconst.h>
@@ -265,6 +268,47 @@ COMPAT_SYSCALL_DEFINE2(settimeofday, struct old_timeval32 __user *, tv,
 }
 #endif
 
+#ifdef CONFIG_FFCLOCK
+/* Add two syscall callback functions */
+SYSCALL_DEFINE1(ffclock_getcounter, ffcounter __user *, ffcount)
+{
+	ffcounter now;
+	ffclock_read_counter(&now);
+	//printk("sys_ffclock_getcounter : is called.\n");
+
+	if (copy_to_user(ffcount, &now, sizeof(ffcounter)))
+		return -EFAULT;
+	return 0;
+}
+
+SYSCALL_DEFINE3(ffclock_getcounter_latency, ffcounter __user *, ffcount, u64 __user *, vcount_lat, u64 __user *, tsc_lat)
+{
+	ffcounter now = {0};
+	u64 tsc1, tsc2, tsc3 = 0;
+
+#ifdef __x86_64__
+
+	/* One for fun and warmup */
+	tsc1 = rdtsc_ordered();
+	tsc1 = rdtsc_ordered();
+	tsc2 = rdtsc_ordered();
+	ffclock_read_counter(&now);
+	tsc3 = rdtsc_ordered();
+
+	tsc1 = tsc2 - tsc1;		// latency of rdtsc back to back
+	tsc2 = tsc3 - tsc2;		// latency of FFcounter read
+
+#endif
+	if (copy_to_user(ffcount, &now, sizeof(ffcounter)))
+		return -EFAULT;
+	if (copy_to_user(vcount_lat, &tsc2, sizeof(u64)))
+		return -EFAULT;
+	if (copy_to_user(tsc_lat, &tsc1, sizeof(u64)))
+		return -EFAULT;
+	return 0;
+}
+#endif
+
 #ifdef CONFIG_64BIT
 SYSCALL_DEFINE1(adjtimex, struct __kernel_timex __user *, txc_p)
 {
@@ -449,7 +493,7 @@ time64_t mktime64(const unsigned int year0, const unsigned int mon0,
 }
 EXPORT_SYMBOL(mktime64);
 
-struct __kernel_old_timeval ns_to_kernel_old_timeval(s64 nsec)
+struct __kernel_old_timeval ns_to_kernel_old_timeval(const s64 nsec)
 {
 	struct timespec64 ts = ns_to_timespec64(nsec);
 	struct __kernel_old_timeval tv;
@@ -503,7 +547,7 @@ EXPORT_SYMBOL(set_normalized_timespec64);
  *
  * Returns the timespec64 representation of the nsec parameter.
  */
-struct timespec64 ns_to_timespec64(s64 nsec)
+struct timespec64 ns_to_timespec64(const s64 nsec)
 {
 	struct timespec64 ts = { 0, 0 };
 	s32 rem;
@@ -571,7 +615,7 @@ EXPORT_SYMBOL(__usecs_to_jiffies);
 /*
  * The TICK_NSEC - 1 rounds up the value to the next resolution.  Note
  * that a remainder subtract here would not do the right thing as the
- * resolution values don't fall on second boundaries.  I.e. the line:
+ * resolution values don't fall on second boundries.  I.e. the line:
  * nsec -= nsec % TICK_NSEC; is NOT a correct resolution rounding.
  * Note that due to the small error in the multiplier here, this
  * rounding is incorrect for sufficiently large values of tv_nsec, but

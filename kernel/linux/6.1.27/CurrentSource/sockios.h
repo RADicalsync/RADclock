@@ -19,7 +19,6 @@
 #ifndef _LINUX_SOCKIOS_H
 #define _LINUX_SOCKIOS_H
 
-#include <asm/bitsperlong.h>
 #include <asm/sockios.h>
 
 /* Linux-specific socket ioctls */
@@ -36,17 +35,6 @@
 #define SIOCGSTAMP_NEW	 _IOR(SOCK_IOC_TYPE, 0x06, long long[2])
 /* Get stamp (timespec) */
 #define SIOCGSTAMPNS_NEW _IOR(SOCK_IOC_TYPE, 0x07, long long[2])
-
-#if __BITS_PER_LONG == 64 || (defined(__x86_64__) && defined(__ILP32__))
-/* on 64-bit and x32, avoid the ?: operator */
-#define SIOCGSTAMP	SIOCGSTAMP_OLD
-#define SIOCGSTAMPNS	SIOCGSTAMPNS_OLD
-#else
-#define SIOCGSTAMP	((sizeof(struct timeval))  == 8 ? \
-			 SIOCGSTAMP_OLD   : SIOCGSTAMP_NEW)
-#define SIOCGSTAMPNS	((sizeof(struct timespec)) == 8 ? \
-			 SIOCGSTAMPNS_OLD : SIOCGSTAMPNS_NEW)
-#endif
 
 /* Routing table calls. */
 #define SIOCADDRT	0x890B		/* add routing table entry	*/
@@ -152,6 +140,11 @@
 /* hardware time stamping: parameters in linux/net_tstamp.h */
 #define SIOCSHWTSTAMP	0x89b0		/* set and get config		*/
 #define SIOCGHWTSTAMP	0x89b1		/* get config			*/
+
+#define SIOCGFFCLOCKSTAMP 0x89b2		/* get current ffcount timestamp */
+/* These should be higher up, but no harm done, keep under one FFCLOCK roof */
+#define SIOCSFFCLOCKTSMODE	0x8908	/* set FFCLOCK timestamp mode */
+#define SIOCGFFCLOCKTSMODE	0x8909	/* get FFCLOCK timestamp mode */
 
 /* Device private ioctl calls */
 
