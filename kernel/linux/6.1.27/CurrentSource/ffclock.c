@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause
  *
- * FFclock data support:		Support for the kernel form (ffclock_estimate) of
- *		the FeedForward clock daemon state data used as the synchronization
- *		update input to the FFclock code defined in timekeeping.c .
+ * FFclock data support:  Support for the kernel form (ffclock_estimate) of
+ *    the FeedForward clock daemon state data used as the synchronization
+ *    update input to the FFclock code defined in timekeeping.c .
  *
  * The code is chiefly to support netlink based communication with the daemon
  * to allow get/set of FFdata, and sysfs support.
@@ -34,8 +34,8 @@ extern int8_t ffclock_updated;
 extern struct rw_semaphore ffclock_mtx;
 
 static struct nla_policy ffclock_policy[FFCLOCK_ATTR_MAX +1] __read_mostly = {
-	[FFCLOCK_ATTR_DUMMY]		= { .type = NLA_U16 },
-	[FFCLOCK_ATTR_DATA]		= { .len = sizeof(struct ffclock_estimate) },
+	[FFCLOCK_ATTR_DUMMY] = { .type = NLA_U16 },
+	[FFCLOCK_ATTR_DATA]  = { .len = sizeof(struct ffclock_estimate) },
 };
 
 static struct genl_family ffclock_genl = {
@@ -43,6 +43,7 @@ static struct genl_family ffclock_genl = {
 	.version = 0x1,
 	.maxattr = FFCLOCK_ATTR_MAX,
 	.policy = ffclock_policy,
+	.resv_start_op = __FFCLOCK_CMD_MAX,    // skip validation for all ops
 	.module = THIS_MODULE,
 };
 
@@ -62,7 +63,7 @@ static int ffclock_fill_skb(struct genl_info *info, u32 flags, struct sk_buff *s
 	down_read(&ffclock_mtx);
 	puterr = nla_put(skb, FFCLOCK_ATTR_DATA, sizeof(ffclock_estimate), &ffclock_estimate);
 	up_read(&ffclock_mtx);
-	if (puterr<0)
+	if (puterr < 0)
 		goto nla_put_failure;
 
 	genlmsg_end(skb, hdr);
@@ -117,6 +118,8 @@ static int ffclock_getattr(struct sk_buff *skb, struct genl_info *info)
  */
 static int ffclock_setattr(struct sk_buff *skb, struct genl_info *info)
 {
+	//printk(KERN_INFO " ** ffclock_setattr : enter \n");
+
 	if (!info) {
 		printk(KERN_INFO " ** ffclock_setattr :  info bad, exiting \n");
 		return -1;
@@ -137,7 +140,7 @@ static int ffclock_setattr(struct sk_buff *skb, struct genl_info *info)
 		value = nla_data(info->attrs[FFCLOCK_ATTR_DATA]);
 		down_write(&ffclock_mtx);
 		memcpy(&ffclock_estimate, value, sizeof(ffclock_estimate));
-		ffclock_updated = 1; 		// signal that the FFdata is updated
+		ffclock_updated = 1;    // signal that the FFdata is updated
 		up_write(&ffclock_mtx);
 	}
 
@@ -174,18 +177,18 @@ static int ffclock_version = 2;
  * Provides sysfs interface to get ffclock version
  */
 static ssize_t version_ffclock_show(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
+    struct device_attribute *attr,
+    char *buf)
 {
 	ssize_t count = 0;
 
 	spin_lock_irq(&ffclock_lock);
 	count = snprintf(buf,
-			 max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "%d", ffclock_version);
+	    max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "%d", ffclock_version);
 	spin_unlock_irq(&ffclock_lock);
 
 	count += snprintf(buf + count,
-			max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
+	    max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
 
 	return count;
 }
@@ -203,20 +206,20 @@ int ffclock_tsmode = BPF_T_NANOTIME | BPF_T_FFC | BPF_T_NORMAL | BPF_T_FFNATIVEC
  * Provides sysfs interface to get ffclock timestamping mode
  */
 static ssize_t tsmode_ffclock_show(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
+    struct device_attribute *attr,
+    char *buf)
 {
 	ssize_t count = 0;
 
 	spin_lock_irq(&ffclock_lock);
 	count = snprintf(buf,
-			 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
-			"%d", ffclock_tsmode);
+	    max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
+	    "%d", ffclock_tsmode);
 
 	spin_unlock_irq(&ffclock_lock);
 
 	count += snprintf(buf + count,
-			  max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
+	    max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
 
 	return count;
 }
@@ -232,8 +235,8 @@ static ssize_t tsmode_ffclock_show(struct device *dev,
  * timestamping mode.
  */
 static ssize_t tsmode_ffclock_store(struct device *dev,
-					  struct device_attribute *attr,
-					  const char *buf, size_t count)
+    struct device_attribute *attr,
+    const char *buf, size_t count)
 {
 	long val;
 	size_t ret = count;
@@ -275,25 +278,25 @@ uint8_t ffcounter_bypass;
  * Provides sysfs interface for showing ffcount reading mode
  */
 static ssize_t bypass_ffclock_show(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
+    struct device_attribute *attr,
+    char *buf)
 {
 	ssize_t count = 0;
 
 	spin_lock_irq(&ffclock_lock);
 	if (ffcounter_bypass == 1)		// activate bypass
 		count = snprintf(buf,
-				 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
-				"1");
+		    max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
+		    "1");
 	else
 		count = snprintf(buf,
-				 max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
-				"0");
+		    max((ssize_t)PAGE_SIZE - count, (ssize_t)0),
+		    "0");
 
 	spin_unlock_irq(&ffclock_lock);
 
 	count += snprintf(buf + count,
-			  max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
+	    max((ssize_t)PAGE_SIZE - count, (ssize_t)0), "\n");
 
 	return count;
 }
@@ -307,8 +310,8 @@ static ssize_t bypass_ffclock_show(struct device *dev,
  * Takes input from sysfs interface for manually overriding the ffcount bypass mode.
  */
 static ssize_t bypass_ffclock_store(struct device *dev,
-					  struct device_attribute *attr,
-					  const char *buf, size_t count)
+    struct device_attribute *attr,
+    const char *buf, size_t count)
 {
 	size_t ret = count;
 
@@ -371,30 +374,36 @@ static int __init init_ffclock_sysfs(void)
 
 /* FFclock module definition */
 
-/* Register ffclock with netlink and sysfs */
+/*
+ * Register ffclock with netlink and sysfs.
+ * Try to get them both up for debugging purposes, even if have to shut back
+ * down later in case of error.
+ */
 static int __init ffclock_register(void)
 {
+	int reg_err, sysfs_err;
+
 	/* Register family and operations with netlink */
 	ffclock_genl.ops = ffclock_ops;
 	ffclock_genl.n_ops = 2;
-	if (genl_register_family(&ffclock_genl)) {
-		printk(KERN_WARNING "FFclock netlink socket could not be created, exiting\n");
-		goto errout;
-	} else
+	if (reg_err = genl_register_family(&ffclock_genl))
+		printk(KERN_WARNING "FFclock netlink socket not created (error %d)\n", reg_err);
+	else
 		printk(KERN_INFO "%s netlink family registered with id %d\n",
-							ffclock_genl.name, ffclock_genl.id);
+		    ffclock_genl.name, ffclock_genl.id);
 
 	/* Register ffclock sysfs subsystem */
-	if ( init_ffclock_sysfs() )
-		goto errout_unregister;
-	printk(KERN_INFO "Feed-Forward Clock sysfs initialized\n");
+	if (sysfs_err = init_ffclock_sysfs())
+		printk(KERN_WARNING "FFclock sysfs initialization failed (error %d)\n", sysfs_err);
+	else
+		printk(KERN_INFO "FFclock sysfs initialized\n");
 
-	return 0;
-
-errout_unregister:
-	genl_unregister_family(&ffclock_genl);
-errout:
-	return -EFAULT;
+	if (reg_err || sysfs_err) {
+		if (!reg_err)
+			genl_unregister_family(&ffclock_genl);
+		return -EFAULT;
+	} else
+		return 0;
 }
 
 static void __exit ffclock_unregister(void)

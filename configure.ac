@@ -558,6 +558,18 @@ case "$target_os" in
 					;;
 				esac
 			;;
+			6.1*)
+				case "$target_cpu" in
+					i386 | i486 | i586 | i686)
+						syscall_get_vcounter_number=451
+						syscall_get_vcounter_latency_number=452
+					;;
+					x86_64)
+						syscall_get_vcounter_number=451
+						syscall_get_vcounter_latency_number=452
+					;;
+				esac
+			;;
 			# Set to zero and raise an error if it's not a supported kernel
 			*)
 				syscall_get_vcounter_number=0

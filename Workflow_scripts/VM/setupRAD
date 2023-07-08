@@ -16,7 +16,7 @@ fi
 
 Based="$HOME/FFkernel_Work"
 RADbuild="$Based/RADclock_working"
-echo -e "${BLE}Configuring RADclock for the first time, assuming build directory $RADbuild exists{CLE}$"
+echo -e "${BLU}Configuring RADclock for the first time, assuming build directory $RADbuild exists${CLE}"
 
 echo
 echo "*** Get current source ***"
@@ -47,8 +47,9 @@ cd $RADbuild
 autoreconf -if
 
 echo
-echo "*** Configuring quietly ***"
-configure -q
+echo "*** Configuring quietly (output to RADconfig.log) ***"
+configure &> RADconfig.log
+tail -8 RADconfig.log
 
 echo
 echo "*** Making radclock  ***"
