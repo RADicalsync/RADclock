@@ -30,6 +30,9 @@ if [ $OnPi == "Yes" ]; then
 	RADsource="$ServerHome:$Repo"
 else
 	RADsource=$Based/V4_mountedfrom_Icaro/RADclock_mycurrent
+# This is for one-off needs ONly. Typically want to keep all non-FF changes (both RAD
+# and workflow), in the original repo even during portloop based testing!
+#	RADsource=$Based/V4_mountedfrom_Icaro/TestingGround/PortloopRepoBWorm
 fi
 
 RADtarget=$Based/RADclock_working

@@ -271,12 +271,12 @@ main (int argc, char *argv[])
 	cus[4] = 0x2212;			// FFmono;   Upt !FAST; bintime
 	cus[5] = 0x1212;			// FBclock;  Upt !FAST; bintime
 	// Linux choice
-//	cus[0] = 0x3011;			// FFnative; UTC !FAST; nanotime
-//	cus[1] = 0x2011;			// FFmono;   UTC !FAST;    "
-//	cus[2] = 0x0011;			// SYSclock; UTC !FAST;    "
-//	cus[3] = 0x1011;			// FBclock;  UTC !FAST;    "
-//	cus[4] = 0x2211;			// FFmono;   Upt !FAST;    "
-//	cus[5] = 0x1211;			// FBclock;  Upt !FAST;    "
+	cus[0] = 0x3011;			// FFnative; UTC !FAST; nanotime
+	cus[1] = 0x2011;			// FFmono;   UTC !FAST;    "
+	cus[2] = 0x0011;			// SYSclock; UTC !FAST;    "
+	cus[3] = 0x1011;			// FBclock;  UTC !FAST;    "
+	cus[4] = 0x2211;			// FFmono;   Upt !FAST;    "
+	cus[5] = 0x1211;			// FBclock;  Upt !FAST;    "
 
 
 	printf("------------------- Setting the packet tsmodes ------------------\n");
@@ -324,6 +324,8 @@ main (int argc, char *argv[])
 		fprintf(output_fd, " (%llu)	%3.9Lf [s]\n", (long long unsigned)v[i], ti[i]);
 		fprintf(stdout,    " (%llu)	%3.9Lf [s]\n", (long long unsigned)v[i], ti[i]);
 	}
+	fprintf(stdout, "\n ** Remember in Linux, uptime FB is in fact UTC \n");
+
 	if ( ! (v[0] == v[1] && v[2] == v[3] && v[0] == v[3]) ) printf(" raw timestamps differ !! \n");
 	//vi = v[0];
 
