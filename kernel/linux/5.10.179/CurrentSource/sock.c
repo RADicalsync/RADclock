@@ -139,6 +139,10 @@
 #include <net/tcp.h>
 #include <net/busy_poll.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>		// for ffclock_tsmode
+#endif
+
 static DEFINE_MUTEX(proto_list_mutex);
 static LIST_HEAD(proto_list);
 
@@ -2968,7 +2972,7 @@ void sk_stop_timer_sync(struct sock *sk, struct timer_list *timer)
 }
 EXPORT_SYMBOL(sk_stop_timer_sync);
 
-void sock_init_data_uid(struct socket *sock, struct sock *sk, kuid_t uid)
+void sock_init_data(struct socket *sock, struct sock *sk)
 {
 	sk_init_common(sk);
 	sk->sk_send_head	=	NULL;
@@ -2987,10 +2991,11 @@ void sock_init_data_uid(struct socket *sock, struct sock *sk, kuid_t uid)
 		sk->sk_type	=	sock->type;
 		RCU_INIT_POINTER(sk->sk_wq, &sock->wq);
 		sock->sk	=	sk;
+		sk->sk_uid	=	SOCK_INODE(sock)->i_uid;
 	} else {
 		RCU_INIT_POINTER(sk->sk_wq, NULL);
+		sk->sk_uid	=	make_kuid(sock_net(sk)->user_ns, 0);
 	}
-	sk->sk_uid	=	uid;
 
 	rwlock_init(&sk->sk_callback_lock);
 	if (sk->sk_kern_sock)
@@ -3024,6 +3029,11 @@ void sock_init_data_uid(struct socket *sock, struct sock *sk, kuid_t uid)
 	sk->sk_sndtimeo		=	MAX_SCHEDULE_TIMEOUT;
 
 	sk->sk_stamp = SK_DEFAULT_STAMP;
+#ifdef CONFIG_FFCLOCK
+	sk->sk_ffclock_ffc = 0;
+	sk->sk_ffclock_tsmode = ffclock_tsmode;
+#endif
+
 #if BITS_PER_LONG==32
 	seqlock_init(&sk->sk_stamp_seq);
 #endif
@@ -3047,16 +3057,6 @@ void sock_init_data_uid(struct socket *sock, struct sock *sk, kuid_t uid)
 	smp_wmb();
 	refcount_set(&sk->sk_refcnt, 1);
 	atomic_set(&sk->sk_drops, 0);
-}
-EXPORT_SYMBOL(sock_init_data_uid);
-
-void sock_init_data(struct socket *sock, struct sock *sk)
-{
-	kuid_t uid = sock ?
-		SOCK_INODE(sock)->i_uid :
-		make_kuid(sock_net(sk)->user_ns, 0);
-
-	sock_init_data_uid(sock, sk, uid);
 }
 EXPORT_SYMBOL(sock_init_data);
 

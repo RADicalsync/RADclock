@@ -445,3 +445,8 @@
 438	i386	pidfd_getfd		sys_pidfd_getfd
 439	i386	faccessat2		sys_faccessat2
 440	i386	process_madvise		sys_process_madvise
+//#ifdef CONFIG_FFCLOCK
+///* FIXME: I have no 32 compat version here, so omit last column? */
+//441	i386	ffclock_getcounter	sys_ffclock_getcounter		sys_ffclock_getcounter
+//442	i386	ffclock_getcounter_latency	sys_ffclock_getcounter_latency	sys_ffclock_getcounter_latency
+//#endif

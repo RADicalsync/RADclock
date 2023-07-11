@@ -105,6 +105,10 @@
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
 unsigned int sysctl_net_busy_poll __read_mostly;
@@ -1165,6 +1169,12 @@ static long sock_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 			break;
 		case SIOCGSTAMP:
 		case SIOCGSTAMPNS:
+#ifdef CONFIG_FFCLOCK
+			printk("FFC: processing SIOC Get STAMP (%s:%d)\n", __FILE__, __LINE__);
+			ffclock_fill_timestamps(sk->sk_ffclock_ffc,
+			(sk->sk_ffclock_tsmode & ~BPF_T_FFC), NULL, // cancel any raw request
+			&sk->sk_stamp);
+#endif
 			if (!sock->ops->gettstamp) {
 				err = -ENOIOCTLCMD;
 				break;
@@ -1175,6 +1185,12 @@ static long sock_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 			break;
 		case SIOCGSTAMP_NEW:
 		case SIOCGSTAMPNS_NEW:
+#ifdef CONFIG_FFCLOCK
+			printk("FFC: processing SIOC Get STAMP_NEW (%s:%d)\n", __FILE__, __LINE__);
+			ffclock_fill_timestamps(sk->sk_ffclock_ffc,
+			(sk->sk_ffclock_tsmode & ~BPF_T_FFC), NULL, // cancel any raw request
+			&sk->sk_stamp);
+#endif
 			if (!sock->ops->gettstamp) {
 				err = -ENOIOCTLCMD;
 				break;
@@ -1688,22 +1704,30 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 	return __sys_listen(fd, backlog);
 }
 
-struct file *do_accept(struct file *file, unsigned file_flags,
+int __sys_accept4_file(struct file *file, unsigned file_flags,
 		       struct sockaddr __user *upeer_sockaddr,
-		       int __user *upeer_addrlen, int flags)
+		       int __user *upeer_addrlen, int flags,
+		       unsigned long nofile)
 {
 	struct socket *sock, *newsock;
 	struct file *newfile;
-	int err, len;
+	int err, len, newfd;
 	struct sockaddr_storage address;
+
+	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
+		return -EINVAL;
+
+	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
+		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
 
 	sock = sock_from_file(file, &err);
 	if (!sock)
-		return ERR_PTR(err);
+		goto out;
 
+	err = -ENFILE;
 	newsock = sock_alloc();
 	if (!newsock)
-		return ERR_PTR(-ENFILE);
+		goto out;
 
 	newsock->type = sock->type;
 	newsock->ops = sock->ops;
@@ -1714,9 +1738,18 @@ struct file *do_accept(struct file *file, unsigned file_flags,
 	 */
 	__module_get(newsock->ops->owner);
 
+	newfd = __get_unused_fd_flags(flags, nofile);
+	if (unlikely(newfd < 0)) {
+		err = newfd;
+		sock_release(newsock);
+		goto out;
+	}
 	newfile = sock_alloc_file(newsock, flags, sock->sk->sk_prot_creator->name);
-	if (IS_ERR(newfile))
-		return newfile;
+	if (IS_ERR(newfile)) {
+		err = PTR_ERR(newfile);
+		put_unused_fd(newfd);
+		goto out;
+	}
 
 	err = security_socket_accept(sock, newsock);
 	if (err)
@@ -1741,38 +1774,16 @@ struct file *do_accept(struct file *file, unsigned file_flags,
 	}
 
 	/* File flags are not inherited via accept() unlike another OSes. */
-	return newfile;
+
+	fd_install(newfd, newfile);
+	err = newfd;
+out:
+	return err;
 out_fd:
 	fput(newfile);
-	return ERR_PTR(err);
-}
+	put_unused_fd(newfd);
+	goto out;
 
-int __sys_accept4_file(struct file *file, unsigned file_flags,
-		       struct sockaddr __user *upeer_sockaddr,
-		       int __user *upeer_addrlen, int flags,
-		       unsigned long nofile)
-{
-	struct file *newfile;
-	int newfd;
-
-	if (flags & ~(SOCK_CLOEXEC | SOCK_NONBLOCK))
-		return -EINVAL;
-
-	if (SOCK_NONBLOCK != O_NONBLOCK && (flags & SOCK_NONBLOCK))
-		flags = (flags & ~SOCK_NONBLOCK) | O_NONBLOCK;
-
-	newfd = __get_unused_fd_flags(flags, nofile);
-	if (unlikely(newfd < 0))
-		return newfd;
-
-	newfile = do_accept(file, file_flags, upeer_sockaddr, upeer_addrlen,
-			    flags);
-	if (IS_ERR(newfile)) {
-		put_unused_fd(newfd);
-		return PTR_ERR(newfile);
-	}
-	fd_install(newfd, newfile);
-	return newfd;
 }
 
 /*
@@ -2186,17 +2197,6 @@ SYSCALL_DEFINE5(getsockopt, int, fd, int, level, int, optname,
  *	Shutdown a socket.
  */
 
-int __sys_shutdown_sock(struct socket *sock, int how)
-{
-	int err;
-
-	err = security_socket_shutdown(sock, how);
-	if (!err)
-		err = sock->ops->shutdown(sock, how);
-
-	return err;
-}
-
 int __sys_shutdown(int fd, int how)
 {
 	int err, fput_needed;
@@ -2204,7 +2204,9 @@ int __sys_shutdown(int fd, int how)
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
-		err = __sys_shutdown_sock(sock, how);
+		err = security_socket_shutdown(sock, how);
+		if (!err)
+			err = sock->ops->shutdown(sock, how);
 		fput_light(sock->file, fput_needed);
 	}
 	return err;
@@ -2419,6 +2421,10 @@ static int ___sys_sendmsg(struct socket *sock, struct user_msghdr __user *msg,
 long __sys_sendmsg_sock(struct socket *sock, struct msghdr *msg,
 			unsigned int flags)
 {
+	/* disallow ancillary data requests from this path */
+	if (msg->msg_control || msg->msg_controllen)
+		return -EINVAL;
+
 	return ____sys_sendmsg(sock, msg, flags, NULL, 0);
 }
 
@@ -2627,6 +2633,12 @@ long __sys_recvmsg_sock(struct socket *sock, struct msghdr *msg,
 			struct user_msghdr __user *umsg,
 			struct sockaddr __user *uaddr, unsigned int flags)
 {
+	if (msg->msg_control || msg->msg_controllen) {
+		/* disallow ancillary data reqs unless cmsg is plain data */
+		if (!(sock->ops->flags & PROTO_CMSG_DATA_ONLY))
+			return -EINVAL;
+	}
+
 	return ____sys_recvmsg(sock, msg, umsg, uaddr, flags, 0);
 }
 
@@ -3091,6 +3103,26 @@ void socket_seq_show(struct seq_file *seq)
 #endif				/* CONFIG_PROC_FS */
 
 #ifdef CONFIG_COMPAT
+
+//#ifdef CONFIG_FFCLOCK
+//static int do_siocgffclockstamp(struct net *net, struct socket *sock,
+//			 unsigned int cmd, unsigned long long __user *up)
+//{
+//	mm_segment_t old_fs = get_fs();
+//	__u64 val;
+//	int err=0;
+//
+//	printk("compat SIOC Get FFCLOCKSTAMP used (%s:%d)\n", __FILE__, __LINE__);
+//	set_fs(KERNEL_DS);
+//	err = sock_do_ioctl(net, sock, cmd, (unsigned long)&val);
+//	set_fs(old_fs);
+//	if (!err)
+//		err = put_user(val, up);        // I think this is good.
+//
+//	return err;
+//}
+//#endif
+
 static int compat_dev_ifconf(struct net *net, struct compat_ifconf __user *uifc32)
 {
 	struct compat_ifconf ifc32;
@@ -3290,6 +3322,12 @@ static int compat_sock_ioctl_trans(struct file *file, struct socket *sock,
 	case SIOCSHWTSTAMP:
 	case SIOCGHWTSTAMP:
 		return compat_ifr_data_ioctl(net, cmd, argp);
+#ifdef CONFIG_FFCLOCK
+	case SIOCGFFCLOCKSTAMP:
+		printk("found SIOC Get FFCLOCKSTAMP (%s:%d)\n", __FILE__, __LINE__);
+		//return do_siocgffclockstamp(net, sock, cmd, argp);
+		return 0;
+#endif
 
 	case FIOSETOWN:
 	case SIOCSPGRP:

@@ -69,6 +69,10 @@
 #include <linux/net_tstamp.h>
 #include <net/l3mdev.h>
 
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
+
 /*
  * This structure really needs to be cleaned up.
  * Most of it is for TCP, and not used by any of
@@ -315,7 +319,7 @@ struct bpf_local_storage;
   *	@sk_tskey: counter to disambiguate concurrent tstamp requests
   *	@sk_zckey: counter to order MSG_ZEROCOPY notifications
   *	@sk_socket: Identd and reporting IO signals
-  *	@sk_user_data: RPC layer private data. Write-protected by @sk_callback_lock.
+  *	@sk_user_data: RPC layer private data
   *	@sk_frag: cached page frag
   *	@sk_peek_off: current peek_offset value
   *	@sk_send_head: front of stuff to transmit
@@ -421,7 +425,7 @@ struct sock {
 #ifdef CONFIG_XFRM
 	struct xfrm_policy __rcu *sk_policy[2];
 #endif
-	struct dst_entry __rcu	*sk_rx_dst;
+	struct dst_entry	*sk_rx_dst;
 	struct dst_entry __rcu	*sk_dst_cache;
 	atomic_t		sk_omem_alloc;
 	int			sk_sndbuf;
@@ -519,6 +523,10 @@ struct sock {
 	struct bpf_local_storage __rcu	*sk_bpf_storage;
 #endif
 	struct rcu_head		sk_rcu;
+#ifdef CONFIG_FFCLOCK
+	ffcounter		sk_ffclock_ffc;
+	long			sk_ffclock_tsmode;
+#endif
 };
 
 enum sk_pacing {
@@ -1775,12 +1783,7 @@ void sk_common_release(struct sock *sk);
  *	Default socket callbacks and setup code
  */
 
-/* Initialise core socket variables using an explicit uid. */
-void sock_init_data_uid(struct socket *sock, struct sock *sk, kuid_t uid);
-
-/* Initialise core socket variables.
- * Assumes struct socket *sock is embedded in a struct socket_alloc.
- */
+/* Initialise core socket variables */
 void sock_init_data(struct socket *sock, struct sock *sk);
 
 /*
@@ -2246,19 +2249,6 @@ static inline __must_check bool skb_set_owner_sk_safe(struct sk_buff *skb, struc
 		return true;
 	}
 	return false;
-}
-
-static inline struct sk_buff *skb_clone_and_charge_r(struct sk_buff *skb, struct sock *sk)
-{
-	skb = skb_clone(skb, sk_gfp_mask(sk, GFP_ATOMIC));
-	if (skb) {
-		if (sk_rmem_schedule(sk, skb, skb->truesize)) {
-			skb_set_owner_r(skb, sk);
-			return skb;
-		}
-		__kfree_skb(skb);
-	}
-	return NULL;
 }
 
 void sk_reset_timer(struct sock *sk, struct timer_list *timer,

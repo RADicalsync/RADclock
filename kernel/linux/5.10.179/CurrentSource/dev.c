@@ -2321,6 +2321,12 @@ void dev_queue_xmit_nit(struct sk_buff *skb, struct net_device *dev)
 	struct packet_type *pt_prev = NULL;
 	struct list_head *ptype_list = &ptype_all;
 
+#ifdef CONFIG_FFCLOCK
+//	printk("==>FFC XMIT_nit:  skb->ffclock_ffc = %llu", skb->ffclock_ffc);
+	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk(" --> %llu\n", skb->ffclock_ffc);
+#endif
+
 	rcu_read_lock();
 again:
 	list_for_each_entry_rcu(ptype, ptype_list, list) {
@@ -3119,10 +3125,8 @@ void __dev_kfree_skb_any(struct sk_buff *skb, enum skb_free_reason reason)
 {
 	if (in_irq() || irqs_disabled())
 		__dev_kfree_skb_irq(skb, reason);
-	else if (unlikely(reason == SKB_REASON_DROPPED))
-		kfree_skb(skb);
 	else
-		consume_skb(skb);
+		dev_kfree_skb(skb);
 }
 EXPORT_SYMBOL(__dev_kfree_skb_any);
 
@@ -3633,7 +3637,7 @@ static struct sk_buff *validate_xmit_vlan(struct sk_buff *skb,
 int skb_csum_hwoffload_help(struct sk_buff *skb,
 			    const netdev_features_t features)
 {
-	if (unlikely(skb_csum_is_sctp(skb)))
+	if (unlikely(skb->csum_not_inet))
 		return !!(features & NETIF_F_SCTP_CRC) ? 0 :
 			skb_crc32c_csum_help(skb);
 
@@ -4800,6 +4804,12 @@ static int netif_rx_internal(struct sk_buff *skb)
 
 	net_timestamp_check(READ_ONCE(netdev_tstamp_prequeue), skb);
 
+#ifdef CONFIG_FFCLOCK
+	/* Copy the FFclock raw timestamp to the skbuff */
+//	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk("=>>FFC netif_RX_internal:   ffc = %llu\n", skb->ffclock_ffc);
+#endif
+
 	trace_netif_rx(skb);
 
 #ifdef CONFIG_RPS
@@ -5158,6 +5168,13 @@ static int __netif_receive_skb_core(struct sk_buff **pskb, bool pfmemalloc,
 	bool deliver_exact = false;
 	int ret = NET_RX_DROP;
 	__be16 type;
+
+#ifdef CONFIG_FFCLOCK
+//	/* Copy the FFclock raw timestamp to the skbuff */
+//	printk("<==FFC __netif_receive_skb_core:  skb->ffclock_ffc = %llu", skb->ffclock_ffc);
+	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk(" --> %llu\n", skb->ffclock_ffc);
+#endif
 
 	net_timestamp_check(!READ_ONCE(netdev_tstamp_prequeue), skb);
 
@@ -5563,6 +5580,12 @@ static int netif_receive_skb_internal(struct sk_buff *skb)
 
 	net_timestamp_check(READ_ONCE(netdev_tstamp_prequeue), skb);
 
+#ifdef CONFIG_FFCLOCK
+//	/* Copy the FFclock raw timestamp to the skbuff */
+//	ffclock_read_counter(&skb->ffclock_ffc);
+//	printk("<==FFC netif_RECEIVE_skb_internal:    set skb->ffclock_ffc = %llu\n", skb->ffclock_ffc);
+#endif
+
 	if (skb_defer_rx_timestamp(skb))
 		return NET_RX_SUCCESS;
 
@@ -5588,6 +5611,10 @@ static void netif_receive_skb_list_internal(struct list_head *head)
 {
 	struct sk_buff *skb, *next;
 	struct list_head sublist;
+
+#ifdef CONFIG_FFCLOCK
+//	printk("<==FFC netif_RECEIVE_skb_list:   ");
+#endif
 
 	INIT_LIST_HEAD(&sublist);
 	list_for_each_entry_safe(skb, next, head, list) {
@@ -6111,7 +6138,6 @@ EXPORT_SYMBOL(gro_find_complete_by_type);
 
 static void napi_skb_free_stolen_head(struct sk_buff *skb)
 {
-	nf_reset_ct(skb);
 	skb_dst_drop(skb);
 	skb_ext_put(skb);
 	kmem_cache_free(skbuff_head_cache, skb);
@@ -10323,16 +10349,24 @@ void netdev_run_todo(void)
 void netdev_stats_to_stats64(struct rtnl_link_stats64 *stats64,
 			     const struct net_device_stats *netdev_stats)
 {
-	size_t i, n = sizeof(*netdev_stats) / sizeof(atomic_long_t);
-	const atomic_long_t *src = (atomic_long_t *)netdev_stats;
+#if BITS_PER_LONG == 64
+	BUILD_BUG_ON(sizeof(*stats64) < sizeof(*netdev_stats));
+	memcpy(stats64, netdev_stats, sizeof(*netdev_stats));
+	/* zero out counters that only exist in rtnl_link_stats64 */
+	memset((char *)stats64 + sizeof(*netdev_stats), 0,
+	       sizeof(*stats64) - sizeof(*netdev_stats));
+#else
+	size_t i, n = sizeof(*netdev_stats) / sizeof(unsigned long);
+	const unsigned long *src = (const unsigned long *)netdev_stats;
 	u64 *dst = (u64 *)stats64;
 
 	BUILD_BUG_ON(n > sizeof(*stats64) / sizeof(u64));
 	for (i = 0; i < n; i++)
-		dst[i] = (unsigned long)atomic_long_read(&src[i]);
+		dst[i] = src[i];
 	/* zero out counters that only exist in rtnl_link_stats64 */
 	memset((char *)stats64 + n * sizeof(u64), 0,
 	       sizeof(*stats64) - n * sizeof(u64));
+#endif
 }
 EXPORT_SYMBOL(netdev_stats_to_stats64);
 

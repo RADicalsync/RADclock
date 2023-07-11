@@ -82,6 +82,9 @@ struct open_how;
 #include <linux/key.h>
 #include <linux/personality.h>
 #include <trace/syscall.h>
+#ifdef CONFIG_FFCLOCK
+#include <linux/ffclock.h>
+#endif
 
 #ifdef CONFIG_ARCH_HAS_SYSCALL_WRAPPER
 /*
@@ -341,7 +344,7 @@ asmlinkage long sys_io_uring_setup(u32 entries,
 				struct io_uring_params __user *p);
 asmlinkage long sys_io_uring_enter(unsigned int fd, u32 to_submit,
 				u32 min_complete, u32 flags,
-				const void __user *argp, size_t argsz);
+				const sigset_t __user *sig, size_t sigsz);
 asmlinkage long sys_io_uring_register(unsigned int fd, unsigned int op,
 				void __user *arg, unsigned int nr_args);
 
@@ -1032,6 +1035,12 @@ asmlinkage long sys_pidfd_send_signal(int pidfd, int sig,
 				       siginfo_t __user *info,
 				       unsigned int flags);
 asmlinkage long sys_pidfd_getfd(int pidfd, int fd, unsigned int flags);
+
+/* Placed here to match syscall # order in uapi/asm-generic/unistd.h */
+#ifdef CONFIG_FFCLOCK
+asmlinkage long sys_ffclock_getcounter(ffcounter __user *ffcount);
+asmlinkage long sys_ffclock_getcounter_latency(ffcounter __user *ffcount, u64 __user *vcount_lat, u64 __user *tsc_lat);
+#endif
 
 /*
  * Architecture-specific system calls
