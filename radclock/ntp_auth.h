@@ -28,27 +28,26 @@
 #define NTP_AUTH
 
 
-#define PUBLIC_KEY_FILE_PATH "/etc/radclock_public.keys"
+#define PUBLIC_KEY_FILE_PATH  "/etc/radclock_public.keys"
 #define PRIVATE_KEY_FILE_PATH "/etc/radclock_private.keys"
 #define MAX_NTP_KEYS  128
 #define PRIVATE_CN_NTP_KEYS  MAX_NTP_KEYS / 2
 
 
-#define IS_PRIVATE_KEY(x) (x>=PRIVATE_CN_NTP_KEYS)
-#define IS_PUBLIC_KEY(x) (x<PRIVATE_CN_NTP_KEYS)
+#define IS_PRIVATE_KEY(x) ((x)>=PRIVATE_CN_NTP_KEYS)
+#define IS_PUBLIC_KEY(x)  ((x)< PRIVATE_CN_NTP_KEYS)
 
 /*
  * Convert char string into byte array
 */
 char *
-cstr_2_bytes(char * key_str);
-
+cstr_2_bytes(char *key_str);
 
 /*
  * Adds authentication key
 */
 void
-add_auth_key(char ** key_data, char * buff, int is_private_key);
+add_auth_key(char **key_data, char *buff, int is_private_key);
 
 /*
  * Read authentication keys to validate requests

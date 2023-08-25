@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+
+
+# TODO: make this script smarter, more automatic with checks and options,
+#  allowing more than one usage (eg recompile or not, relaunch dag capture or not)
+#  and checks with aborts if things not good.
+
+# TODO: currently DAG captures all pkts! filename here is inaccurate but indicates what we need.
+#     Instead could use dagsnap to get srcIP and NTP filtering done on DAG,
+#     then pipe to dagconvert, similar to dag_capture.sh
+
+# Process options
+if [[ "$1" == "-c" ]]; then
+	capture="true"
+fi
+
+## Parameters
+RawCaptureFile="/tmp/trustnode_NTP.erf"             # currently a misnomer
+TrustNodeIP="10.0.0.55"    # platypus2
+
+## DAGcard preparation
+# TODO: probably move out here into a dag setup script
+# After DAG machine reboot - possibly needed to run
+# dagconfig default
+# make -C /sys/modules/dag load
+
+## Current state
+echo ">>> Initial state of things"
+ps -aux |grep 'DAG\|dag' |grep -v grep
+ls -l $RawCaptureFile
+echo
+
+## DAG capture process
+if [ "$capture" == "true" ]; then
+	pkill dagconvert
+	sleep 2
+	echo ">>> Launching a new dag raw capture to file $RawCaptureFile"
+	dagconvert -d0 -o $RawCaptureFile &   # runs DAG capture on all packets !
+	echo "Waiting for capture to start.. ---------------------------------------"
+	sleep 5
+	echo "----------------------------------------------------------------------"
+fi
+
+
+## DAGstamp generation and delivery to TrustNode
+##  Notes: requires auth key files be copied to /etc , available from
+##         NTC_CommandAndControl/Configuration/NTP_keys/Key_Database/ .
+##         /usr/local/dag/include/  has most, but not all, .h needed
+if [ "$capture" != "true" ]; then
+	echo
+	echo ">>> Compiling DAGstamp generator/sender dagstamp_gen"
+	clang dagstamp_gen.c ../radclock/ntp_auth.c -o dagstamp_gen -lwolfssl -L/usr/local/lib/ \
+		-I /usr/src/sys         \
+		-I /usr/local/include/  \
+		-I DAG_support_5.5.0
+	echo
+
+	echo "Kill old dagstamp_gen processes before relaunch"
+	pkill dagstamp_gen
+	\mv dagstamp.out dagstamp_old.out
+	echo
+
+	echo ">>> Relaunch dagstamp_gen, sending DAGstamps to TrustNode with IP: $TrustNodeIP"
+	./dagstamp_gen $RawCaptureFile $TrustNodeIP >  dagstamp.out  &
+fi
+
+
+## New state
+echo ">>> New state of things after a little wait"
+sleep 2
+ps -aux |grep 'DAG\|dag' |grep -v grep
+ls -l $RawCaptureFile
+echo
+
+
+## Attic
+# pkill dagstamp_gen dagconvert
+# sudo dagconvert -d0 -o /tmp/shm_dag.erf  -r 1m --fnum 2    // WIP, code doesn't support
+# Alternative capture method for possible future use, accepts a filter as argument
+# sudo dagsnap -d0 -o /tmp/shm_dag.erf
+
