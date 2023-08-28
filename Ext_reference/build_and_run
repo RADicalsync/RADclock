@@ -28,12 +28,14 @@ TrustNodeIP="10.0.0.55"    # platypus2
 echo ">>> Initial state of things"
 ps -aux |grep 'DAG\|dag' |grep -v grep
 ls -l $RawCaptureFile
+ls -l /etc/radclock*
 echo
 
 ## DAG capture process
 if [ "$capture" == "true" ]; then
 	pkill dagconvert
 	sleep 2
+	\mv $RawCaptureFile $RawCaptureFile_old
 	echo ">>> Launching a new dag raw capture to file $RawCaptureFile"
 	dagconvert -d0 -o $RawCaptureFile &   # runs DAG capture on all packets !
 	echo "Waiting for capture to start.. ---------------------------------------"
@@ -69,7 +71,8 @@ fi
 echo ">>> New state of things after a little wait"
 sleep 2
 ps -aux |grep 'DAG\|dag' |grep -v grep
-ls -l $RawCaptureFile
+ls -l $RawCaptureFile*
+ls -l /etc/radclock*
 echo
 
 

@@ -41,7 +41,7 @@
  * Convert char string into byte array
  */
 char *
-cstr_2_bytes(char * key_str)
+cstr_2_bytes(char *key_str)
 {
 	int num_bytes = strlen(key_str) / 2;
 
@@ -153,7 +153,7 @@ void read_key_file(char **key_data, char *file_path, int is_private_key)
 char **
 read_keys()
 {
-	char ** key_data = malloc(sizeof(char *)*MAX_NTP_KEYS);
+	char **key_data = malloc(sizeof(char *)*MAX_NTP_KEYS);
 	memset(key_data, 0, sizeof(char *)*MAX_NTP_KEYS);
 
 	read_key_file(key_data, PUBLIC_KEY_FILE_PATH, 0);
