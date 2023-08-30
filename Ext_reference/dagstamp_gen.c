@@ -23,7 +23,6 @@
 #include <fcntl.h>
 #include <stdarg.h>
 
-
 #include "dagapi.h"
 
 #include <arpa/inet.h>
@@ -34,22 +33,18 @@
 
 #include <pcap.h>
 
-/* Building not governed by a makefile, so refer to needed RADrepo includes explicitly */
+/* Building not governed by a makefile: refer to RADrepo includes explicitly */
 #include "../radclock/proto_ntp.h"
 #include "../radclock/ntp_auth.h"
-
-#define CONNECT_TO_SERVER 1
+#include "ext_ref.h"
 
 #define PORT_NTP    123
-
 
 /* Internals */
 #define STRSIZE    512
 #define BUFSIZE_IN    25000000	/* 25 MB */
 
-/*
- * Masks for bit positions in ERF flags byte.
- */
+/* Masks for bit positions in ERF flags byte.*/
 #define FILTER_TRUNC_MASK  0x08
 #define FILTER_RX_MASK     0x10
 #define FILTER_DS_MASK     0x20
@@ -65,6 +60,11 @@
 #define GET_UDP_DST_PORT(x) ntohs(x->dest)
 #endif
 
+/* Hacks that should become commandline options, or integrated into verbose */
+#define CONNECT_TO_SERVER 1     /* suppress sending part of code */
+#define VERB_INFO 0             /* more verb for unusual events */
+#define VERB_MAX 0              /* max verb for troubleshooting */
+
 
 
 /* Override ntp_auth.c 's use of "verbose()" to get local console print. */
@@ -77,12 +77,7 @@ void verbose(int facility, const char* format, ...)
 }
 
 /* dagstamp data structure passed to the TrustNode for perfstamp matching. */
-struct dag_cap {
-	long double Tout;       // DAG timestamp of          outgoing NTP request
-	long double Tin;        // DAG timestamp of matching incoming NTP response
-	l_fp stampid;           // stamp matching id, in original l_fp format
-	struct in_addr ip;      // IP the targeted server used when responding
-};
+//struct dag_cap { }         // see ext_ref.h
 
 /* dagstamp plus additional fields supporting the dagstamp matching. */
 struct dag_ntp_record {
@@ -117,15 +112,6 @@ struct rec_list {
   } while (0)
 
 
-///* Copied from RADrepo/radclock/misc.h */
-//static inline long double
-//NTPtime_to_UTCld(l_fp ntp_ts)
-//{
-//	long double  time;
-//	time  = (long double)(ntohl(ntp_ts.l_int) - JAN_1970);
-//	time += (long double)(ntohl(ntp_ts.l_fra)) / 4294967296.0;
-//	return (time);
-//}
 
 /* Same as in dag_extract.c
  * Converts unsigned long long timestamp from the DAG card to s and ns.
@@ -142,7 +128,6 @@ ts_to_s_ns(unsigned long long ts, unsigned long *s, unsigned long *ns)
 		*s += 1;
 	}
 }
-
 
 /* Same as in dag_extract.c
  * Input stream
@@ -161,7 +146,6 @@ struct instream_t {
 	uint8_t linktype;
 	uint8_t pload_padding;
 };
-
 
 /* Same as in dag_extract.c
  * Counter variables used to hold statistics by the report function.
@@ -218,170 +202,6 @@ report(struct instream_t *istream, struct stats_t *stats)
 	stats->last_bytes_in    = stats->bytes_in;
 	stats->last             = stats->now;
 }
-
-
-
-int check_signature(int packet_size, struct ntp_pkt *pkt_in, char **key_data, int *auth_bytes, int *key_id)
-{
-	wc_Sha sha;
-	unsigned char pck_dgst[20];
-	*key_id = -1;        // No AUTH used
-	packet_size -= 8;    // offset packet size
-	int auth_pass = 0;
-	*auth_bytes = 0;
-
-	if (packet_size > LEN_PKT_NOMAC && key_data) {
-		*key_id = ntohl( pkt_in->exten[0] );
-		if (*key_id > 0 && *key_id < MAX_NTP_KEYS && key_data[*key_id]) {
-			wc_InitSha(&sha);
-			wc_ShaUpdate(&sha, (const byte *)key_data[*key_id], 20);  // DV: added the cast
-			wc_ShaUpdate(&sha, (const byte *)pkt_in, LEN_PKT_NOMAC);
-			wc_ShaFinal((wc_Sha*)&sha, (byte*)pck_dgst);
-//			printf("size:%d %s %d key\n", packet_size, key_data[*key_id], *key_id);
-
-			if (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0) {
-//				printf( "NTP client authentication SUCCESS\n");
-				auth_pass = 1;
-			} else
-				printf("NTP client authentication FAILURE\n");
-
-			*auth_bytes = 24;
-		} else
-			printf("NTP client authentication request invalid key_id %d pkt_size:(%d %lu)\n",
-			    *key_id, packet_size, sizeof(struct ntp_pkt));
-	} else
-		if ( packet_size <= LEN_PKT_NOMAC ) {
-			printf("NTP Non auth message\n");
-			auth_pass = 1;
-		} else
-			if ( !key_data )
-				printf("NTP client authentication request when this server has no keys\n");
-
-	return auth_pass;
-}
-
-
-
-/*
- * Does pkt extraction, insertion and in-situ matching in cap_list buffer,
- * then sending of sucessfully matched dagstamps to the TN.
- */
-static long int
-match_and_send(dag_record_t *header, void *payload,
-    struct rec_list *cap_list, char *tn_ip, int s_server, struct sockaddr_in s_to, char **key_data)
-{
-	struct timespec ts;
-	struct ether_header *hdr_eth;
-	struct ip *hdr_ip;
-	struct udphdr *hdr_udp;
-	struct ntp_pkt *ntp;
-	struct dag_ntp_record *thisrec;
-	int sport, dport;
-	int isSrc = 0;
-	long double ts_ld;
-
-	/* Extract DAG timestamp, convert to format expected by dap_cap */
-	ts_to_s_ns(header->ts, (unsigned long *) &ts.tv_sec, (unsigned long *) &ts.tv_nsec);
-	ts_ld = ts.tv_sec + (long double)(ts.tv_nsec * 1e-9);
-
-	/* Extract all pkt headers Eth[IP[UDP[NTP]]] from DAG record payload */
-	hdr_eth = (struct ether_header *) ((char *) payload);
-	hdr_ip  = (struct ip *) ((char *) hdr_eth + sizeof(struct ether_header));
-	hdr_udp = (struct udphdr *) ((char *) hdr_ip + hdr_ip->ip_hl*4);
-	ntp     = (struct ntp_pkt *) ((char *) hdr_udp + sizeof(struct udphdr));
-
-	/* Extract source and destination IP and port values */
-	char src[INET_ADDRSTRLEN];
-	inet_ntop(AF_INET, &(hdr_ip->ip_src), src, INET_ADDRSTRLEN);
-	char dst[INET_ADDRSTRLEN];
-	inet_ntop(AF_INET, &(hdr_ip->ip_dst), dst, INET_ADDRSTRLEN);
-	sport = GET_UDP_SRC_PORT(hdr_udp);
-	dport = GET_UDP_DST_PORT(hdr_udp);
-
-	if (strcmp(src, tn_ip) == 0)
-		isSrc = 1;    // is an outgoing pkt from the TN
-	printf("Found %s (%d)-> %s (%d)  isSRc = %d\n", src, sport, dst, dport, isSrc);
-
-	/* Begin packet filtering then matching */
-	if ((sport == PORT_NTP && strcmp(dst, tn_ip) == 0) ||
-		(dport == PORT_NTP && isSrc) )
-	{
-		printf("  passed (IP,port) filter\n");
-		int packet_size = ntohs(hdr_udp->uh_ulen);
-		int auth_bytes = 0;
-
-		int key_id = -1;
-		if (check_signature(packet_size, ntp, key_data, &auth_bytes, &key_id)) {
-			printf("  passed auth check\n");
-			if (isSrc) {
-				thisrec = &cap_list->recs[cap_list->write_id];  // current rec
-				memcpy(&thisrec->IPout, &hdr_ip->ip_dst, sizeof(thisrec->IPout));
-				thisrec->key_id = key_id;
-				printf("   request pkt with key_id: %d inserted at %d \n", key_id, cap_list->write_id);
-				thisrec->cap.Tout = ts_ld;
-				thisrec->cap.stampid = ntp->xmt;
-				cap_list->write_id = (cap_list->write_id + 1) % cap_list->size;
-			} else {
-				printf("   response pkt: looking for match with key = %d\n", thisrec->key_id);
-
-				/* Set search order  (in each case, i = attempt count)
-				 *   Original:  will find earliest first, but v-inefficient search
-				 *   Efficient: backward from last insertion, finds match v-fast, but MAy not be 1st
-				 */
-				int match_id = -1;
-//				for (int i = 0; i < cap_list->size && match_id == -1; i++) {      // Original
-//					thisrec = &cap_list->recs[i];                                 // Original
-				for (int i = 0; i < cap_list->write_id && match_id == -1; i++) {  // Efficient
-					thisrec = &cap_list->recs[cap_list->write_id - 1 - i];        // Efficient
-
-					if (memcmp(&ntp->org, &thisrec->cap.stampid, sizeof(ntp->org)) == 0) {
-						printf("    > stampid match\n");
-						if (key_id == thisrec->key_id) { // same auth method must be present in sent and rcv
-							printf("    >> key_id match\n");
-							if (memcmp(&hdr_ip->ip_src, &thisrec->IPout, sizeof(hdr_ip->ip_src)) == 0) {
-								match_id = i;	// record the first match (will exit loop)
-								printf("    >>> server IP match\n");
-							} else
-								printf("   matched pkt with server IP change: sent to %s, repied with %s\n",
-								    inet_ntoa(thisrec->IPout), inet_ntoa(hdr_ip->ip_src));
-						}
-					}
-				}
-
-				/* thisrec is a match, complete remaining fields and send rec */
-				if (match_id != -1) {
-					thisrec->cap.Tin = ts_ld;
-					memcpy(&thisrec->cap.ip, &hdr_ip->ip_src, sizeof(thisrec->cap.ip));
-
-					printf("    Matched packet for %s. Auth %d\n", inet_ntoa(thisrec->cap.ip), key_id);
-					if (CONNECT_TO_SERVER) {
-						int ret = sendto(s_server,
-						    (char *)&thisrec->cap, sizeof(struct dag_cap), 0,
-						    (struct sockaddr *) &(s_to), sizeof(struct sockaddr_in));
-					}
-
-					/* Match buffer diagnostics */
-					printf("%d: (%ld.%09ld %.09Lf) %d\n\n", match_id, ts.tv_sec,
-					    ts.tv_nsec, ts_ld, ntohs(hdr_udp->uh_ulen));
-
-					/* Eliminate risk of re-matching on this buffer entry */
-					memset(&thisrec->cap.stampid, 0, sizeof(ntp->org));
-
-				} else {
-//					long double org_ts = NTPtime_to_UTCld(ntp->org);
-//					printf("    Unable to find packet matching stampid %Lf\n", org_ts);
-					uint64_t id;    // match RADclock's convention for recording stampid
-					id = ((uint64_t) ntohl(ntp->org.l_int)) << 32;
-					id |= (uint64_t) ntohl(ntp->org.l_fra);
-					printf("    Unable to find packet matching stampid %llu\n",
-					    (unsigned long long) id);
-				}
-			}
-		}
-	}
-	return 0;
-}
-
 
 
 /* Based on dag_extract.c, with some dag_extract2.c improvements
@@ -482,8 +302,6 @@ destroy_instream ( struct instream_t *s )
 	free(s->filename);
 	free(s->buffer);
 }
-
-
 
 
 /* Same as in dag_extract.c
@@ -626,15 +444,187 @@ get_next_erf_header(struct instream_t *istream, struct stats_t *stats,
 }
 
 
+int check_signature(int packet_size, struct ntp_pkt *pkt_in, char **key_data, int *auth_bytes, int *key_id)
+{
+	wc_Sha sha;
+	unsigned char pck_dgst[20];
+	*key_id = -1;        // No AUTH used
+	packet_size -= 8;    // offset packet size
+	int auth_pass = 0;
+	*auth_bytes = 0;
+
+	if (packet_size > LEN_PKT_NOMAC && key_data) {
+		*key_id = ntohl( pkt_in->exten[0] );
+		if (*key_id > 0 && *key_id < MAX_NTP_KEYS && key_data[*key_id]) {
+			wc_InitSha(&sha);
+			wc_ShaUpdate(&sha, (const byte *)key_data[*key_id], 20);  // DV: added the cast
+			wc_ShaUpdate(&sha, (const byte *)pkt_in, LEN_PKT_NOMAC);
+			wc_ShaFinal((wc_Sha*)&sha, (byte*)pck_dgst);
+//			printf("size:%d %s %d key\n", packet_size, key_data[*key_id], *key_id);
+
+			if (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0) {
+				if (VERB_MAX) printf( "NTP client authentication SUCCESS\n");
+				auth_pass = 1;
+			} else
+				printf("NTP client authentication FAILURE\n");
+
+			*auth_bytes = 24;
+		} else
+			printf("NTP client authentication request invalid key_id %d pkt_size:(%d %lu)\n",
+			    *key_id, packet_size, sizeof(struct ntp_pkt));
+	} else
+		if ( packet_size <= LEN_PKT_NOMAC ) {
+			if (VERB_INFO) printf("NTP Non auth message\n");
+			auth_pass = 1;
+		} else
+			if ( !key_data )
+				printf("NTP client authentication request when this server has no keys\n");
+
+	return auth_pass;
+}
+
+
 
 /*
- * The heart of dagconvert.  Reads ERF headers and payloads from an input
- * reader, applies any filtering and sends (possibly modified) ERF headers and
- * payloads to output writer.
+ * Does pkt extraction, insertion and in-situ matching in list buffer,
+ * then sending of sucessfully matched dagstamps to the TN.
+ *
+ * TODO:  refactor this into :
+ *      passed = extract_and_filter(header, payload,   hdr_ip, hdr_ip, ntp, ts_ld, isSrc)
+ *        [ or put that psrt directly into process(), is very short ]
+ *      if (passed)
+ *          match_and_send(list, tn_ip, socket_desc, tn_saddr, key_data,
+ *                         hdr_ip, hdr_udp, ntp, ts_ld, isSrc);
+ *
+ *  This enables a smooth transition to using DAG to do the filtering step if
+ *  we decide on that.
+ */
+static long int
+match_and_send(dag_record_t *header, void *payload,
+    struct rec_list *list, char *tn_ip, int socket_desc, struct sockaddr_in tn_saddr, char **key_data)
+{
+	struct timespec ts;
+	struct ether_header *hdr_eth;
+	struct ip *hdr_ip;
+	struct udphdr *hdr_udp;
+	struct ntp_pkt *ntp;
+	struct dag_ntp_record *thisrec;
+	int sport, dport;
+	int isSrc = 0;
+	long double ts_ld;
+
+	/* Extract DAG timestamp, convert to format expected by dap_cap */
+	ts_to_s_ns(header->ts, (unsigned long *) &ts.tv_sec, (unsigned long *) &ts.tv_nsec);
+	ts_ld = ts.tv_sec + (long double)(ts.tv_nsec * 1e-9);
+
+	/* Extract all pkt headers Eth[IP[UDP[NTP]]] from DAG record payload */
+	hdr_eth = (struct ether_header *) ((char *) payload);
+	hdr_ip  = (struct ip *) ((char *) hdr_eth + sizeof(struct ether_header));
+	hdr_udp = (struct udphdr *) ((char *) hdr_ip + hdr_ip->ip_hl*4);
+	ntp     = (struct ntp_pkt *) ((char *) hdr_udp + sizeof(struct udphdr));
+
+	/* Extract source and destination IP and port values */
+	char src[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &(hdr_ip->ip_src), src, INET_ADDRSTRLEN);
+	char dst[INET_ADDRSTRLEN];
+	inet_ntop(AF_INET, &(hdr_ip->ip_dst), dst, INET_ADDRSTRLEN);
+	sport = GET_UDP_SRC_PORT(hdr_udp);
+	dport = GET_UDP_DST_PORT(hdr_udp);
+
+	if (strcmp(src, tn_ip) == 0)
+		isSrc = 1;    // is an outgoing pkt from the TN
+	if (VERB_MAX) printf("Found %s (%d)-> %s (%d)  isSRc = %d\n", src, sport, dst, dport, isSrc);
+
+	/* Begin packet filtering then matching */
+	if ((sport == PORT_NTP && strcmp(dst, tn_ip) == 0) ||
+		(dport == PORT_NTP && isSrc) )
+	{
+		if (VERB_MAX) printf("  passed (IP,port) filter\n");
+		int packet_size = ntohs(hdr_udp->uh_ulen);
+		int auth_bytes = 0;
+
+		int key_id = -1;
+		if (check_signature(packet_size, ntp, key_data, &auth_bytes, &key_id)) {
+			if (VERB_MAX) printf("  passed auth check\n");
+			if (isSrc) {
+				thisrec = &list->recs[list->write_id];  // current rec
+				memcpy(&thisrec->IPout, &hdr_ip->ip_dst, sizeof(thisrec->IPout));
+				thisrec->key_id = key_id;
+				if (VERB_MAX) printf("   request pkt with key_id: %d inserted at %d \n", key_id, list->write_id);
+				thisrec->cap.Tout = ts_ld;
+				thisrec->cap.stampid = ntp->xmt;
+				list->write_id = (list->write_id + 1) % list->size;
+			} else {
+				if (VERB_MAX) printf("   response pkt: looking for match with key = %d\n", thisrec->key_id);
+
+				/* Set search order  (in each case, i = attempt count)
+				 *   Original:  will find earliest first, but v-inefficient search
+				 *   Efficient: backward from last insertion, finds match v-fast, but MAy not be 1st
+				 */
+				int match_id = -1;
+//				for (int i = 0; i < list->size && match_id == -1; i++) {      // Original
+//					thisrec = &list->recs[i];                                 // Original
+				for (int i = 0; i < list->write_id && match_id == -1; i++) {  // Efficient
+					thisrec = &list->recs[list->write_id - 1 - i];        // Efficient
+
+					if (memcmp(&ntp->org, &thisrec->cap.stampid, sizeof(ntp->org)) == 0) {
+						if (VERB_MAX) printf("    > stampid match\n");
+						if (key_id == thisrec->key_id) {
+							if (VERB_MAX) printf("    >> key_id match\n");
+							if (memcmp(&hdr_ip->ip_src, &thisrec->IPout, sizeof(hdr_ip->ip_src)) == 0) {
+								match_id = i;	// record the first match (will exit loop)
+								if (VERB_MAX) printf("    >>> server IP match\n");
+							} else
+								printf("   matched pkt with server IP change: sent to %s, replied with %s\n",
+								    inet_ntoa(thisrec->IPout), inet_ntoa(hdr_ip->ip_src));
+						}
+					}
+				}
+
+				/* thisrec is a match, complete remaining fields and send rec */
+				if (match_id != -1) {
+					thisrec->cap.Tin = ts_ld;
+					memcpy(&thisrec->cap.ip, &hdr_ip->ip_src, sizeof(thisrec->cap.ip));
+
+					if (VERB_INFO) printf("    Matched packet for %s. Auth %d\n",
+					    inet_ntoa(thisrec->cap.ip), key_id);
+					if (CONNECT_TO_SERVER) {
+						int ret = sendto(socket_desc,
+						    (char *)&thisrec->cap, sizeof(struct dag_cap), 0,
+						    (struct sockaddr *) &tn_saddr, sizeof(struct sockaddr_in));
+					}
+
+					/* Match buffer diagnostics */
+					if (VERB_MAX) printf("%d: (%ld.%09ld %.09Lf) %d\n\n",
+					    match_id, ts.tv_sec, ts.tv_nsec, ts_ld, ntohs(hdr_udp->uh_ulen));
+
+					/* Eliminate risk of re-matching on this buffer entry */
+					memset(&thisrec->cap.stampid, 0, sizeof(ntp->org));
+
+				} else {
+//					long double org_ts = NTPtime_to_UTCld(ntp->org);
+//					printf("    Unable to find packet matching stampid %Lf\n", org_ts);
+					uint64_t id;    // match RADclock's convention for recording stampid
+					id = ((uint64_t) ntohl(ntp->org.l_int)) << 32;
+					id |= (uint64_t) ntohl(ntp->org.l_fra);
+					printf("    Unable to find packet matching stampid %llu\n",
+					    (unsigned long long) id);
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+
+
+/*
+ * Reads ERF headers and payloads from an input reader, applies any filtering
+ * and sends the result to be matched.
  */
 static void
-process( struct instream_t *istream, int os_len, struct stats_t *stats,
-    struct rec_list *cap_list, char *tn_ip, int s_server, struct sockaddr_in s_to, char **key_data)
+process( struct instream_t *istream, struct stats_t *stats,
+    struct rec_list *list, char *tn_ip, int socket_desc, struct sockaddr_in tn_saddr, char **key_data)
 {
 	int i;
 	struct outstream_t *s = NULL;
@@ -670,72 +660,83 @@ process( struct instream_t *istream, int os_len, struct stats_t *stats,
 		stats->bytes_in += ntohs(header->rlen);
 
 		stats->records_out++;    // want this if match fails?
-		match_and_send(header, payload, cap_list, tn_ip, s_server, s_to, key_data);
+		match_and_send(header, payload, list, tn_ip, socket_desc, tn_saddr, key_data);
 
 	}
 }
 
 
-void init_cap_list(struct rec_list *cap_list)
+void init_rec_list(struct rec_list *list)
 {
-	cap_list->recs = malloc(sizeof(struct dag_ntp_record) * PKT_LIST_SIZE); // use calloc instead
-	cap_list->size = PKT_LIST_SIZE;
-	cap_list->write_id = 0;
+	list->recs = calloc(PKT_LIST_SIZE, sizeof(struct dag_ntp_record));
+//	list->recs = malloc(sizeof(struct dag_ntp_record) * PKT_LIST_SIZE);
+	list->size = PKT_LIST_SIZE;
+	list->write_id = 0;
 
-	// Set all the rcv time stamps to 0 to avoid incorrect matches
-	// TODO: why only receive timestamps? why not the entire structure.
-	for (int i = 0; i < PKT_LIST_SIZE; i++)
-		memset(&cap_list->recs[i].cap.stampid, 0, sizeof(cap_list->recs[i].cap.stampid));
+//	// Set all the rcv time stamps to 0 to avoid incorrect matches
+//	// TODO: why only receive timestamps? why not the entire structure, using calloc?
+//	for (int i = 0; i < PKT_LIST_SIZE; i++)
+//		memset(&list->recs[i].cap.stampid, 0, sizeof(list->recs[i].cap.stampid));
 }
 
 
 int
 main(int argc, char **argv)
 {
+	/* TODO:  extend and improve arg processing */
 	if (argc < 3) {
 		printf("Usage:  dagstamp_gen  cap.erf  TN_IP\n");
 		printf("Eg: ./dagstamp_gen  /tmp/trustnode_NTP.erf  10.0.0.55\n");
 		return 0;
 	}
-	int s_server = 0;
+	int err;
+
+	/* TrustNode communication related */
+	int socket_desc = 0;
+	struct sockaddr_in tn_saddr;
 	char *tn_ip = argv[2];
-	int port = 5671;
 
-	/* Build server infos */
-	struct sockaddr_in s_to;
-	memset(&s_to, 0, sizeof(s_to));
-	s_to.sin_family = AF_INET;
-	s_to.sin_port = htons(port);
-	if (inet_aton(tn_ip, &s_to.sin_addr) == 0) { // Create datagram with server IP and port
-		fprintf(stderr, "inet_aton() failed\n");
-		exit(1);
-	}
-
-	if (CONNECT_TO_SERVER)
-		if ((s_server = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
+	/* Prepare for sending to the TrustNode.*/
+	if (CONNECT_TO_SERVER) {   // skip if just testing
+		/* Open socket (recall this assigns a (hostIP, randomport) address */
+		if ((socket_desc = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
+			perror("socket");
 			printf("socket error\n");
 			exit(0);
 		}
+		/* Fill socket address info for sending to TrustNode */
+		memset((char *) &tn_saddr, 0, sizeof(struct sockaddr_in));
+		tn_saddr.sin_family = AF_INET;
+		tn_saddr.sin_port = htons(DAG_PORT);
+		if (inet_aton(tn_ip, &tn_saddr.sin_addr) == 0) {
+			fprintf(stderr, "inet_aton() failed, mistyped IP argument?\n");
+			exit(1);
+		}
+	}
 
-
+	/* Load NTC auth keys */
 	char **key_data = read_keys();
 
-	/* Setup instream */
-	struct instream_t instream;
+	/* Setup instream to read from the DAG capture */
 	char* filename_in = argv[1];
-	int err;
+	struct instream_t instream;
 	struct stats_t stats;
 	stats.records_out = 0;
-	struct rec_list cap_list;
 
-	init_cap_list(&cap_list);
+	struct rec_list list;
+	init_rec_list(&list);
+
 	err = init_instream(&instream, filename_in);
 
 	/* Process dag records until forced to exit */
-	process(&instream, 4, &stats, &cap_list, tn_ip, s_server, s_to, key_data);
+	if (!err)
+		process(&instream, &stats, &list, tn_ip, socket_desc, tn_saddr, key_data);
 
+	/* Shutdown */
 	destroy_instream(&instream);
-	free(cap_list.recs);
+	free(list.recs);
+	if (socket_desc >= 0)
+		close(socket_desc);
 
-	return 0;
+	return err;
 }
