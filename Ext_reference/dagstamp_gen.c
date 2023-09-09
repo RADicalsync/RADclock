@@ -189,7 +189,7 @@ usage(void)
 		"\t-c <filename> path to DAG capture file\n"
 		"\t-i <IP address> IP address of the trust node\n"
 		"\t-d DO NOT send to the server (sends to server if option not used)\n"
-		"\t-o <filename> name of the file where packets to be sent to Trust Node are dumped (not yet implemented)\n"
+		"\t-o <filename> file where packets to be sent to Trust Node are dumped (not yet implemented)\n"
 		"\t-v -vv verbose\n"
 		"\t-h this help message\n"
 		);

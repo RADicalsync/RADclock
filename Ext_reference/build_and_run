@@ -63,7 +63,7 @@ if [ "$capture" != "true" ]; then
 	echo
 
 	echo ">>> Relaunch dagstamp_gen, sending DAGstamps to TrustNode with IP: $TrustNodeIP"
-	./dagstamp_gen $RawCaptureFile $TrustNodeIP >  dagstamp.out  &
+	./dagstamp_gen -c $RawCaptureFile -i $TrustNodeIP >  dagstamp.out  &
 fi
 
 
