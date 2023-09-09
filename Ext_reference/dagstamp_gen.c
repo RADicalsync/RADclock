@@ -3,6 +3,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <errno.h>
+#include <getopt.h>
 
 #include <wolfssl/wolfcrypt/sha.h>
 
@@ -22,6 +23,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <stdarg.h>
+#include <signal.h>
 
 #include "dagapi.h"
 
@@ -41,7 +43,7 @@
 #define PORT_NTP    123
 
 /* Internals */
-#define STRSIZE    512
+#define STRSIZE    250
 #define BUFSIZE_IN    25000000	/* 25 MB */
 
 /* Masks for bit positions in ERF flags byte.*/
@@ -61,18 +63,31 @@
 #endif
 
 /* Hacks that should become commandline options, or integrated into verbose */
-#define CONNECT_TO_SERVER 1     /* suppress sending part of code */
-#define VERB_INFO 1             /* more verb for unusual events */
-#define VERB_MAX 1              /* max verb for troubleshooting */
+#define VERB_INFO 	10           /* more verb for unusual events */
+#define VERB_DEBUG  11           /* max verb for troubleshooting */
 
+/* Connect to server or suppress sending part of code */
+static uint8_t send_to_server = 1;
 
+/* Flag to break the loop and exit the program */
+static uint8_t break_process_loop = 0;
+
+/* Level of verbosity to print */
+static uint8_t verbose_level = 9;
 
 /* Override ntp_auth.c 's use of "verbose()" to get local console print. */
 void verbose(int facility, const char* format, ...)
 {
 	va_list arglist;
 	va_start( arglist, format );
-	vprintf( format, arglist );
+
+	/* The facilities used in ntp_auth.c are all LOG_*, and it's value ranges from [0, 5].
+	 * We will let all of these through */
+	if (facility >= 0 && facility <= 5)
+		vprintf( format, arglist );
+	else if (verbose_level >= facility)
+		vprintf( format, arglist );
+
 	va_end( arglist );
 }
 
@@ -135,7 +150,7 @@ ts_DAGtoLD(unsigned long long dag)
 
 /* Same as in dag_extract.c
  * Input stream
- * This is DAG input only 
+ * This is DAG input only
  * There should be one only, but in the future?
  */
 struct instream_t {
@@ -166,6 +181,20 @@ struct stats_t {
 	uint64_t records_bad;
 };
 
+/*** Guide to input parameters of dagstamp_gen ***/
+static void
+usage(void)
+{
+	fprintf(stderr, "usage: dagstamp_gen -c <DAG capture filename> -i <trust node IP> [options] \n"
+		"\t-c <filename> path to DAG capture file\n"
+		"\t-i <IP address> IP address of the trust node\n"
+		"\t-d DO NOT send to the server (sends to server if option not used)\n"
+		"\t-o <filename> name of the file where packets to be sent to Trust Node are dumped (not yet implemented)\n"
+		"\t-v -vv verbose\n"
+		"\t-h this help message\n"
+		);
+	exit(EXIT_SUCCESS);
+}
 
 /* Same as in dag_extract2.c,  with part commented out
  * How fast we are reading/writing, how much data left
@@ -211,7 +240,7 @@ report(struct instream_t *istream, struct stats_t *stats)
 /* Based on dag_extract.c, with some dag_extract2.c improvements
  * Init input stream
  */
-static int 
+static int
 init_instream( struct instream_t *s, const char* filename )
 {
 	struct stat st;
@@ -252,7 +281,7 @@ init_instream( struct instream_t *s, const char* filename )
 		return 1;
 	}
 
-	/* Get the link type from the ERF file */	
+	/* Get the link type from the ERF file */
 	read(s->fd, &rec, dag_record_size);
 	lseek(s->fd, 0, SEEK_SET);
 
@@ -303,10 +332,13 @@ static void
 destroy_instream ( struct instream_t *s )
 {
 	close(s->fd);
-	free(s->filename);
-	free(s->buffer);
-}
 
+	free(s->filename);
+	s->filename = NULL;
+
+	free(s->buffer);
+	s->buffer = NULL;
+}
 
 /* Same as in dag_extract.c
  * Get pointer to the ERF header for the next packet in the input stream and
@@ -353,7 +385,7 @@ get_next_erf_header(struct instream_t *istream, struct stats_t *stats,
 		rlen = ntohs(rec->rlen);
 
 		if (rlen == 20) {
-			/* 
+			/*
 			 * DS error truncates the packet, but the packet has effectively been
 			 * padded to 28 bytes by the card.
 			 */
@@ -382,7 +414,7 @@ get_next_erf_header(struct instream_t *istream, struct stats_t *stats,
 		rlen = ntohs(rec->rlen);
 
 		/*
-		 * Filter based on ERF flags 
+		 * Filter based on ERF flags
 		 * for efficiency the dag_header is cast to an anonymous
 		 * structure which replaces the bitfields of dag_header_t
 		 * with an u_char
@@ -406,7 +438,7 @@ get_next_erf_header(struct instream_t *istream, struct stats_t *stats,
 			}
 			continue;
 		}
-		
+
 		/* Sanity check */
 		if ( rec->type != istream->linktype ) {
 			fprintf(stderr, "ERROR: Record and stream have different linktype. %s %d\n",
@@ -467,7 +499,7 @@ int check_signature(int packet_size, struct ntp_pkt *pkt_in, char **key_data, in
 //			printf("size:%d %s %d key\n", packet_size, key_data[*key_id], *key_id);
 
 			if (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0) {
-				if (VERB_MAX) printf( "NTP client authentication SUCCESS\n");
+				verbose(VERB_DEBUG, "NTP client authentication SUCCESS\n");
 				auth_pass = 1;
 			} else
 				printf("NTP client authentication FAILURE\n");
@@ -478,7 +510,7 @@ int check_signature(int packet_size, struct ntp_pkt *pkt_in, char **key_data, in
 			    *key_id, packet_size, sizeof(struct ntp_pkt));
 	} else
 		if ( packet_size <= LEN_PKT_NOMAC ) {
-			if (VERB_INFO) printf("NTP Non auth message\n");
+			verbose(VERB_INFO, "NTP Non auth message\n");
 			auth_pass = 1;
 		} else
 			if ( !key_data )
@@ -505,17 +537,17 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
 	int key_id = -1;
 	if (check_signature(UDPpktsize, ntp, key_data, &auth_bytes, &key_id))
 	{
-		if (VERB_MAX) printf("  passed auth check\n");
+		verbose(VERB_DEBUG, "  passed auth check\n");
 		if (isSrc) {
 			thisrec = &list->recs[list->write_id];  // current rec
 			memcpy(&thisrec->IPout, &hdr_ip->ip_dst, sizeof(thisrec->IPout));
 			thisrec->key_id = key_id;
-			if (VERB_MAX) printf("   request pkt with key_id: %d inserted at %d \n", key_id, list->write_id);
+			verbose(VERB_DEBUG, "   request pkt with key_id: %d inserted at %d \n", key_id, list->write_id);
 			thisrec->cap.Tout = ts;
 			thisrec->cap.stampid = ntp->xmt;
 			list->write_id = (list->write_id + 1) % list->size;
 		} else {
-			if (VERB_MAX) printf("   response pkt: looking for match with key = %d\n", thisrec->key_id);
+			verbose(VERB_DEBUG,"   response pkt: looking for match with key = %d\n", thisrec->key_id);
 
 			/* Set search order  (in each case, i = attempt count)
 			 *   Original:  will find earliest first, but v-inefficient search
@@ -528,12 +560,12 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
 				thisrec = &list->recs[list->write_id - 1 - i];            // Efficient
 
 				if (memcmp(&ntp->org, &thisrec->cap.stampid, sizeof(ntp->org)) == 0) {
-					if (VERB_MAX) printf("    > stampid match\n");
+					verbose(VERB_DEBUG, "    > stampid match\n");
 					if (key_id == thisrec->key_id) {
-						if (VERB_MAX) printf("    >> key_id match\n");
+						verbose(VERB_DEBUG, "    >> key_id match\n");
 						if (memcmp(&hdr_ip->ip_src, &thisrec->IPout, sizeof(hdr_ip->ip_src)) == 0) {
 							match_id = i;	// record the first match (will exit loop)
-							if (VERB_MAX) printf("    >>> server IP match\n");
+							verbose(VERB_DEBUG, "    >>> server IP match\n");
 						} else
 							printf("   matched pkt with server IP change: sent to %s, replied with %s\n",
 								inet_ntoa(thisrec->IPout), inet_ntoa(hdr_ip->ip_src));
@@ -546,15 +578,15 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
 				thisrec->cap.Tin = ts;
 				memcpy(&thisrec->cap.ip, &hdr_ip->ip_src, sizeof(thisrec->cap.ip));
 
-				if (VERB_INFO) printf("    Matched packet for %s. Auth %d\n",
+				verbose(VERB_INFO, "    Matched packet for %s. Auth %d\n",
 					inet_ntoa(thisrec->cap.ip), key_id);
-				if (CONNECT_TO_SERVER)
+				if (send_to_server)
 					ret = sendto(socket_desc,
 						(char *)&thisrec->cap, sizeof(struct dag_cap), 0,
 						(struct sockaddr *) &tn_saddr, sizeof(struct sockaddr_in));
 
 				/* Match buffer diagnostics */
-				if (VERB_MAX) printf("%d: (%.09Lf) %d\n\n", match_id, ts, UDPpktsize);
+				verbose(VERB_DEBUG, "%d: (%.09Lf) %d\n\n", match_id, ts, UDPpktsize);
 
 				/* Eliminate risk of re-matching on this buffer entry */
 				memset(&thisrec->cap.stampid, 0, sizeof(ntp->org));
@@ -582,7 +614,7 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
  * TODO:  capture matching stats, deal with error codes.
  */
 static void
-process( struct instream_t *istream, struct stats_t *stats,
+process(struct instream_t *istream, struct stats_t *stats,
     struct rec_list *list, char *tn_ip, int socket_desc, struct sockaddr_in tn_saddr, char **key_data)
 {
 	/* Frame oriented */
@@ -598,8 +630,10 @@ process( struct instream_t *istream, struct stats_t *stats,
 	struct ntp_pkt *ntp;
 	int sport, dport, isSrc, UDPpktsize;
 
-	/* Get the next frame and process it indefinitely */
-	while(1) {
+	/* Get the next frame and process it indefinitely.
+	 * When SIGHUP and SIGKILL signals are received, it sets the break_process_loop.
+	 * If no error occurs, this is the only way to break the loop. */
+	while(!break_process_loop) {
 		length = lseek(istream->fd, 0, SEEK_CUR);
 
 		/* Get the next frame from the instream */
@@ -641,21 +675,21 @@ process( struct instream_t *istream, struct stats_t *stats,
 			isSrc = 1;  // outgoing pkt send from the TN
 		else
 			isSrc = 0;  // incoming pkt destined for the TN
-		if (VERB_MAX) printf("Found %s (%d)-> %s (%d)  isSRc = %d\n", src, sport, dst, dport, isSrc);
+		verbose(VERB_DEBUG, "Found %s (%d)-> %s (%d)  isSRc = %d\n", src, sport, dst, dport, isSrc);
 
 
 		/* Packet filtering and processing */
 		if ((sport == PORT_NTP && strcmp(dst, tn_ip) == 0) ||
 			(dport == PORT_NTP && isSrc) )
 		{
-			if (VERB_MAX) printf("  passed (IP,port) filter\n");
+			verbose(VERB_DEBUG, "  passed (IP,port) filter\n");
 			UDPpktsize = ntohs(hdr_udp->uh_ulen);    // for auth checking
 			match_and_send(list, tn_ip, socket_desc, tn_saddr, key_data,
 			    ts_DAGtoLD(header->ts), hdr_ip, ntp, isSrc, UDPpktsize);
 	//		stats->filter_pass++;    // possible counter name
 
 		} else {
-			//if (VERB_MAX) printf("  failed (IP,port) filter\n");
+			//verbose(VERB_DEBUG, "  failed (IP,port) filter\n");
 	//		stats->filter_fail++;    // possible counter name
 		}
 
@@ -672,25 +706,114 @@ void init_rec_list(struct rec_list *list)
 	list->write_id = 0;
 }
 
+/**
+ * Signal handler function
+ */
+static void
+signal_handler(int sig)
+{
+	switch(sig){
+
+	/* SIGHUP or SIGTERM signals are caught. Set the break_process_loop flag so that the loop
+	 * breaks after processing the current frame and exits properly. */
+	case SIGHUP:
+	case SIGINT:
+	case SIGTERM:
+		break_process_loop = 1;
+		break;
+	}
+}
 
 int
-main(int argc, char **argv)
+main(int argc, char *argv[])
 {
-	/* TODO:  extend and improve arg processing */
-	if (argc < 3) {
-		printf("Usage:  dagstamp_gen  cap.erf  TN_IP\n");
-		printf("Eg: ./dagstamp_gen  /tmp/trustnode_NTP.erf  10.0.0.55\n");
-		return 0;
-	}
-	int err;
-
 	/* TrustNode communication related */
 	int socket_desc = 0;
 	struct sockaddr_in tn_saddr;
-	char *tn_ip = argv[2];
+	char tn_ip[STRSIZE] = "\0"; /* Empty by default. Needs to be passed as command line argument */
+
+	/* Instream related information */
+	char filename_in[STRSIZE] = "\0"; /* Empty by default. Needs to be passed as command line argument */
+	struct instream_t instream;
+
+	/* File name where the packets to be sent to the Trust Node are dumped.
+	 * TODO: Feature is not yet implemented.
+	char filename_out[STRSIZE] = "\0";
+	*/
+
+	/* Statistics structure */
+	struct stats_t stats;
+	stats.records_out = 0;
+
+	/* Circular buffer structure */
+	struct rec_list list;
+
+	/* Error code*/
+	int err;
+	/* File and command line reading */
+	int ch;
+
+	/* Register Signal handlers. */
+	sigset_t block_mask;
+	sigfillset (&block_mask);
+	struct sigaction sig_struct;
+
+	sig_struct.sa_handler = signal_handler;
+	sig_struct.sa_mask = block_mask;
+	sig_struct.sa_flags = 0;
+
+	sigaction(SIGHUP,  &sig_struct, NULL); /* hangup signal (1) */
+	sigaction(SIGINT,  &sig_struct, NULL); /* software interrupt signal (2) */
+	sigaction(SIGTERM, &sig_struct, NULL); /* software termination signal (15) */
+
+	/* Process the command line options and arguments */
+	while ((ch = getopt(argc, argv, "c:i:dvo:h")) != -1)
+		switch (ch) {
+			case 'c':
+				if (strlen(optarg) > STRSIZE) {
+					fprintf(stdout, "ERROR: parameter too long\n");
+					exit (1);
+				}
+				strcpy(filename_in, optarg);
+				break;
+			case 'i':
+				if (strlen(optarg) > STRSIZE) {
+					fprintf(stdout, "ERROR: parameter too long\n");
+					exit (1);
+				}
+				strcpy(tn_ip, optarg);
+				break;
+			case 'd':
+				send_to_server = 0;	/* Don't send to the trust node server */
+				break;
+			case 'o':
+				/* TODO: Not yet implemented
+				if (strlen(optarg) > STRSIZE) {
+					fprintf(stdout, "ERROR: parameter too long\n");
+					exit (1);
+				}
+				strcpy(filename_out, optarg);
+				*/
+				fprintf(stdout, "Packet dump not yet implemented. Stay tuned!\n");
+			case 'v':
+				verbose_level++;
+				break;
+			case 'h':
+			case '?':
+			default:
+				usage();
+		}
+
+	/* Make sure the DAG capture path and trust node IP are provided.
+	 * TODO: Is validity check needed here? */
+	if (!strlen(tn_ip) || !strlen(filename_in)) {
+		fprintf(stderr, "Error! Missing arguments\n");
+		usage();
+		exit (1);
+	}
 
 	/* Prepare for sending to the TrustNode.*/
-	if (CONNECT_TO_SERVER) {   // skip if just testing
+	if (send_to_server) {   // skip if just testing
 		/* Open socket (recall this assigns a (hostIP, randomport) address */
 		if ((socket_desc = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
 			perror("socket");
@@ -710,15 +833,10 @@ main(int argc, char **argv)
 	/* Load NTC auth keys */
 	char **key_data = read_keys();
 
-	/* Setup instream to read from the DAG capture */
-	char* filename_in = argv[1];
-	struct instream_t instream;
-	struct stats_t stats;
-	stats.records_out = 0;
-
-	struct rec_list list;
+	/* Initialise the circular buffer for the records */
 	init_rec_list(&list);
 
+	/* Setup instream to read from the DAG capture */
 	err = init_instream(&instream, filename_in);
 
 	/* Process dag records until forced to exit */
@@ -727,7 +845,10 @@ main(int argc, char **argv)
 
 	/* Shutdown */
 	destroy_instream(&instream);
+
 	free(list.recs);
+	list.recs = NULL;
+
 	if (socket_desc >= 0)
 		close(socket_desc);
 
