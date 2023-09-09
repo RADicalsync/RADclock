@@ -719,6 +719,7 @@ signal_handler(int sig)
 	case SIGHUP:
 	case SIGINT:
 	case SIGTERM:
+		verbose(VERB_DEBUG, "  Signal #%d caught.\n", sig);
 		break_process_loop = 1;
 		break;
 	}
@@ -851,6 +852,8 @@ main(int argc, char *argv[])
 
 	if (socket_desc >= 0)
 		close(socket_desc);
+
+	verbose(VERB_DEBUG, "  Exiting program.\n");
 
 	return err;
 }
