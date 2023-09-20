@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <getopt.h>
+#include <syslog.h>
 
 #include <wolfssl/wolfcrypt/sha.h>
 
@@ -62,9 +63,7 @@
 #define GET_UDP_DST_PORT(x) ntohs(x->dest)
 #endif
 
-/* Hacks that should become commandline options, or integrated into verbose */
-#define VERB_INFO 	10           /* more verb for unusual events */
-#define VERB_DEBUG  11           /* max verb for troubleshooting */
+#define VERB_DEBUG	7 /* Debug information */
 
 /* Connect to server or suppress sending part of code */
 static uint8_t send_to_server = 1;
@@ -73,19 +72,21 @@ static uint8_t send_to_server = 1;
 static uint8_t break_process_loop = 0;
 
 /* Level of verbosity to print */
-static uint8_t verbose_level = 9;
+static uint8_t verbose_level = 0;
 
-/* Override ntp_auth.c 's use of "verbose()" to get local console print. */
+/* Override ntp_auth.c 's use of "verbose()" to get local console print.
+ * Two levels verbosity available -> -v prints informational and most important
+ * messages, and -vv prints debug messages.
+ */
 void verbose(int facility, const char* format, ...)
 {
 	va_list arglist;
 	va_start( arglist, format );
 
-	/* The facilities used in ntp_auth.c are all LOG_*, and it's value ranges from [0, 5].
-	 * We will let all of these through */
-	if (facility >= 0 && facility <= 5)
+	if ((verbose_level > 0) && (facility >= LOG_EMERG && facility <= LOG_NOTICE))
 		vprintf( format, arglist );
-	else if (verbose_level >= facility)
+
+	else if ((verbose_level > 1) && (facility == VERB_DEBUG))
 		vprintf( format, arglist );
 
 	va_end( arglist );
@@ -185,11 +186,11 @@ struct stats_t {
 static void
 usage(void)
 {
-	fprintf(stderr, "usage: dagstamp_gen -c <DAG capture filename> -i <trust node IP> [options] \n"
-		"\t-c <filename> path to DAG capture file\n"
+	fprintf(stderr, "usage: dagstamp_gen -f <DAG file> -i <TN IP> [options] \n"
+		"\t-f <filename> path to DAG capture file\n"
 		"\t-i <IP address> IP address of the trust node\n"
-		"\t-d DO NOT send to the server (sends to server if option not used)\n"
-		"\t-o <filename> file where packets to be sent to Trust Node are dumped (not yet implemented)\n"
+		"\t-d DO NOT send to the server (default is to send)\n"
+		"\t-o <filename> dump matched packets (to be implemented)\n"
 		"\t-v -vv verbose\n"
 		"\t-h this help message\n"
 		);
@@ -510,7 +511,7 @@ int check_signature(int packet_size, struct ntp_pkt *pkt_in, char **key_data, in
 			    *key_id, packet_size, sizeof(struct ntp_pkt));
 	} else
 		if ( packet_size <= LEN_PKT_NOMAC ) {
-			verbose(VERB_INFO, "NTP Non auth message\n");
+			verbose(LOG_INFO, "NTP Non auth message\n");
 			auth_pass = 1;
 		} else
 			if ( !key_data )
@@ -578,7 +579,7 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
 				thisrec->cap.Tin = ts;
 				memcpy(&thisrec->cap.ip, &hdr_ip->ip_src, sizeof(thisrec->cap.ip));
 
-				verbose(VERB_INFO, "    Matched packet for %s. Auth %d\n",
+				verbose(LOG_INFO, "    Matched packet for %s. Auth %d\n",
 					inet_ntoa(thisrec->cap.ip), key_id);
 				if (send_to_server)
 					ret = sendto(socket_desc,
@@ -631,8 +632,8 @@ process(struct instream_t *istream, struct stats_t *stats,
 	int sport, dport, isSrc, UDPpktsize;
 
 	/* Get the next frame and process it indefinitely.
-	 * When SIGHUP and SIGKILL signals are received, it sets the break_process_loop.
-	 * If no error occurs, this is the only way to break the loop. */
+	 * When SIGHUP, SIGINT, or SIGKILL signals are received, it sets
+	 * break_process_loop. If no error, it's the only way to break the loop. */
 	while(!break_process_loop) {
 		length = lseek(istream->fd, 0, SEEK_CUR);
 
@@ -693,7 +694,7 @@ process(struct instream_t *istream, struct stats_t *stats,
 	//		stats->filter_fail++;    // possible counter name
 		}
 
-		stats->records_out++;    // dont want this if match fails, need new stats
+		stats->records_out++;  // dont want this if match fails, need new stats
 
 	}
 }
@@ -712,16 +713,17 @@ void init_rec_list(struct rec_list *list)
 static void
 signal_handler(int sig)
 {
-	switch(sig){
+	switch(sig) {
 
-	/* SIGHUP or SIGTERM signals are caught. Set the break_process_loop flag so that the loop
-	 * breaks after processing the current frame and exits properly. */
-	case SIGHUP:
-	case SIGINT:
-	case SIGTERM:
-		verbose(VERB_DEBUG, "  Signal #%d caught.\n", sig);
-		break_process_loop = 1;
-		break;
+		/* SIGHUP, SIGTERM, or SIGTERM signals are caught. Set the
+		 * break_process_loop flag so that the loop breaks after processing the
+		 * current frame and exits properly. */
+		case SIGHUP:
+		case SIGINT:
+		case SIGTERM:
+			verbose(VERB_DEBUG, "  Signal #%d caught.\n", sig);
+			break_process_loop = 1;
+			break;
 	}
 }
 
@@ -731,10 +733,10 @@ main(int argc, char *argv[])
 	/* TrustNode communication related */
 	int socket_desc = 0;
 	struct sockaddr_in tn_saddr;
-	char tn_ip[STRSIZE] = "\0"; /* Empty by default. Needs to be passed as command line argument */
+	char tn_ip[STRSIZE] = "\0";
 
 	/* Instream related information */
-	char filename_in[STRSIZE] = "\0"; /* Empty by default. Needs to be passed as command line argument */
+	char filename_in[STRSIZE] = "\0";
 	struct instream_t instream;
 
 	/* File name where the packets to be sent to the Trust Node are dumped.
@@ -764,13 +766,13 @@ main(int argc, char *argv[])
 	sig_struct.sa_flags = 0;
 
 	sigaction(SIGHUP,  &sig_struct, NULL); /* hangup signal (1) */
-	sigaction(SIGINT,  &sig_struct, NULL); /* software interrupt signal (2) */
-	sigaction(SIGTERM, &sig_struct, NULL); /* software termination signal (15) */
+	sigaction(SIGINT,  &sig_struct, NULL); /* interrupt signal (2) */
+	sigaction(SIGTERM, &sig_struct, NULL); /* termination signal (15) */
 
 	/* Process the command line options and arguments */
-	while ((ch = getopt(argc, argv, "c:i:dvo:h")) != -1)
+	while ((ch = getopt(argc, argv, "f:i:dvo:h")) != -1)
 		switch (ch) {
-			case 'c':
+			case 'f':
 				if (strlen(optarg) > STRSIZE) {
 					fprintf(stdout, "ERROR: parameter too long\n");
 					exit (1);
@@ -795,7 +797,7 @@ main(int argc, char *argv[])
 				}
 				strcpy(filename_out, optarg);
 				*/
-				fprintf(stdout, "Packet dump not yet implemented. Stay tuned!\n");
+				fprintf(stdout, "Packet dump not yet implemented.\n");
 			case 'v':
 				verbose_level++;
 				break;
@@ -805,8 +807,7 @@ main(int argc, char *argv[])
 				usage();
 		}
 
-	/* Make sure the DAG capture path and trust node IP are provided.
-	 * TODO: Is validity check needed here? */
+	/* Make sure the DAG capture path and trust node IP are provided */
 	if (!strlen(tn_ip) || !strlen(filename_in)) {
 		fprintf(stderr, "Error! Missing arguments\n");
 		usage();
@@ -853,7 +854,7 @@ main(int argc, char *argv[])
 	if (socket_desc >= 0)
 		close(socket_desc);
 
-	verbose(VERB_DEBUG, "  Exiting program.\n");
+	verbose(VERB_DEBUG, "Exiting program.\n");
 
 	return err;
 }
