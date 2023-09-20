@@ -83,7 +83,7 @@ void verbose(int facility, const char* format, ...)
 	va_list arglist;
 	va_start( arglist, format );
 
-	if ((verbose_level > 0) && (facility >= LOG_EMERG && facility <= LOG_NOTICE))
+	if ((verbose_level > 0) && (facility >= LOG_EMERG && facility <= LOG_INFO))
 		vprintf( format, arglist );
 
 	else if ((verbose_level > 1) && (facility == VERB_DEBUG))
@@ -854,7 +854,7 @@ main(int argc, char *argv[])
 	if (socket_desc >= 0)
 		close(socket_desc);
 
-	verbose(VERB_DEBUG, "Exiting program.\n");
+	verbose(LOG_INFO, "Exiting program.\n");
 
 	return err;
 }
