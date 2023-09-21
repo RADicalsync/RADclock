@@ -709,15 +709,14 @@ void init_rec_list(struct rec_list *list)
 
 /**
  * Signal handler function
+ * SIGHUP, SIGTERM, or SIGTERM signals are caught. Set the
+ * break_process_loop flag so that the loop breaks after processing the current
+ * frame and exits properly.
  */
 static void
 signal_handler(int sig)
 {
 	switch(sig) {
-
-		/* SIGHUP, SIGTERM, or SIGTERM signals are caught. Set the
-		 * break_process_loop flag so that the loop breaks after processing the
-		 * current frame and exits properly. */
 		case SIGHUP:
 		case SIGINT:
 		case SIGTERM:
