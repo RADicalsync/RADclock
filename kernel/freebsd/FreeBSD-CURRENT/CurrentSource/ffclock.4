@@ -1,8 +1,8 @@
 .\" Copyright (c) 2011 The University of Melbourne
 .\" All rights reserved.
 .\"
-.\" This documentation was written by Julien Ridoux and Darryl Veitch at the
-.\" University of Melbourne under sponsorship from the FreeBSD Foundation.
+.\" This documentation was written by Julien Ridoux at the University of
+.\" Melbourne under sponsorship from the FreeBSD Foundation.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
 .\" modification, are permitted provided that the following conditions
@@ -25,50 +25,41 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
-.Dd May 3, 2023
+.Dd December 1, 2011
 .Dt FFCLOCK 4
 .Os
 .Sh NAME
 .Nm FFCLOCK
-.Nd Feedforward system clock
+.Nd Feed-forward system clock
 .Sh SYNOPSIS
 .Cd options FFCLOCK
 .Sh DESCRIPTION
 The
 .Xr ntpd 8
-daemon has been the dominant solution for system clock synchronization for many
+daemon has been the dominant solution for system clock synchronisation for many
 years, which has in turn influenced the design of the system clock.
 The ntpd daemon implements a feedback control algorithm which has been
 demonstrated to perform poorly in common use cases.
 .Pp
-Feedforward clock synchronization algorithms implemented by an appropriate
+Feed-forward clock synchronisation algorithms implemented by an appropriate
 daemon, in concert with the
 .Nm
 kernel support, have been shown to provide highly robust and accurate clock
-synchronization.
+synchronisation.
 In addition to time keeping, the
 .Nm
 kernel mechanism provides new timestamping capabilities and the ability to
-use specialized clocks. This includes one designed for the
-measurement of time differences which is extremely robust and accurate, for
-example offering nanosecond accuracy and below for packet round-trip times.
-Feedforward synchronization is also naturally suited for virtualised
+use specialised clocks.
+Feed-forward synchronisation is also very well suited for virtualised
 environments, reducing the overhead of timekeeping in guests and ensuring
 continued smooth operation of the system clock during guest live migration.
 .Pp
 The
 .Nm
-kernel support provides a feedforward compatible counter, feedforward
-timestamping functions within the kernel, system calls to support feedforward
-synchronization daemons
+kernel support provides feed-forward timestamping functions within the kernel
+and system calls to support feed-forward synchronisation daemons
 .Po see
 .Xr ffclock 2
-.Pc ,
-and advanced packet timestamping support
-.Po see
-.Xr bpf 4
 .Pc .
 .Ss Kernel Options
 The following kernel configuration options are related to
@@ -76,61 +67,42 @@ The following kernel configuration options are related to
 .Pp
 .Bl -tag -width ".Dv FFCLOCK" -compact
 .It Dv FFCLOCK
-Enable feedforward clock support.
+Enable feed-forward clock support.
 .El
 .Ss Configuration
-When feedforward clock support is compiled into the kernel, two system
-clock families become available to choose from: the traditional FBclock (the
-default) and FFclock. System clock configuration is possible via the
+When feed-forward clock support is compiled into the kernel, multiple system
+clocks become available to choose from.
+System clock configuration is possible via the
 .Va kern.sysclock
 .Xr sysctl 8
 tree which provides the following variables:
 .Bl -tag -width "    " -offset indent
 .It Va kern.sysclock.active
-The system clock family that is currently serving time.
-Can be dynamically set to one of the available families, as given by
+Name of the current active system clock which is serving time.
+Set to one of the names in
 .Va kern.sysclock.available
+in order to change the default active system clock.
 .It Va kern.sysclock.available
-Lists the available system clock families
+Lists the names of available system clocks
 .Po
 read-only
 .Pc .
 .El
 .Pp
-Within each clock family, variants of the underlying clock may be available. In
-the case of FFclock there are three: the underlying clock
-.Va natFFC
-that is directly synchronized by the FFclock daemon, a monotonized version
-.Va monoFFC
-of it
-.Po
-the system clock default, used in system timestamping functions
-.Pc , and the 'difference clock'
-.Va diffFFC ,
-available for accurate measurement of time
-difference over small time intervals
-.Po
-for example 1hr, beyond which it is better to use
-natFFC
-.Pc .
-.Pp
-Feedforward system clock configuration is possible via the
+Feed-forward system clock configuration is possible via the
 .Va kern.sysclock.ffclock
 sysctl tree which provides the following variables:
 .Bl -tag -width "    " -offset indent
 .It Va kern.sysclock.ffclock.version
-Feedforward clock kernel version
+Feed-forward clock kernel version
 .Po
 read-only
 .Pc .
 .It Va kern.sysclock.ffclock.ffcounter_bypass
-Use direct reads of the chosen hardware timecounter when timestamping for
-latency reduction, rather than using the timecounter mechanism's
-re-synthesized version of the counter. This only applies when the native
-hardware counter is suitable for feedforward use, and direct access is
-available. It is currently supported only in the case of an invariant TSC.
-The origins of the native and timecounter-based versions of the counter are
-guaranteed to align.
+Use reliable hardware timecounter as the feed-forward counter.
+Will eventually be useful for virtualised environment like
+.Xr xen 4 ,
+but currently does nothing.
 .El
 .Sh SEE ALSO
 .Xr clock_gettime 2 ,
@@ -139,21 +111,17 @@ guaranteed to align.
 .Xr timecounters 4 ,
 .Xr sysctl 8
 .Sh HISTORY
-Feedforward clock support first appeared in
+Feed-forward clock support first appeared in
 .Fx 10.0 .
 .Sh AUTHORS
 .An -nosplit
-The feedforward clock support was written by
-.An Julien Ridoux
+The feed-forward clock support was written by
+.An Julien Ridoux Aq Mt jridoux@unimelb.edu.au
 in collaboration with
-.An Darryl Veitch
+.An Darryl Veitch Aq Mt dveitch@unimelb.edu.au
 at the University of Melbourne under sponsorship from the FreeBSD Foundation.
-It was later revised and extended by Darryl Veitch at the University of
-Technology Sydney.
 .Pp
 This manual page was written by
-.An Julien Ridoux
+.An Julien Ridoux Aq Mt jridoux@unimelb.edu.au
 and
-.An Lawrence Stewart Aq Mt lstewart@FreeBSD.org ,
-and updated by
-.An Darryl Veitch Aq Mt darryl.veitch@uts.edu.au .
+.An Lawrence Stewart Aq Mt lstewart@FreeBSD.org .

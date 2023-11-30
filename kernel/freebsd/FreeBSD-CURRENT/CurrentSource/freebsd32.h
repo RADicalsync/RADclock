@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2001 Doug Rabson
  * All rights reserved.
@@ -24,8 +24,6 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _COMPAT_FREEBSD32_FREEBSD32_H_
@@ -69,14 +67,14 @@ struct bintime32 {
 struct ffclock_estimate32 {
 	struct bintime32 update_time;
 	ffcounter update_ffcount;
-	ffcounter leapsec_expected;
+	ffcounter leapsec_next;
 	uint64_t period;
 	uint32_t errb_abs;
 	uint32_t errb_rate;
 	uint32_t status;
-	int16_t secs_to_nextupdate;
-	int8_t leapsec_total;
-	int8_t leapsec_next;
+	int16_t leapsec_total;
+	int8_t leapsec;
+	int8_t _pad;
 }
 #if defined(__amd64__)
 __attribute__((packed))

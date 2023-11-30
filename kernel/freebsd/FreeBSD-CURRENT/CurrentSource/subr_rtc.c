@@ -11,6 +11,9 @@
  * the Systems Programming Group of the University of Utah Computer
  * Science Department.
  *
+ * Portions of this software were developed by Julien Ridoux at the University
+ * of Melbourne under sponsorship from the FreeBSD Foundation.
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -52,7 +55,7 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
+#include "opt_ffclock.h"
 
 #include <sys/param.h>
 #include <sys/systm.h>
@@ -64,6 +67,9 @@ __FBSDID("$FreeBSD$");
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/taskqueue.h>
+#ifdef FFCLOCK
+#include <sys/timeffc.h>
+#endif
 #include <sys/timetc.h>
 
 #include "clock_if.h"
@@ -352,9 +358,12 @@ inittodr(time_t base)
 		ts.tv_nsec = 0;
 	}
 
-	if (ts.tv_sec >= 0)
+	if (ts.tv_sec >= 0) {
 		tc_setclock(&ts);
-
+#ifdef FFCLOCK
+		ffclock_reset_clock(&ts);
+#endif
+	}
 }
 
 /*

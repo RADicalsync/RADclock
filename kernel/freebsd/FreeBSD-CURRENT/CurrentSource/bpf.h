@@ -9,11 +9,6 @@
  * to Berkeley by Steven McCanne and Van Jacobson both of Lawrence
  * Berkeley Laboratory.
  *
- * Portions of this software were developed by Darryl Veitch at the University
- * of Technology Sydney, based on earlier work by Julien Ridoux and Darryl
- * Veitch at the University of Melbourne under sponsorship from the FreeBSD
- * Foundation.
- *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -40,8 +35,6 @@
  *
  *      @(#)bpf.h	8.1 (Berkeley) 6/10/93
  *	@(#)bpf.h	1.34 (LBL)     6/16/96
- *
- * $FreeBSD$
  */
 
 #ifndef _NET_BPF_H_
@@ -50,7 +43,6 @@
 #include <sys/_eventhandler.h>
 #include <sys/ck.h>
 #include <net/dlt.h>
-#include <sys/_ffcounter.h>
 
 /* BSD style release date */
 #define	BPF_RELEASE 199606
@@ -173,57 +165,23 @@ enum bpf_direction {
 	BPF_D_OUT	/* See outgoing packets */
 };
 
-/* Time stamping flags. */
-/* FORMAT flags    	[ mutually exclusive, not to be ORed. ] */
-#define	BPF_T_MICROTIME      0x0000
-#define	BPF_T_NANOTIME       0x0001
-#define	BPF_T_BINTIME        0x0002
-#define	BPF_T_NONE           0x0003  // relates to ts only, FFRAW independent
-#define	BPF_T_FORMAT_MASK    0x0003
-/* FFRAW flag */
-#define	BPF_T_NOFFC          0x0000  // no FFcount
-#define	BPF_T_FFC            0x0010  // want FFcount
-#define	BPF_T_FFRAW_MASK     0x0010
-/* FLAG flags   [ can view bits as ORable flags ] */
-#define	BPF_T_NORMAL         0x0000  // UTC, !FAST
-#define	BPF_T_FAST           0x0100  // UTC,  FAST
-#define	BPF_T_MONOTONIC      0x0200  // UPTIME, !FAST
-#define	BPF_T_MONOTONIC_FAST 0x0300  // UPTIME,  FAST
-#define	BPF_T_FLAG_MASK      0x0300
-/* CLOCK flags   [ mutually exclusive, not to be ORed. ] */
-#define	BPF_T_SYSC           0x0000  // read current sysclock
-#define	BPF_T_FBC            0x1000  // read FBclock
-#define	BPF_T_MONOFFC        0x2000  // read monoFFC (sysclock reads are mono)
-#define	BPF_T_NATFFC         0x3000  // read natFFC
-#define	BPF_T_DIFFFFC        0x4000  // read diffFFC
-#define	BPF_T_CLOCK_MASK     0x7000
+/* Time stamping functions */
+#define	BPF_T_MICROTIME		0x0000
+#define	BPF_T_NANOTIME		0x0001
+#define	BPF_T_BINTIME		0x0002
+#define	BPF_T_NONE		0x0003
+#define	BPF_T_FORMAT_MASK	0x0003
+#define	BPF_T_NORMAL		0x0000
+#define	BPF_T_FAST		0x0100
+#define	BPF_T_MONOTONIC		0x0200
+#define	BPF_T_MONOTONIC_FAST	(BPF_T_FAST | BPF_T_MONOTONIC)
+#define	BPF_T_FLAG_MASK		0x0300
+#define	BPF_T_FORMAT(t)		((t) & BPF_T_FORMAT_MASK)
+#define	BPF_T_FLAG(t)		((t) & BPF_T_FLAG_MASK)
+#define	BPF_T_VALID(t)						\
+    ((t) == BPF_T_NONE || (BPF_T_FORMAT(t) != BPF_T_NONE &&	\
+    ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FLAG_MASK)) == 0))
 
-/* Extract FORMAT, FFRAW, FLAG, CLOCK  bits. */
-#define	BPF_T_FORMAT(t) ((t) & BPF_T_FORMAT_MASK)
-#define	BPF_T_FFRAW(t)  ((t) & BPF_T_FFRAW_MASK)
-#define	BPF_T_FLAG(t)   ((t) & BPF_T_FLAG_MASK)
-#define	BPF_T_CLOCK(t)  ((t) & BPF_T_CLOCK_MASK)
-
-/*
- * Used to vet descriptor passed to BPF via BIOCSTSTAMP ioctl.
- * All components are independent, and either always meaningful, or
- * not acted on if not meaningful. Hence checks reduce to ensuring no bits in
- * undefined positions, and not asking for a FF clock that doesn't exist.
-*/
-#ifdef FFCLOCK
-#define	BPF_T_VALID(t) ( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
-                                  BPF_T_FLAG_MASK   | BPF_T_CLOCK_MASK)) == 0 \
-                         && BPF_T_CLOCK(t)<=BPF_T_DIFFFFC )
-#else
-#define	BPF_T_VALID(t) ( ((t) & ~(BPF_T_FORMAT_MASK | BPF_T_FFRAW_MASK | \
-                                  BPF_T_FLAG_MASK   | BPF_T_CLOCK_MASK)) == 0 \
-                         && BPF_T_CLOCK(t)<=BPF_T_FBC )
-#endif
-
-/*
- * Presets to ease tstype selection for users. These cover all FORMAT*FLAG
- * combinations for a default clock of BPF_T_SYSC, with BPF_T_NOFFC .
- */
 #define	BPF_T_MICROTIME_FAST		(BPF_T_MICROTIME | BPF_T_FAST)
 #define	BPF_T_NANOTIME_FAST		(BPF_T_NANOTIME | BPF_T_FAST)
 #define	BPF_T_BINTIME_FAST		(BPF_T_BINTIME | BPF_T_FAST)
@@ -232,13 +190,7 @@ enum bpf_direction {
 #define	BPF_T_BINTIME_MONOTONIC		(BPF_T_BINTIME | BPF_T_MONOTONIC)
 #define	BPF_T_MICROTIME_MONOTONIC_FAST	(BPF_T_MICROTIME | BPF_T_MONOTONIC_FAST)
 #define	BPF_T_NANOTIME_MONOTONIC_FAST	(BPF_T_NANOTIME | BPF_T_MONOTONIC_FAST)
-#define	BPF_T_BINTIME_MONOTONIC_FAST	(BPF_T_BINTIME | BPF_T_MONOTONIC_
-
-/* Presets for the main FFCLOCK choices, all with BPF_T_FFC. */
-#define	BPF_T_BINTIME_FFC_MONOFFC    (BPF_T_BINTIME | BPF_T_FFC | BPF_T_MONOFFC)
-#define	BPF_T_BINTIME_FFC_NATFFC     (BPF_T_BINTIME | BPF_T_FFC | BPF_T_NATFFC)
-#define	BPF_T_BINTIME_FFC_DIFFFFC    (BPF_T_BINTIME | BPF_T_FFC | BPF_T_DIFFFFC)
-
+#define	BPF_T_BINTIME_MONOTONIC_FAST	(BPF_T_BINTIME | BPF_T_MONOTONIC_FAST)
 
 /*
  * Structure prepended to each packet.
@@ -253,7 +205,6 @@ struct bpf_xhdr {
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
-	ffcounter	bh_ffcounter;	/* feedforward counter stamp */
 };
 /* Obsolete */
 struct bpf_hdr {
@@ -262,7 +213,6 @@ struct bpf_hdr {
 	bpf_u_int32	bh_datalen;	/* original length of packet */
 	u_short		bh_hdrlen;	/* length of bpf header (this struct
 					   plus alignment padding) */
-	ffcounter	bh_ffcounter;	/* feedforward counter stamp */
 };
 #ifdef _KERNEL
 #define	MTAG_BPF		0x627066
@@ -478,6 +428,7 @@ void	 bpf_mtap2_if(struct ifnet *, void *, u_int, struct mbuf *);
 void	 bpfattach(struct ifnet *, u_int, u_int);
 void	 bpfattach2(struct ifnet *, u_int, u_int, struct bpf_if **);
 void	 bpfdetach(struct ifnet *);
+bool	 bpf_peers_present_if(struct ifnet *);
 #ifdef VIMAGE
 int	 bpf_get_bp_params(struct bpf_if *, u_int *, u_int *);
 #endif

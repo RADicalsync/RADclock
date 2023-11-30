@@ -1,11 +1,11 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
  *
- * This software was developed by Julien Ridoux and Darryl Veitch at the
- * University of Melbourne under sponsorship from the FreeBSD Foundation.
+ * This software was developed by Julien Ridoux at the University of Melbourne
+ * under sponsorship from the FreeBSD Foundation.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -27,15 +27,13 @@
  * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
  * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
  * SUCH DAMAGE.
- *
- * $FreeBSD$
  */
 
 #ifndef _SYS__FFCOUNTER_H_
-#define	_SYS__FFCOUNTER_H_
+#define _SYS__FFCOUNTER_H_
 
 /*
- * The feedforward clock counter. The fundamental element of a feedforward
+ * The feed-forward clock counter. The fundamental element of a feed-forward
  * clock is a wide monotonically increasing counter that accumulates at the same
  * rate as the selected timecounter.
  */
