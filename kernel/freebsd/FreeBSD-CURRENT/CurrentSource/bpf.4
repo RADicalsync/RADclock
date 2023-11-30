@@ -47,7 +47,7 @@
 .\" This document is derived in part from the enet man page (enet.4)
 .\" distributed with 4.3BSD Unix.
 .\"
-.Dd October 13, 2021
+.Dd Nov 30, 2023
 .Dt BPF 4
 .Os
 .Sh NAME
@@ -541,7 +541,13 @@ by default.
 .It Dv BIOCSTSTAMP
 .It Dv BIOCGTSTAMP
 .Pq Li u_int
-Set or get format and resolution of the time stamps returned by BPF.
+Set or get clock type, format and resolution of the time stamps returned by
+.Nm bpf.
+The default clock is the prevailing system clock, which in turn defaults to the
+traditional FBC (FeedBack Clock). The following presets
+cover all FORMAT and FLAG flag combinations for the system clock, with a default
+of
+.Dv BPF_T_MICROTIME.
 Set to
 .Dv BPF_T_MICROTIME ,
 .Dv BPF_T_MICROTIME_FAST ,
@@ -575,27 +581,31 @@ to ignore time stamp.
 All 64-bit time stamp formats are wrapped in
 .Vt struct bpf_ts .
 The
-.Dv BPF_T_MICROTIME_FAST ,
-.Dv BPF_T_NANOTIME_FAST ,
-.Dv BPF_T_BINTIME_FAST ,
-.Dv BPF_T_MICROTIME_MONOTONIC_FAST ,
-.Dv BPF_T_NANOTIME_MONOTONIC_FAST ,
-and
-.Dv BPF_T_BINTIME_MONOTONIC_FAST
-are analogs of corresponding formats without _FAST suffix but do not perform
-a full time counter query, so their accuracy is one timer tick.
-The
-.Dv BPF_T_MICROTIME_MONOTONIC ,
-.Dv BPF_T_NANOTIME_MONOTONIC ,
-.Dv BPF_T_BINTIME_MONOTONIC ,
-.Dv BPF_T_MICROTIME_MONOTONIC_FAST ,
-.Dv BPF_T_NANOTIME_MONOTONIC_FAST ,
-and
-.Dv BPF_T_BINTIME_MONOTONIC_FAST
-store the time elapsed since kernel boot.
-This setting is initialized to
-.Dv BPF_T_MICROTIME
-by default.
+.Dv BPF_T_*_FAST formats
+are analogs of corresponding formats without the _FAST suffix but do not
+perform a full time counter query, so they suffer a timestamping error of up to
+one timecounter tick. The
+.Dv BPF_T_*_MONOTONIC*
+formats are uptime clocks, that is they supply the time elapsed since kernel
+boot, rather than UTC.
+To explicitly select the underlying clock used, the above presets can be or-ed
+with one of the CLOCK formats
+.Dv BPF_T_FBC,
+.Dv BPF_T_MONOFFC,
+.Dv BPF_T_NATFFC,
+.Dv BPF_T_DIFFFFC,
+where the latter three are FFCLOCK (FeedForward Clock) options. The following
+presets are available for FFclock use, all returning FORMAT bintime for absolute
+timestamps, in addition to a separate raw timestamp (FFCounter read). Set to
+.Dv BPF_T_BINTIME_FFC_NATFFC
+to obtain a UTC FFclock following the native FF daemon clock precisely,
+.Dv BPF_T_BINTIME_FFC_MONOFFC
+for the FFclock UTC system clock which is guaranteed to progress monotonically,
+and finally,
+.Dv BPF_T_BINTIME_FFC_DIFFFFC
+to access the difference clock. Use this for highly accurate measurement of time
+differences below (roughly) a 1hr timescale (eg sub-ns errors
+for RTTs).
 .It Dv BIOCFEEDBACK
 .Pq Li u_int
 Set packet feedback mode.
@@ -665,7 +675,7 @@ Set the VLAN PCP bits to the supplied value.
 now supports several standard
 .Xr ioctl 2 Ns 's
 which allow the user to do async and/or non-blocking I/O to an open
-.I bpf
+.Nm bpf
 file descriptor.
 .Bl -tag -width SIOCGIFADDR
 .It Dv FIONREAD
@@ -722,6 +732,8 @@ struct bpf_xhdr {
 	uint32_t	bh_datalen;    /* original length of packet */
 	u_short		bh_hdrlen;     /* length of bpf header (this struct
 					  plus alignment padding) */
+	ffcounter	bh_ffcounter;  /* feedforward counter stamp */
+
 };
 
 struct bpf_hdr {
@@ -730,12 +742,13 @@ struct bpf_hdr {
 	uint32_t	bh_datalen;    /* original length of packet */
 	u_short		bh_hdrlen;     /* length of bpf header (this struct
 					  plus alignment padding) */
+	ffcounter	bh_ffcounter;  /* feedforward counter stamp */
 };
 .Ed
 .Pp
 The fields, whose values are stored in host order, and are:
 .Pp
-.Bl -tag -compact -width bh_datalen
+.Bl -tag -compact -width bh_ffcounter
 .It Li bh_tstamp
 The time at which the packet was processed by the packet filter.
 .It Li bh_caplen
@@ -753,6 +766,8 @@ header, which may not be equal to
 .Fn sizeof "struct bpf_xhdr"
 or
 .Fn sizeof "struct bpf_hdr" .
+.It Li bh_ffcounter
+The raw timestamp (FeedForward counter reading) of packet arrival.
 .El
 .Pp
 The

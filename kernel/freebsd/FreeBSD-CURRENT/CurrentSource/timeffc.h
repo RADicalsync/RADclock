@@ -4,8 +4,9 @@
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
  *
- * This software was developed by Julien Ridoux at the University of Melbourne
- * under sponsorship from the FreeBSD Foundation.
+ * This software was developed by Julien Ridoux and Darryl Veitch at the
+ * University of Melbourne under sponsorship from the FreeBSD Foundation,
+ * and revised by Darryl Veitch at the University of Technology Sydney.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,77 +31,95 @@
  */
 
 #ifndef _SYS_TIMEFF_H_
-#define _SYS_TIMEFF_H_
+#define	_SYS_TIMEFF_H_
 
 #include <sys/_ffcounter.h>
 
+
+#if __BSD_VISIBLE
+#ifdef _KERNEL
+
 /*
- * Feed-forward clock estimate
+ * Feedforward clock estimate
  * Holds time mark as a ffcounter and conversion to bintime based on current
  * timecounter period and offset estimate passed by the synchronization daemon.
  * Provides time of last daemon update, clock status and bound on error.
  */
 struct ffclock_estimate {
-	struct bintime	update_time;	/* Time of last estimates update. */
-	ffcounter	update_ffcount;	/* Counter value at last update. */
-	ffcounter	leapsec_next;	/* Counter value of next leap second. */
-	uint64_t	period;		/* Estimate of counter period. */
-	uint32_t	errb_abs;	/* Bound on absolute clock error [ns]. */
-	uint32_t	errb_rate;	/* Bound on counter rate error [ps/s]. */
-	uint32_t	status;		/* Clock status. */
-	int16_t		leapsec_total;	/* All leap seconds seen so far. */
-	int8_t		leapsec;	/* Next leap second (in {-1,0,1}). */
+	struct bintime update_time; /* FFclock time of last update. */
+	ffcounter update_ffcount;   /* Counter value at last update. */
+	ffcounter leapsec_expected; /* Approx counter value of next leap. */
+	uint64_t period;            /* Counter period estimate [2^-64 s]. */
+	uint32_t errb_abs;          /* Bound on absolute clock error [ns]. */
+	uint32_t errb_rate;         /* Bound on rel. counter period err [ps/s]*/
+	uint32_t status;            /* Clock status. */
+	uint16_t secs_to_nextupdate;/* Estimated wait til next update [s]. */
+	int8_t leapsec_total;       /* Sum of leap secs since clock start. */
+	int8_t leapsec_next;        /* Next leap second (in {-1,0,1}). */
 };
 
-#if __BSD_VISIBLE
-#ifdef _KERNEL
+/* Constants to hold errors and error rates in 64bit binary fraction fields. */
+#define	MS_AS_BINFRAC  (uint64_t)18446744073709551ULL  // floor(2^64/1e3)
+#define	MUS_AS_BINFRAC (uint64_t)18446744073709ULL     // floor(2^64/1e6)
+#define	NS_AS_BINFRAC  (uint64_t)18446744073ULL        // floor(2^64/1e9)
+#define	PS_AS_BINFRAC  (uint64_t)18446744ULL           // floor(2^64/1e12)
 
-/* Define the kern.sysclock sysctl tree. */
+
+/* Declare the kern.sysclock sysctl tree. */
 SYSCTL_DECL(_kern_sysclock);
 
-/* Define the kern.sysclock.ffclock sysctl tree. */
+/* Declare the kern.sysclock.ffclock sysctl tree. */
 SYSCTL_DECL(_kern_sysclock_ffclock);
+
+/* Flag defining if counter bypass mode is desired or not.
+ * This is only possible if the counter is a TSC with rdtsc defined.
+ */
+#ifdef FFCLOCK
+extern int sysctl_kern_ffclock_ffcounter_bypass;
+#endif
 
 /*
  * Index into the sysclocks array for obtaining the ASCII name of a particular
  * sysclock.
  */
-#define	SYSCLOCK_FBCK	0
-#define	SYSCLOCK_FFWD	1
+#define	SYSCLOCK_FB 0
+#define	SYSCLOCK_FF 1
 extern int sysclock_active;
 
 /*
- * Parameters of counter characterisation required by feed-forward algorithms.
+ * Parameters of counter characterisation required by feedforward algorithms.
  */
-#define	FFCLOCK_SKM_SCALE	1024
+#define	FFCLOCK_SKM_SCALE 1024
 
 /*
- * Feed-forward clock status
+ * Feedforward clock status.
  */
-#define	FFCLOCK_STA_UNSYNC	1
-#define	FFCLOCK_STA_WARMUP	2
+#define	FFCLOCK_STA_UNSYNC 1
+#define	FFCLOCK_STA_WARMUP 2
 
 /*
  * Flags for use by sysclock_snap2bintime() and various ffclock_ functions to
  * control how the timecounter hardware is read and how the hardware snapshot is
  * converted into absolute time.
- * {FB|FF}CLOCK_FAST:	Do not read the hardware counter, instead using the
- *			value at last tick. The time returned has a resolution
- *			of the kernel tick timer (1/hz [s]).
- * FFCLOCK_LERP:	Linear interpolation of ffclock time to guarantee
- *			monotonic time.
- * FFCLOCK_LEAPSEC:	Include leap seconds.
- * {FB|FF}CLOCK_UPTIME:	Time stamp should be relative to system boot, not epoch.
+ * The flags all set independent bits and so are OR-able. However not
+ * all combinations are compatible with a meaningful clock.
+ * {FB|FF}CLOCK_FAST:   Do not read the hardware counter, instead use the
+ *                      value recorded at the last tc-tick update
+ * FFCLOCK_DIFF:        Read diffFFC (natFFC is the default)
+ * FFCLOCK_MONO:        Read monoFFC (natFFC is the default)
+ * FFCLOCK_LEAPSEC:     Include leap seconds seen since boot
+ * {FB|FF}CLOCK_UPTIME: Uptime since system boot (default is UTC)
  */
-#define	FFCLOCK_FAST		0x00000001
-#define	FFCLOCK_LERP		0x00000002
-#define	FFCLOCK_LEAPSEC		0x00000004
-#define	FFCLOCK_UPTIME		0x00000008
-#define	FFCLOCK_MASK		0x0000ffff
+#define	FFCLOCK_FAST    0x00000001
+#define	FFCLOCK_DIFF    0x00000002
+#define	FFCLOCK_MONO    0x00000004
+#define	FFCLOCK_LEAPSEC 0x00000008
+#define	FFCLOCK_UPTIME  0x00000010
+#define	FFCLOCK_MASK    0x0000ffff
 
-#define	FBCLOCK_FAST		0x00010000 /* Currently unused. */
-#define	FBCLOCK_UPTIME		0x00020000
-#define	FBCLOCK_MASK		0xffff0000
+#define	FBCLOCK_FAST    0x00010000 /* Currently unused. */
+#define	FBCLOCK_UPTIME  0x00020000
+#define	FBCLOCK_MASK    0xffff0000
 
 /*
  * Feedback clock specific info structure. The feedback clock's estimation of
@@ -108,26 +127,28 @@ extern int sysclock_active;
  * is determined by the userland daemon.
  */
 struct fbclock_info {
-	struct bintime		error;
-	struct bintime		tick_time;
-	uint64_t		th_scale;
-	int			status;
+	struct bintime error;
+	struct bintime tick_time;
+	uint64_t th_scale;
+	int status;
 };
 
 /*
- * Feed-forward clock specific info structure. The feed-forward clock's
+ * Feedforward clock specific info structure. The feedforward clock's
  * estimation of clock error is an upper bound, which although potentially
  * looser than the feedback clock equivalent, is much more reliable. The status
  * is determined by the userland daemon.
  */
 struct ffclock_info {
-	struct bintime		error;
-	struct bintime		tick_time;
-	struct bintime		tick_time_lerp;
-	uint64_t		period;
-	uint64_t		period_lerp;
-	int			leapsec_adjustment;
-	int			status;
+	struct bintime error;
+	struct bintime tick_time;
+	struct bintime tick_time_mono;
+	struct bintime tick_time_diff;
+	struct bintime ffclock_boottime;
+	uint64_t period;
+	uint64_t period_mono;
+	int leapsec_adjustment;
+	int status;
 };
 
 /*
@@ -137,11 +158,11 @@ struct ffclock_info {
  * at the time of the read.
  */
 struct sysclock_snap {
-	struct fbclock_info	fb_info;
-	struct ffclock_info	ff_info;
-	ffcounter		ffcount;
-	unsigned int		delta;
-	int			sysclock_active;
+	struct fbclock_info fb_info;
+	struct ffclock_info ff_info;
+	ffcounter ffcount;
+	unsigned int delta;
+	int sysclock_active;
 };
 
 /* Take a snapshot of the system clocks and related information. */
@@ -149,34 +170,31 @@ void sysclock_getsnapshot(struct sysclock_snap *clock_snap, int fast);
 
 /* Convert a timestamp from the selected system clock into bintime. */
 int sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
-    int whichclock, uint32_t flags);
-
-/* Resets feed-forward clock from RTC */
-void ffclock_reset_clock(struct timespec *ts);
+    int clockfamily, uint32_t flags);
 
 /*
- * Return the current value of the feed-forward clock counter. Essential to
+ * Return the current value of the feedforward clock counter. Essential to
  * measure time interval in counter units. If a fast timecounter is used by the
  * system, may also allow fast but accurate timestamping.
  */
 void ffclock_read_counter(ffcounter *ffcount);
 
 /*
- * Retrieve feed-forward counter value and time of last kernel tick. This
- * accepts the FFCLOCK_LERP flag.
+ * Retrieve feedforward counter value and time of last kernel tick. This
+ * accepts the FFCLOCK_MONO flag.
  */
 void ffclock_last_tick(ffcounter *ffcount, struct bintime *bt, uint32_t flags);
 
 /*
  * Low level routines to convert a counter timestamp into absolute time and a
  * counter timestamp interval into an interval in seconds. The absolute time
- * conversion accepts the FFCLOCK_LERP flag.
+ * conversion accepts the FFCLOCK_MONO flag.
  */
 void ffclock_convert_abs(ffcounter ffcount, struct bintime *bt, uint32_t flags);
 void ffclock_convert_diff(ffcounter ffdelta, struct bintime *bt);
 
 /*
- * Feed-forward clock routines.
+ * Feedforward clock routines.
  *
  * These functions rely on the timecounters and ffclock_estimates stored in
  * fftimehands. Note that the error_bound parameter is not the error of the
@@ -187,7 +205,7 @@ void ffclock_convert_diff(ffcounter ffdelta, struct bintime *bt);
  *     timestamp in seconds. The value (in seconds) of the converted timestamp
  *     depends on the flags passed: for a given counter value, different
  *     conversions are possible. Different clock models can be selected by
- *     combining flags (for example (FFCLOCK_LERP|FFCLOCK_UPTIME) produces
+ *     combining flags (for example (FFCLOCK_MONO|FFCLOCK_UPTIME) produces
  *     linearly interpolated uptime).
  * ffclock_difftime(): computes a time interval in seconds based on an interval
  *     measured in ffcounter units. This should be the preferred way to measure
@@ -199,7 +217,7 @@ void ffclock_difftime(ffcounter ffdelta, struct bintime *bt,
     struct bintime *error_bound);
 
 /*
- * Wrapper routines to return current absolute time using the feed-forward
+ * Wrapper routines to return current absolute time using the feedforward
  * clock. These functions are named after those defined in <sys/time.h>, which
  * contains a description of the original ones.
  */
@@ -221,7 +239,7 @@ void ffclock_getmicrouptime(struct timeval *tvp);
 
 /*
  * Wrapper routines to convert a time interval specified in ffcounter units into
- * seconds using the current feed-forward clock estimates.
+ * seconds using the current feedforward clock estimates.
  */
 void ffclock_bindifftime(ffcounter ffdelta, struct bintime *bt);
 void ffclock_nanodifftime(ffcounter ffdelta, struct timespec *tsp);
@@ -229,7 +247,7 @@ void ffclock_microdifftime(ffcounter ffdelta, struct timeval *tvp);
 
 /*
  * When FFCLOCK is enabled in the kernel, [get]{bin,nano,micro}[up]time() become
- * wrappers around equivalent feedback or feed-forward functions. Provide access
+ * wrappers around equivalent feedback or feedforward functions. Provide access
  * outside of kern_tc.c to the feedback clock equivalent functions for
  * specialised use i.e. these are not for general consumption.
  */
@@ -259,7 +277,7 @@ static inline void
 bintime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_bintime(bt);
 	else
 		fbclock_bintime(bt);
@@ -269,7 +287,7 @@ static inline void
 nanotime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_nanotime(tsp);
 	else
 		fbclock_nanotime(tsp);
@@ -279,7 +297,7 @@ static inline void
 microtime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_microtime(tvp);
 	else
 		fbclock_microtime(tvp);
@@ -289,7 +307,7 @@ static inline void
 getbintime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getbintime(bt);
 	else
 		fbclock_getbintime(bt);
@@ -299,7 +317,7 @@ static inline void
 getnanotime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getnanotime(tsp);
 	else
 		fbclock_getnanotime(tsp);
@@ -309,7 +327,7 @@ static inline void
 getmicrotime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getmicrotime(tvp);
 	else
 		fbclock_getmicrotime(tvp);
@@ -319,7 +337,7 @@ static inline void
 binuptime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_binuptime(bt);
 	else
 		fbclock_binuptime(bt);
@@ -329,7 +347,7 @@ static inline void
 nanouptime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_nanouptime(tsp);
 	else
 		fbclock_nanouptime(tsp);
@@ -339,7 +357,7 @@ static inline void
 microuptime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_microuptime(tvp);
 	else
 		fbclock_microuptime(tvp);
@@ -349,7 +367,7 @@ static inline void
 getbinuptime_fromclock(struct bintime *bt, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getbinuptime(bt);
 	else
 		fbclock_getbinuptime(bt);
@@ -359,7 +377,7 @@ static inline void
 getnanouptime_fromclock(struct timespec *tsp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getnanouptime(tsp);
 	else
 		fbclock_getnanouptime(tsp);
@@ -369,7 +387,7 @@ static inline void
 getmicrouptime_fromclock(struct timeval *tvp, int whichclock)
 {
 
-	if (whichclock == SYSCLOCK_FFWD)
+	if (whichclock == SYSCLOCK_FF)
 		ffclock_getmicrouptime(tvp);
 	else
 		fbclock_getmicrouptime(tvp);
@@ -377,7 +395,7 @@ getmicrouptime_fromclock(struct timeval *tvp, int whichclock)
 
 #else /* !_KERNEL */
 
-/* Feed-Forward Clock system calls. */
+/* Feedforward Clock system calls. */
 __BEGIN_DECLS
 int ffclock_getcounter(ffcounter *ffcount);
 int ffclock_getestimate(struct ffclock_estimate *cest);
