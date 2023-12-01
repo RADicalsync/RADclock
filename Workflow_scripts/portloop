@@ -66,12 +66,12 @@
 # Base parameters
 Home="/Users/darryl/Papers/TSCclock/Programs/V4"
 RealRepo="$Home/RADclock_mycurrent"
-TestRepo="$Home/TestingGround/PortloopRepoBWorm"
+TestRepo="$Home/TestingGround/PortloopRepo"
 
 # Input parameters
-Repo=$RealRepo      # select from {Real,Test}Repo
+Repo=$TestRepo      # select from {Real,Test}Repo
 SeedingCURRENT="n"  # if loop is to re-seed tracking of FreeBSD CURRENT
-OS='linux'          # select from {freebsd,linux}
+OS='freebsd'          # select from {freebsd,linux}
 Oorigin="VM"        # Linux only: distinguish between Earthly or VM origin of O version
 Norigin="VM"        # Linux only: distinguish between Earthly or VM origin of N version
 Old="4.19.235"      # O=Old is the current version to be advanced to N=New
@@ -83,6 +83,9 @@ New="14.0-CURRENT"
 Old="5.10.149"
 #New="5.10.179"
 New="6.1.27"
+Old="CURRENT"       # originally 14.0-CURRENT, renamed to match name in repo
+New="14.0"
+
 
 # Setup Repo where the loop will be created
 if [ "$Repo" == "$RealRepo" ]; then

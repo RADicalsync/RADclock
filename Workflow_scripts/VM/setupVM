@@ -76,6 +76,17 @@ if [ $? -eq 0 ]; then    # if previous command exits with success
 	fi
 fi
 
+
+## Allow root login  (regardless of existing line in file, commented or not)
+#  Could achieve this by calling bootstrapAccess which is now available
+echo -e "${RED} Enabling root login${CLE}, ssh key should not allow direct access."
+sed -i "" -E 's/^#?PermitRootLogin [n|y]+.*/PermitRootLogin yes/' /etc/ssh/sshd_config
+grep Root /etc/ssh/sshd_config  |grep -v setting
+## Make it take effect
+service sshd reload
+
+
+
 if [ $OS == FreeBSD ]; then
 	echo "Filling CurrentSource with links to source tree"
 	havekern=`ls -al CurrentSource | grep  kern_tc`

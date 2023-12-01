@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+#####
+# This script transfers a prepared patch-sequence in RADrepo to a new branch off
+# the appropriate base in CURRrepo. It automatically detects the correct
+# branch points in both repos, and applies checks.
+# It can be run safely for informational purposes, with an option to exit.
+#
+# It makes no changes to RADrepo (except perhaps a stash (if WD not clean) which
+# needs to be manually reverted afterward.
+#
+# Cases where the commits don't correspond exactly and this is correct behaviour
+#  - if a new FFfile is added in a RADrepo commit, it will not appear in the CURR commit,
+#    as it was already there (that's where we go it from) and haven't changed it yet.
+#  - special case: FFCLOCK . This is an FFfile, already in RADrepo, but is not
+#    normally in CURR, so it will appear as extra in the first CURR commit.
+#    If that first commit alters it, then it will appear in both but with different
+#    lines changed.
+#    TODO:  modify portloop to delete FFclock following the Seeding stage 2 of
+#    overlay, or convert it to a wipeout?  why wouldn't it be?
+# Cases where they don't and this is incorrect behaviour [should no longer occur]
+#  - move_into_srctree failure: if a newer FFfile is updated but the script is old
+#    in the active commit WD and we are using it here, it may not transfer it
+#  - rsync/cp failure: if old files in VM aren't deleted when copying over new FFfile set
+#    (ie is set to overlay, not wipeout)
+
+# Cheat Sheet
+#  git logo -1 --stat  HEAD^^^^^^^^^       # check individual commits, use in both repos
+#
+# For remaining issues with the transferred sequence, consider rebase -i
+# in the VM rather than rewritting RADrepo history repeatedly.
+#
+### Reset CURRrepo in case of screw up  [do this manually in VM:/usr/src]
+#git reset --hard                 # if transfer stopped with unclean WD
+#git checkout FFport              # can't delete a branch when on it, it seems
+#git branch -D FFpatch-sequence   # need -D since changes on FFpatch- are unmerged
+#git reset --hard;  git checkout FFport;  git branch -D FFpatch-sequence
+
+OS=`uname -s`
+if [ $OS != FreeBSD ]; then
+	echo "This script currently supports a FreeBSD workflow only! you are on $OS"
+	exit
+fi
+
+# Input parameters
+OS='freebsd'
+Sbranch='patch-sequence'    # Source branch in RADrepo (Repo) to take commits from
+Tbranch='FFpatch-sequence'  # Target branch in CURRrepo to transfer to (will be created)
+
+# VM --> Icaro dir params
+BaseDir="$HOME/FFkernel_Work"
+FFtarget="$BaseDir/FFclock_working"	# local copy to fuel tree insertion
+MountPoint="$BaseDir/V4_mountedfrom_Icaro"
+RADrepo="$MountPoint/RADclock_mycurrent"
+
+# Select RADrepo FF dir
+ND="FreeBSD-CURRENT"
+FFsource="kernel/$OS/$ND/CurrentSource"
+
+# CurrRepo
+WFsource="$MountPoint/WorkFlow_latest"
+CurrRepo="/usr/src"
+
+
+# Test inputs
+echo -e "${BLU}======================= Testing State =======================${CLE}"
+abort="False"
+
+echo
+echo "==== Examining RADrepo ===="
+cd $RADrepo
+pwd
+echo
+
+# Determine the commits we want
+THEAD=`git show -s --oneline $Sbranch |cut -d' ' -f1`
+RADrepoBase=`git merge-base $Sbranch master |head -c 7`
+echo "Target branch '$Sbranch' based off master at $RADrepoBase"
+echo
+
+# Capture commits to be transferred in an array
+commits=(`git logo $RADrepoBase..$THEAD $Sbranch | cut -d' ' -f1`)
+N="${#commits[@]}"
+
+echo "From the base at $RADrepoBase, there are $N commits to reach head: "
+git logo $RADrepoBase^..$THEAD $Sbranch
+
+# Check status
+currbranch=`git status |head -1 |cut -d' ' -f3`
+if [ $currbranch != "master" ]; then
+	echo "Branch is $currbranch, should be master?"    # why?? never use, except stash
+#	abort="True"
+fi
+
+echo
+git status | grep Changes > /dev/null
+if [ $? -eq 1 ]; then
+	echo "** WD of $currbranch is clean"
+else
+	echo "WD of $currbranch not clean! probably need to stash before proceeding"
+fi
+
+
+echo
+echo "==== Examining CURRrepo ===="
+cd $CurrRepo
+pwd
+echo
+
+git branch -v
+git branch |grep $Tbranch > /dev/null
+if [ $? -eq 0 ]; then
+	echo "** Warning: $Tbranch already exists! not good."
+	abort="True"
+fi
+echo
+
+## Confirm branching between FFport and main
+MNi=`git merge-base FFport main |head -c 12`  # commit where FFport branched off main
+git checkout --quiet FFport            # need to start here to confirm is clean
+FFportHEAD=`git logo -1                |cut -d' ' -f1`
+MAINHEAD=`  git show -s --oneline main |cut -d' ' -f1`
+AgeFFport=`git logo $MNi..$FFportHEAD  |wc -l |tr -d ' '`
+AgeMain=`  git logo $MNi..$MAINHEAD    |wc -l |tr -d ' '`
+
+git status
+git logo $MNi^..$FFportHEAD            # Look at the FFport branch
+echo
+echo -n "FFport branched off main at $MNi    "
+echo    "( [$AgeFFport, $AgeMain] commits back from [FFport, main] HEAD )"
+
+## CURRrepo checks
+git status |grep clean > /dev/null
+if [ $? -eq 1 ]; then
+	echo "WD not clean! probably should commit before proceeding"
+	abort="True"
+	echo ' - suggest message "Committing current WD prior to transferCommit"'
+fi
+
+
+## Final checks before continuing
+echo "Will use scripts found in $WFsource, make sure they are the latest."
+if [ $abort == "True" ]; then
+	echo "*** Something wrong with inputs or state, aborting ***"
+	exit
+fi
+
+echo
+read -p "--- Good to go [Yn] ? " ans
+[[ "$ans" == "n" ]] && exit
+
+echo "========================== Testing Done =========================="
+echo
+
+
+
+echo
+echo "==== CURRrepo, transfer sequence onto new branch $Tbranch ===="
+cd $CurrRepo
+echo
+
+# Create transfer branch
+git branch |grep $Tbranch > /dev/null
+if [ $? -eq 0 ]; then
+	echo
+	echo "** $Tbranch already exists, aborting."
+	exit
+fi
+git checkout --quiet $MNi          # jump back to where want to branch off
+git checkout --quiet -b $Tbranch   # put transferred commits on this new branch
+
+
+echo "**** Transfer commits in application (reverse) order: ****"
+echo
+for ((i=$N-1; i>=0; i--)); do
+#for ((i=$N-1; i>=$N-2; i--)); do	# shorter test
+	c=${commits[i]}
+
+	echo "Transferring commit $c"
+	cd $RADrepo
+	git stash --quiet
+	git checkout --quiet $c    # detach head at this commit
+	rm -f $BaseDir/message.txt
+	git log -1 |tail +5 |sed 's/^    //' > $BaseDir/message.txt   # grab commit message
+
+	## copy current FFfiles from RADrepo --> CURRrepo  [current branch]
+	\rm $FFtarget/*	     # wipeout to avoid union effect, but don't tell git!
+	rsync  -qaic $FFsource/* $FFtarget    # key line from update_workingFFsource
+	$WFsource/move_into_srctree      > /dev/null
+
+	# Committing into CURRrepo tree
+	cd $CurrRepo
+	make sysent > /dev/null   # in case syscall files altered, must regen dependencies
+	git add .                 # adds in FFfiles, and regenerated dependency files
+#	git commit -m"Transferring commit $c from RADrepo to CURRrepo."
+	git commit -F $BaseDir/message.txt    # Use original commit message text
+	echo
+done
+echo "**** Transfer complete ****"
+echo
+
+## Reset RADrepo to original state
+cd $RADrepo
+git checkout $currbranch --quiet
+#git stash pop        # dangerous!  do this manually
+
+
+echo
+echo "---------------------------------- Final State --------------------------------"
+echo " *** CURRrepo ***"
+cd $CurrRepo
+git branch -v
+echo
+git logo $MNi^..HEAD            # Look at all new commits on new branch
+
+echo
+echo "Final proof: comparing FFport and FFpatch-sequence"
+git diff FFport  FFpatch-sequence
+
+echo "--------------------------------------------------------------------------------"
+

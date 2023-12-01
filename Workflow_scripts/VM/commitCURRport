@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+#####
+# Supports committing a new port to CURRENT, following a seeding by
+# seedCURRport and a VM workflow based completion and detailed testing.
+# Is simple as it only confirms work already done with no options.
+#
+# Context:  On RADrepo:master the last commits are  (let j=i-1)
+#    Nj+ [extra FFonly commits]* [Ni]   with a draft of Ni+ in the WD
+# where Ni is optional.  On CURRrepo $FFbranch holds the tested MNi+
+# draft in its WD.
+#
+# Defining features
+#   - does not advance main: the new base MNi already adopted by seedCURRport
+#   - no changes to WD in either repo and no new branches (hence no repo-exchange)
+#   - simply commits existing WDs in each repo to signal completion of port i
+#   - now the base is confirmed, saves Ni files for later possible portloop use
+#
+# Notes:
+#  - commits only "git adds" CURRENT to RADrepo, other files you want added to the
+#    RADrepo commit you have to do manually before invocation, or leave them
+#    and do them later: is best to keep the pure-retrack commit simple.
+#  - if after running you need tweaks, then can in each repo do commit --amend
+#    separately without any interference, provided no FFfiles are involved.
+#    Eg, commit message updates on either repo, or VM tool updates in RADrepo.
+#  - in principle risky to use this script given it is modifying and committing within
+#    the same repo housing it, but seems fine given it only modifies CURRENT/
+#  - don't forget to set parameters
+#
+OS=`uname -s`
+if [ $OS != FreeBSD ]; then
+	echo "This script currently supports a FreeBSD workflow only! you are on $OS"
+	exit
+fi
+
+# VM --> Icaro dir params
+BaseDir="$HOME/FFkernel_Work"
+FFtarget="$BaseDir/FFclock_working"         # local copy to fuel tree insertion
+MountPoint="$BaseDir/V4_mountedfrom_Icaro"
+RealRepo="$MountPoint/RADclock_mycurrent"
+TestRepo="$MountPoint/TestingGround/PortloopRepo"
+BaseSave="$MountPoint/OriginalFFfiles_FreeBSD/CURRENT_base_" # will append its hash to this
+
+# Input parameters
+OS='freebsd'
+Repo=$RealRepo       # select from {Real,Test}Repo
+FFbranch="FFport"    # branch in CURRrepo where port development occurs
+
+# Select Repo FF dir
+ND="FreeBSD-CURRENT"
+NewFF="kernel/$OS/$ND/CurrentSource/"
+
+
+# Test inputs
+echo -e "${BLU}======================= Testing State =======================${CLE}"
+
+echo
+echo "==== Examining RADrepo, expect uncommited Nj+ FreeBSD-CURRENT on master ===="
+echo
+cd $Repo
+pwd
+git status -uno
+git logo -3
+git status | grep Changes > /dev/null   # here any kind of unclean worth noting
+if [ $? -eq 1 ]; then
+	echo "** WD unexpectedly clean!"
+else
+	echo "** As expected, WD not clean"
+fi
+
+
+echo
+echo "==== Examining CURRrepo, expect uncommited MNi+ on $FFbranch branch ===="
+echo
+FFportClean="False"
+cd /usr/src
+MNi=`git merge-base $FFbranch main |head -c 12`  # commit where $FFbranch branched off main
+git checkout --quiet $FFbranch            # should be there already
+FFportHEAD=`git show -s --oneline $FFbranch |cut -d' ' -f1`
+MAINHEAD=`  git show -s --oneline main      |cut -d' ' -f1`
+AgeFFport=` git logo $MNi..$FFportHEAD      |wc -l |tr -d ' '`
+AgeMain=`   git logo $MNi..$MAINHEAD        |wc -l |tr -d ' '`
+
+git status
+git logo -4
+echo
+echo -n "$FFbranch branched off main at $MNi    "
+echo    "( [$AgeFFport, $AgeMain] commits back from [$FFbranch, main] HEAD )"
+
+git status | grep Changes > /dev/null
+if [ $? -eq 1 ]; then
+	echo "** WD unexpectedly clean, assuming MNi+ already committed here"
+	FFportClean="True"
+else
+	echo "Believe MNi = $MNi with the WD being its already tested MNi+ "
+fi
+
+
+echo
+echo "==== Comparing repos, expect FFiles to match ===="
+echo
+mkdir -p $BaseDir/WD_FFport
+cp -p $BaseDir/CurrentSource/*  $BaseDir/WD_FFport
+diff $BaseDir/WD_FFport $Repo/$NewFF > /dev/null
+if [ $? -ne 0 ]; then
+	echo "**** FAIL!  forget to test the latest changes?  sort this out."
+else
+	echo "They match!"
+fi
+\rm -r $BaseDir/WD_FFport
+
+
+echo
+read -p "--- Good to go (if find stuff committed, will just accept it)? [yN] " ans
+[[ "$ans" != "y" ]] && exit
+
+echo "========================== Testing Done =========================="
+echo
+
+
+
+
+echo
+echo "==== RADrepo, committing Ni+ ===="
+echo
+cd $Repo
+#git status | grep Changes > /dev/null      # found Any changes, not just in NewFF dir
+git diff HEAD [--] $NewFF > diffout         # compare HEAD against WD
+if [ ! -s diffout ]; then         # if file exists and is empty
+	echo "** WD clean (wrt CURRENT dir), assuming Ni+ already committed"
+else
+	git add $NewFF                # changes outside CURRENT not included here
+
+	SM="CURRENT: FFfile port Ni+ of $OS main commit #$MNi"		# Standard Message header
+	read -p "Was the port conflict-free and can be committed with a standard message? [Ny] ? " ans
+	if [[ "$ans" == "y" ]]; then
+		CM="The port was conflict-free."
+		git commit  -m"$SM" -m"$CM"
+	else
+		read -p "Were the conflicts trivial? [Ny] ? " ans
+		if [[ "$ans" == "y" ]]; then
+			CM="Port had trivial conflicts, with no FF changes required."
+			git commit  -m"$SM" -m"$CM"
+		else
+			CM="The port has conflicts requiring some changes to FFfiles."
+			git commit -e -m"$SM" -m"$CM"		# edit this draft
+		fi
+	fi
+	echo
+	git logo -4
+fi
+\rm diffout
+
+
+echo
+echo "==== CURRrepo, committing MNi+ ===="
+echo
+cd /usr/src
+git logo -3
+
+if [ "$FFportClean" == "True" ]; then
+	echo "** WD is clean, nothing to do, assuming MNi+ already committed"
+else
+	git add .                 # all changed included, will capture any new FFfile
+	SM="Port MNi+ of FF code based off main commit #$MNi"
+	read -p "Happy to commit with a standard message? [Ny] ? " ans
+	if [[ "$ans" == "y" ]]; then
+		git commit  -m"$SM"
+	else
+		git commit -e -m"$SM"		# edit this draft
+	fi
+	echo
+	git logo -3
+fi
+
+
+echo
+echo "==== Save Ni base FFfiles to support portloops based off CURRENT ===="
+echo
+rm -r ${BaseSave}*            # remove old, as new will have different name
+BaseSave="$BaseSave_$MNi"     # files saved, and dirname records the base hash
+mkdir $BaseSave
+cp $BaseDir/CurrentSource/*  $BaseSave
+echo "Record new base FFfiles to $BaseSave."
+
+
+echo
+echo "-------------------------- Post-port Summary --------------------------------------"
+echo " *** RADrepo ***"
+cd $Repo
+git logo -5
+
+echo
+echo " *** CURRrepo ***"
+cd /usr/src
+git branch -v
+echo
+git logo -2 $FFbranch
+echo "-----------------------------------------------------------------------------------"
+

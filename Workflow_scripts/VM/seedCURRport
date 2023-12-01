@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+#####
+# Supports seeding of a new (i-th) port to CURRENT following the working
+# adoption of a new viable base commit. Must call reBaseTest first to
+# prepare the territory and to help make the decision to begin a new port.
+#
+# Context:  On RADrepo:master the last commits are [Nj] Nj+ [extra FFonly commits]*
+#  where Nj is optional (typically overkill).  On CURRrepo  Tbranch holds the
+#  outcome of reBaseTest, with a WD holding a naive port NPi where i=j+1.
+#
+# Defining features
+#   - does not advance main: the new base MNi already selected by reBaseTest
+#   - gives an option to skip initial Ni seed onto RADrepo
+#     [ typically new port inspired by advances on main, with little ∆FF, in that
+#       case, a diff between Nj+ and Ni+ effectively is already a clean ∆OS ]
+#     [ however to support rebasing of patch-sequence, essential to have Ni present! ]
+#   - will recreate FFbranch using existing Tbranch, delete the old one
+#   - not many options: simple actions based on prior reBaseTest setup,
+#     but with possibility to skip for each action.
+#
+#  Use when deciding to begin a new port, implying a new base, pre-tested with reBaseTest.
+#  Results in an unclean WD on master - once done need to use VM workflow to complete/test.
+#  When the OSv in the VM has 'CURRENT' in it, update_workingFFsource knows to
+#  pull the source from kernel/freebsd/FreeBSD-CURRENT .
+#
+## Notes
+#  - does not need to know how to flatten/reinsert FFfiles from/into
+#    the tree, it gets this for free using existing VM scripts/setup .
+#  - if it turns out that the base was wrong, manual steps will be probably
+#    be needed to recover the correct starting point for rerunning this.
+#    Abort options for each action are provided to reduce manual steps.
+#  - remember that VM workflow is predicated on a constant base, so do
+#    NOT change branch in VM during testing!
+#  - don't forget to set parameters
+#
+OS=`uname -s`
+if [ $OS != FreeBSD ]; then
+	echo "This script currently supports a FreeBSD workflow only! you are on $OS"
+	exit
+fi
+
+# VM --> Icaro dir params
+BaseDir="$HOME/FFkernel_Work"
+FFtarget="$BaseDir/FFclock_working"         # local copy to fuel tree insertion
+MountPoint="$BaseDir/V4_mountedfrom_Icaro"
+RealRepo="$MountPoint/RADclock_mycurrent"
+TestRepo="$MountPoint/TestingGround/PortloopRepo"
+
+# Input parameters
+OS='freebsd'
+Repo=$RealRepo       # select from {Real,Test}Repo
+FFbranch="FFport"    # branch in CURRrepo where port development occurs
+Tbranch='reBaseTest' # branch in CURRrepo holding the reBaseTest output
+
+# Select Repo FF dir
+ND="FreeBSD-CURRENT"
+NewFF="kernel/$OS/$ND/CurrentSource/"
+
+
+# Test inputs
+echo -e "${BLU}======================= Testing State =======================${CLE}"
+
+echo
+echo "==== Examining RADrepo, expect a clean FreeBSD-CURRENT on master ===="
+echo
+cd $Repo
+pwd
+git status -uno    # suppress showing untracked files, avoid annoying ignored files not working
+git logo -3
+git status | grep Changes > /dev/null
+if [ $? -eq 1 ]; then
+	echo "** WD is clean"
+else
+	echo "** WD not clean, abort unless you have a good reason"
+fi
+
+
+echo
+echo "==== Examining CURRrepo, expecting post-reBaseTest environment ===="
+cd /usr/src
+pwd
+echo
+git branch -v
+git branch |grep $Tbranch > /dev/null
+if [ $? -ne 0 ]; then
+	echo
+	echo "** Warning: $Tbranch missing! aborting."
+	exit
+fi
+echo
+git logo -3 $Tbranch
+
+Newbase=`  git merge-base $Tbranch main |head -c 12`  # commit MNi where Tbranch branched off main
+FFHEAD=`   git show -s --oneline $Tbranch |cut -d' ' -f1`
+MAINHEAD=` git show -s --oneline main     |cut -d' ' -f1`
+AgeFF=`    git logo $MNi..$FFHEAD         |wc -l |tr -d ' '`
+AgeMain=`  git logo $MNi..$MAINHEAD       |wc -l |tr -d ' '`
+echo
+echo -n "$Tbranch branched off main at $Newbase    "
+echo    "( [$AgeFF, $AgeMain] commits back from [$Tbranch, main] HEAD )"
+
+
+echo
+read -p "--- Good to go [yN] ? " ans
+[[ "$ans" != "y" ]] && exit
+
+echo "========================== Testing Done =========================="
+echo
+
+
+echo
+echo "==== RADrepo, commit new Ni (optionally) ===="
+echo
+
+read -p "** Skip adding seed commit Ni to RADrepo (is overkill, but needed for patch-sequence rebasing) [Ny] ? " ans
+if [[ "$ans" == "y" ]]; then
+	echo "Ok, skipping it"
+else
+	git checkout --quiet $Newbase
+	cp $BaseDir/CurrentSource/*  $Repo/$NewFF   # Using cp: results in a union of files, preserving FFCLOCK
+	cd $Repo
+	git add $NewFF
+	# no port detail needed, is just a copy of (the FFfiles of) a main commit
+	git commit  -m"CURRENT: Commit Ni FFfiles extracted from main MNi commit #$Newbase."
+fi
+
+
+echo
+echo "==== RADrepo, copy over the WD of $Tbranch as the new NPi  ===="
+cd /usr/src
+echo
+git checkout $Tbranch
+read -p "** Just checking: suppress the WD overwrite this time (eg already there?) [Ny] ? " ans
+if [[ "$ans" == "y" ]]; then
+	echo "Ok, skipping it"
+else
+	echo "Ok proceeding as normal"
+	cp $BaseDir/CurrentSource/*  $Repo/$NewFF
+fi
+
+
+echo
+echo "==== CURRrepo, reset $FFbranch and clean $Tbranch ===="
+echo
+read -p "** Just checking: suppress reset of $Tbranch to $FFbranch this time [Ny] ? " ans
+if [[ "$ans" == "y" ]]; then
+	echo "Ok, skipping it"
+else
+	echo "Ok proceeding as normal"
+	git branch -D $FFbranch
+	git branch -m $Tbranch $FFbranch
+fi
+
+
+
+
+echo
+echo "-------------------------- Summary after this iteration ---------------------------"
+echo " *** RADrepo ***"
+cd $Repo
+git logo -3
+
+echo
+echo " *** CURRrepo ***"
+cd /usr/src
+git branch -v
+echo
+git logo -2 $FFbranch
+echo "-----------------------------------------------------------------------------------"
+

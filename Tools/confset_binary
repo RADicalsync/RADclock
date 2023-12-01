@@ -2,15 +2,15 @@
 
 # Enable easy CLI adjustment of the binary parameters within radclock.conf
 # It looks for the conf file in the currect dir and prompts otherwise
-#  confset_binary ipc_server on 		# set to on  (if it isn't already)
-#  confset_binary ipc_server off 	# set to off (if it isn't already)
-#  confset_binary ipc_server 			# toggle existing value
+#  confset_binary ipc_server on     # set to on  (if it isn't already)
+#  confset_binary ipc_server off    # set to off (if it isn't already)
+#  confset_binary ipc_server        # toggle existing value
 
 
 # Check first argument is a valid and supported binary parameter
-for s in ipc_server ntp_server adjust_FFclock adjust_FBclock vm_udp_server vmware_server xen_server
+for s in ipc_server ntp_server adjust_FFclock adjust_FBclock public_ntp vm_udp_server vmware_server xen_server
 do
-	[ $s == $1 ]	&& varstr=$1
+	[ $s == $1 ] && varstr=$1
 done
 if [ -z $varstr ]; then
 	echo "Service $1 not recognized"
@@ -29,16 +29,17 @@ fi
 # Get the current setting 
 currset=`grep $varstr $conf |cut -d' ' -f3`
 echo "Current $varstr state in $conf is $currset"
+[[ "$2" == "" ]] && exit
 
 # Action selection
 newstate="on"
 case $2 in
-	on)	;;						# asked to set to on	
-	off)	newstate="off";;				# asked to set to off
-	"")	[ $currset == "on" ] && newstate="off";;	# asked to toggle current setting
-	*)	echo " ? unrecognised input, exiting"; exit;;
+	on)	;;                                          # asked to set to on
+	off)   newstate="off";;                         # asked to set to off
+	t)  [ $currset == "on" ] && newstate="off";;    # asked to toggle current setting
+	*)  echo " ? unrecognised input, exiting"; exit;;
 esac
-echo "Current IPC state is $currset, will set to $newstate"
+echo "Current $varstr state is $currset, will set to $newstate"
 
 # Action execution
 varon=$varstr" = on"
@@ -53,7 +54,7 @@ esac
 
 if [ $currset != $newstate ]; then
 	case $newstate in
-		on)	sed $inplace "s/$varoff/$varon/" $conf; echo " --> setting to on" ;;
-		off)	sed $inplace "s/$varon/$varoff/" $conf; echo " --> setting to off" ;;
+		on)     sed $inplace "s/$varoff/$varon/" $conf; echo " --> setting to on" ;;
+		off)    sed $inplace "s/$varon/$varoff/" $conf; echo " --> setting to off" ;;
 	esac
 fi

@@ -18,10 +18,10 @@ FFtarget="$Based/FFclock_working"
 ## Source dir
 MountPoint="V4_mountedfrom_Icaro"
 RealRepo="$Based/$MountPoint/RADclock_mycurrent"
-TestRepo="$Based/$MountPoint/TestingGround/PortloopRepoBWorm"  # alternative for testing port drafts
+TestRepo="$Based/$MountPoint/TestingGround/PortloopRepo"  # alternative for testing port drafts
 Repo=$RealRepo
-#read -p "** Repo is set to $Repo, continue [Yn] ? " ans
-#[[ "$ans" == "n" ]] && exit
+read -p "** Repo is set to $Repo, continue [Yn] ? " ans
+[[ "$ans" == "n" ]] && exit
 
 KernDir="$Repo/kernel"
 

@@ -17,7 +17,7 @@ fi
 
 
 ## Process options
-if [[ "$1" == "-n" || "$1" == "-nf" ]]; then
+if [[ "$1" == "-n" || "$1" == "-nf" || "$1" == "-nc" ]]; then
 	source="current"
 fi
 if [[ "$1" == "-f" || "$1" == "-nf" ]]; then
@@ -39,7 +39,7 @@ esac
 # Determine if will patch this kernel or not
 Based="$HOME/FFkernel_Work"
 if [[ "$source" == "current" ]]; then
-	echo "=== Will build and install the current kernel $SourceDir for $OS ==="
+	echo "=== Will build and install the existing source $SourceDir for $OS ==="
 else	
 	echo "=== Will update FF source, copy it to source tree at $SourceDir for $OS, then build and install ==="
 	update_workingFFsource  # pass explicit argument here as a hack if not finding desired version
@@ -170,7 +170,7 @@ if [ "$1" == "-w" ]; then
 		echo " Executing 'make -j2 -DNO_CLEAN buildworld'"
 		make -j2  -DNO_CLEAN buildworld > $Based/buildworld.log
 	else
-		echo " Ok. executing 'make -j2  buildworld'"
+		echo " Ok slow it is: executing 'make -j2  buildworld'"
 		make -j2  buildworld > $Based/buildworld.log
 	fi
 else
@@ -184,8 +184,9 @@ if [ $? -eq 0 ]; then    # if previous command exits with success
 		echo
 	fi
 
-	if [[ "$1" == "-c" ]] || [[ "$1" == "-w" ]]; then
-		echo "Now trying to build clean, executing 'make -j2  buildkernel KERNCONF=FFCLOCK'"
+	if [[ "$1" == "-c" || "$1" == "-nc" || "$1" == "-w" ]]; then
+		echo "Now trying to build clean, executing 'make sysent' then 'make -j2  buildkernel KERNCONF=FFCLOCK'"
+		make sysent
 		make -j2  buildkernel KERNCONF=FFCLOCK > $Based/build.log
 	else
 		echo "Now trying to build fast, executing 'make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK'"
