@@ -52,7 +52,7 @@
 
 /* For testing, but is outside the library, don't need for basic use */
 #include <radclock-private.h>
-#include "kclock.h"         // struct ffclock_estimate, get_kernel_ffclock
+#include "kclock.h"         // struct ffclock_data, get_kernel_ffclock
 
 #define BPF_PACKET_SIZE   108
 #define PCAP_TIMEOUT   15   // [ms]  Previous value of 5 caused huge delays

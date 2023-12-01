@@ -1427,16 +1427,8 @@
 		    _Out_ ffcounter *ffcount
 		);
 	}
-242	AUE_NULL	STD {
-		int ffclock_setestimate(
-		    _In_ _Contains_timet_ struct ffclock_estimate *cest
-		);
-	}
-243	AUE_NULL	STD {
-		int ffclock_getestimate(
-		    _Out_ _Contains_timet_ struct ffclock_estimate *cest
-		);
-	}
+242	AUE_NULL	OBSOL	ffclock_setestimate
+243	AUE_NULL	OBSOL	ffclock_getestimate
 244	AUE_NULL	STD {
 		int clock_nanosleep(
 		    clockid_t clock_id,
@@ -3339,6 +3331,15 @@
 		    _Out_opt_ _Contains_long_timet_ struct itimerspec *old_value
 		);
 	}
-
+588	AUE_NULL	STD {
+		int ffclock_setdata(
+		    _In_ _Contains_timet_ struct ffclock_data *cdat
+		);
+	}
+589	AUE_NULL	STD {
+		int ffclock_getdata(
+		    _Out_ _Contains_timet_ struct ffclock_data *cdat
+		);
+	}
 
 ; vim: syntax=off

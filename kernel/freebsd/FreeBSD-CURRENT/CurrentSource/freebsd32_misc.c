@@ -4084,82 +4084,82 @@ freebsd32_ntp_adjtime(struct thread *td, struct freebsd32_ntp_adjtime_args *uap)
 
 #ifdef FFCLOCK
 extern struct mtx ffclock_mtx;
-extern struct ffclock_estimate ffclock_estimate;
+extern struct ffclock_data ffclock_data;
 extern int8_t ffclock_updated;
 
 int
-freebsd32_ffclock_setestimate(struct thread *td,
-    struct freebsd32_ffclock_setestimate_args *uap)
+freebsd32_ffclock_setdata(struct thread *td,
+    struct freebsd32_ffclock_setdata_args *uap)
 {
-	struct ffclock_estimate cest;
-	struct ffclock_estimate32 cest32;
+	struct ffclock_data cdat;
+	struct ffclock_data32 cdat32;
 	int error;
 
 	/* Reuse of PRIV_CLOCK_SETTIME. */
 	if ((error = priv_check(td, PRIV_CLOCK_SETTIME)) != 0)
 		return (error);
 
-	if ((error = copyin(uap->cest, &cest32,
-	    sizeof(struct ffclock_estimate32))) != 0)
+	if ((error = copyin(uap->cdat, &cdat32,
+	    sizeof(struct ffclock_data32))) != 0)
 		return (error);
 
-	CP(cest32.update_time, cest.update_time, sec);
-	memcpy(&cest.update_time.frac, &cest32.update_time.frac, sizeof(uint64_t));
-	CP(cest32, cest, update_ffcount);
-	CP(cest32, cest, leapsec_expected);
-	CP(cest32, cest, period);
-	CP(cest32, cest, errb_abs);
-	CP(cest32, cest, errb_rate);
-	CP(cest32, cest, status);
-	CP(cest32, cest, secs_to_nextupdate);
-	CP(cest32, cest, leapsec_total);
-	CP(cest32, cest, leapsec_next);
+	CP(cdat32.update_time, cdat.update_time, sec);
+	memcpy(&cdat.update_time.frac, &cdat32.update_time.frac, sizeof(uint64_t));
+	CP(cdat32, cdat, update_ffcount);
+	CP(cdat32, cdat, leapsec_expected);
+	CP(cdat32, cdat, period);
+	CP(cdat32, cdat, errb_abs);
+	CP(cdat32, cdat, errb_rate);
+	CP(cdat32, cdat, status);
+	CP(cdat32, cdat, secs_to_nextupdate);
+	CP(cdat32, cdat, leapsec_total);
+	CP(cdat32, cdat, leapsec_next);
 
 	mtx_lock_spin(&ffclock_mtx);
-	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
+	memcpy(&ffclock_data, &cdat, sizeof(struct ffclock_data));
 	ffclock_updated++;
 	mtx_unlock_spin(&ffclock_mtx);
 	return (error);
 }
 
 int
-freebsd32_ffclock_getestimate(struct thread *td,
-    struct freebsd32_ffclock_getestimate_args *uap)
+freebsd32_ffclock_getdata(struct thread *td,
+    struct freebsd32_ffclock_getdata_args *uap)
 {
-	struct ffclock_estimate cest;
-	struct ffclock_estimate32 cest32;
+	struct ffclock_data cdat;
+	struct ffclock_data32 cdat32;
 	int error;
 
 	mtx_lock_spin(&ffclock_mtx);
-	memcpy(&cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
+	memcpy(&cdat, &ffclock_data, sizeof(struct ffclock_data));
 	mtx_unlock_spin(&ffclock_mtx);
 
-	CP(cest.update_time, cest32.update_time, sec);
-	memcpy(&cest32.update_time.frac, &cest.update_time.frac, sizeof(uint64_t));
-	CP(cest, cest32, update_ffcount);
-	CP(cest, cest32, leapsec_expected);
-	CP(cest, cest32, period);
-	CP(cest, cest32, errb_abs);
-	CP(cest, cest32, errb_rate);
-	CP(cest, cest32, status);
-	CP(cest, cest32, secs_to_nextupdate);
-	CP(cest, cest32, leapsec_total);
-	CP(cest, cest32, leapsec_next);
+	CP(cdat.update_time, cdat32.update_time, sec);
+	memcpy(&cdat32.update_time.frac, &cdat.update_time.frac, sizeof(uint64_t));
+	CP(cdat, cdat32, update_ffcount);
+	CP(cdat, cdat32, leapsec_expected);
+	CP(cdat, cdat32, period);
+	CP(cdat, cdat32, errb_abs);
+	CP(cdat, cdat32, errb_rate);
+	CP(cdat, cdat32, status);
+	CP(cdat, cdat32, secs_to_nextupdate);
+	CP(cdat, cdat32, leapsec_total);
+	CP(cdat, cdat32, leapsec_next);
 
-	error = copyout(&cest32, uap->cest, sizeof(struct ffclock_estimate32));
+	error = copyout(&cdat32, uap->cdat, sizeof(struct ffclock_data32));
 	return (error);
 }
 #else /* !FFCLOCK */
 int
-freebsd32_ffclock_setestimate(struct thread *td,
-    struct freebsd32_ffclock_setestimate_args *uap)
+freebsd32_ffclock_setdata(struct thread *td,
+    struct freebsd32_ffclock_setdata_args *uap)
 {
 	return (ENOSYS);
 }
 
 int
-freebsd32_ffclock_getestimate(struct thread *td,
-    struct freebsd32_ffclock_getestimate_args *uap)
+freebsd32_ffclock_getdata(struct thread *td,
+    struct freebsd32_ffclock_getdata_args *uap)
 {
 	return (ENOSYS);
 }

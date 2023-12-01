@@ -40,12 +40,12 @@
 #ifdef _KERNEL
 
 /*
- * Feedforward clock estimate
+ * Feedforward clock data.
  * Holds time mark as a ffcounter and conversion to bintime based on current
  * timecounter period and offset estimate passed by the synchronization daemon.
  * Provides time of last daemon update, clock status and bound on error.
  */
-struct ffclock_estimate {
+struct ffclock_data {
 	struct bintime update_time; /* FFclock time of last update. */
 	ffcounter update_ffcount;   /* Counter value at last update. */
 	ffcounter leapsec_expected; /* Approx counter value of next leap. */
@@ -196,7 +196,7 @@ void ffclock_convert_diff(ffcounter ffdelta, struct bintime *bt);
 /*
  * Feedforward clock routines.
  *
- * These functions rely on the timecounters and ffclock_estimates stored in
+ * These functions rely on the timecounters and ffclock_data stored in
  * fftimehands. Note that the error_bound parameter is not the error of the
  * clock but an upper bound on the error of the absolute time or time interval
  * returned.
@@ -239,7 +239,7 @@ void ffclock_getmicrouptime(struct timeval *tvp);
 
 /*
  * Wrapper routines to convert a time interval specified in ffcounter units into
- * seconds using the current feedforward clock estimates.
+ * seconds using the current feedforward clock data.
  */
 void ffclock_bindifftime(ffcounter ffdelta, struct bintime *bt);
 void ffclock_nanodifftime(ffcounter ffdelta, struct timespec *tsp);
@@ -398,8 +398,8 @@ getmicrouptime_fromclock(struct timeval *tvp, int whichclock)
 /* Feedforward Clock system calls. */
 __BEGIN_DECLS
 int ffclock_getcounter(ffcounter *ffcount);
-int ffclock_getestimate(struct ffclock_estimate *cest);
-int ffclock_setestimate(struct ffclock_estimate *cest);
+int ffclock_getdata(struct ffclock_data *cdat);
+int ffclock_setdata(struct ffclock_data *cdat);
 __END_DECLS
 
 #endif /* _KERNEL */

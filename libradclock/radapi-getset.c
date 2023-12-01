@@ -79,7 +79,7 @@ radclock_get_local_period_mode(struct radclock *clock,
 int
 radclock_get_last_changed(struct radclock *clock, vcounter_t *last_vcount)
 {
-	struct ffclock_estimate cest; 
+	struct ffclock_data cdat; 
 	struct radclock_data rad_data;
 	struct radclock_sms *sms;
 	int generation;
@@ -94,9 +94,9 @@ radclock_get_last_changed(struct radclock *clock, vcounter_t *last_vcount)
 			*last_vcount = SMS_DATA(sms)->last_changed;
 		} while (generation != sms->gen || !sms->gen);
 	} else {
-		if (get_kernel_ffclock(clock, &cest))
+		if (get_kernel_ffclock(clock, &cdat))
 			return (1);
-		fill_radclock_data(&cest, &rad_data);
+		fill_radclock_data(&cdat, &rad_data);
 		*last_vcount = rad_data.last_changed;
 	}
 
@@ -107,7 +107,7 @@ radclock_get_last_changed(struct radclock *clock, vcounter_t *last_vcount)
 int
 radclock_get_next_expected(struct radclock *clock, vcounter_t *till_vcount)
 {
-	struct ffclock_estimate cest; 
+	struct ffclock_data cdat; 
 	struct radclock_data rad_data;
 	struct radclock_sms *sms;
 	int generation;
@@ -122,9 +122,9 @@ radclock_get_next_expected(struct radclock *clock, vcounter_t *till_vcount)
 			*till_vcount = SMS_DATA(sms)->next_expected;
 		} while (generation != sms->gen || !sms->gen);
 	} else {
-		if (get_kernel_ffclock(clock, &cest))
+		if (get_kernel_ffclock(clock, &cdat))
 			return (1);
-		fill_radclock_data(&cest, &rad_data);
+		fill_radclock_data(&cdat, &rad_data);
 		*till_vcount = rad_data.next_expected;
 	}
 
@@ -135,7 +135,7 @@ radclock_get_next_expected(struct radclock *clock, vcounter_t *till_vcount)
 int
 radclock_get_period(struct radclock *clock, double *period)
 {
-	struct ffclock_estimate cest; 
+	struct ffclock_data cdat; 
 	struct radclock_data rad_data;
 	struct radclock_sms *sms;
 	int generation;
@@ -151,9 +151,9 @@ radclock_get_period(struct radclock *clock, double *period)
 		} while (generation != sms->gen || !sms->gen);
 	} else {
 		logger(RADLOG_NOTICE, "radclock_get_period: sms down, using kernel copy");
-		if (get_kernel_ffclock(clock, &cest))
+		if (get_kernel_ffclock(clock, &cdat))
 			return (1);
-		fill_radclock_data(&cest, &rad_data);
+		fill_radclock_data(&cdat, &rad_data);
 		*period = rad_data.phat;
 	}
 
@@ -164,7 +164,7 @@ radclock_get_period(struct radclock *clock, double *period)
 int
 radclock_get_bootoffset(struct radclock *clock, long double *offset)
 {
-	struct ffclock_estimate cest; 
+	struct ffclock_data cdat; 
 	struct radclock_data rad_data;
 	struct radclock_sms *sms;
 	int generation;
@@ -179,9 +179,9 @@ radclock_get_bootoffset(struct radclock *clock, long double *offset)
 			*offset = SMS_DATA(sms)->ca;
 		} while (generation != sms->gen || !sms->gen);
 	} else {
-		if (get_kernel_ffclock(clock, &cest))
+		if (get_kernel_ffclock(clock, &cdat))
 			return (1);
-		fill_radclock_data(&cest, &rad_data);
+		fill_radclock_data(&cdat, &rad_data);
 		*offset = rad_data.ca;
 	}
 
@@ -192,7 +192,7 @@ radclock_get_bootoffset(struct radclock *clock, long double *offset)
 int
 radclock_get_period_error(struct radclock *clock, double *err_period)
 {
-	struct ffclock_estimate cest; 
+	struct ffclock_data cdat; 
 	struct radclock_data rad_data;
 	struct radclock_sms *sms;
 	int generation;
@@ -207,9 +207,9 @@ radclock_get_period_error(struct radclock *clock, double *err_period)
 			*err_period = SMS_DATA(sms)->phat_err;
 		} while (generation != sms->gen || !sms->gen);
 	} else {
-		if (get_kernel_ffclock(clock, &cest))
+		if (get_kernel_ffclock(clock, &cdat))
 			return (1);
-		fill_radclock_data(&cest, &rad_data);
+		fill_radclock_data(&cdat, &rad_data);
 		*err_period = rad_data.phat_err;
 	}
 
@@ -220,7 +220,7 @@ radclock_get_period_error(struct radclock *clock, double *err_period)
 int
 radclock_get_bootoffset_error(struct radclock *clock, double *err_offset)
 {
-	struct ffclock_estimate cest; 
+	struct ffclock_data cdat; 
 	struct radclock_data rad_data;
 	struct radclock_sms *sms;
 	int generation;
@@ -235,9 +235,9 @@ radclock_get_bootoffset_error(struct radclock *clock, double *err_offset)
 			*err_offset = SMS_DATA(sms)->ca_err;
 		} while (generation != sms->gen || !sms->gen);
 	} else {
-		if (get_kernel_ffclock(clock, &cest))
+		if (get_kernel_ffclock(clock, &cdat))
 			return (1);
-		fill_radclock_data(&cest, &rad_data);
+		fill_radclock_data(&cdat, &rad_data);
 		*err_offset = rad_data.ca_err;
 	}
 
@@ -248,7 +248,7 @@ radclock_get_bootoffset_error(struct radclock *clock, double *err_offset)
 int
 radclock_get_status(struct radclock *clock, unsigned int *status)
 {
-	struct ffclock_estimate cest; 
+	struct ffclock_data cdat; 
 	struct radclock_data rad_data;
 	struct radclock_sms *sms;
 	int generation;
@@ -263,9 +263,9 @@ radclock_get_status(struct radclock *clock, unsigned int *status)
 			*status = SMS_DATA(sms)->status;
 		} while (generation != sms->gen || !sms->gen);
 	} else {
-		if (get_kernel_ffclock(clock, &cest))
+		if (get_kernel_ffclock(clock, &cdat))
 			return (1);
-		fill_radclock_data(&cest, &rad_data);
+		fill_radclock_data(&cdat, &rad_data);
 		*status = rad_data.status;
 	}
 
@@ -365,19 +365,19 @@ radclock_get_min_RTT(struct radclock *clock, double *min_RTT)
 /* Functions to print out rad_data and FF_data neatly */
 
 void
-printout_FFdata(struct ffclock_estimate *cest)
+printout_FFdata(struct ffclock_data *cdat)
 {
 	logger(RADLOG_NOTICE, "Pretty printing FF_data.");
-	logger(RADLOG_NOTICE, "\t period %llu \t\t\t status: 0x%04X", cest->period, cest->status);
+	logger(RADLOG_NOTICE, "\t period %llu \t\t\t status: 0x%04X", cdat->period, cdat->status);
 	logger(RADLOG_NOTICE, "\t update_time: %llu.%llu [bintime] %.11Lf [dec]",
-		cest->update_time.sec, cest->update_time.frac,
-		((long double) cest->update_time.frac) / (TWO32 * TWO32) );
+		cdat->update_time.sec, cdat->update_time.frac,
+		((long double) cdat->update_time.frac) / (TWO32 * TWO32) );
 	logger(RADLOG_NOTICE, "\t update_ffcount: %llu  secs_to_nextupdate: %u",
-		cest->update_ffcount, cest->secs_to_nextupdate);
+		cdat->update_ffcount, cdat->secs_to_nextupdate);
 	logger(RADLOG_NOTICE, "\t errb_{abs,rate} = %lu  %lu",
-		cest->errb_abs, cest->errb_rate);
+		cdat->errb_abs, cdat->errb_rate);
 	logger(RADLOG_NOTICE, "\t leapsec_{expected,total,next}:  %llu  %d  %d",
-		cest->leapsec_expected, cest->leapsec_total, cest->leapsec_next);
+		cdat->leapsec_expected, cdat->leapsec_total, cdat->leapsec_next);
 	logger(RADLOG_NOTICE,"-------------------------------------------------------------");
 }
 

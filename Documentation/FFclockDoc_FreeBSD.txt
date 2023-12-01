@@ -381,7 +381,7 @@ and shares the same tick update triggering, but supports/creates an entirely sep
 The FF version of timehands structure is
 
 struct fftimehands {
-	struct ffclock_estimate	cest;      // copy of kernel FF data from daemon used during this tick
+	struct ffclock_data	cdat;      // copy of kernel FF data from daemon used during this tick
 	struct bintime		tick_time;       // UTC Ca timestamp at tick-start
 	struct bintime		tick_time_lerp;  // monotonic version of UTC Ca at tick-start
 	struct bintime		tick_time_diff;  // version of Ca which drifts, never jumps, approximating Cd
@@ -393,7 +393,7 @@ struct fftimehands {
 };
 
 The basic idea is that UTC timestamps are calculated based off the tick-start as :
-	Ca(t) = tick_time + cest->period*∆(T) ,
+	Ca(t) = tick_time + cdat->period*∆(T) ,
 where nominally ∆(T)= T(t) - tick_ffcount,  where T is the FFcounter which does not wrap.
 This matches the formulation of equation (2) below for the RADclock absolute clock.
 The actual implementation however is somewhat different, with ∆(T) being just the same
@@ -437,10 +437,10 @@ static struct fftimehands *volatile fftimehands = ffth;  // pointer to current f
 where the initial circular linking is performed neatly by ffclock_init().
 after initializing the entire array to zero using memset.
 
-The cest member variable holds the data of the (kernel version of the) daemon''s FF clock.
+The cdat member variable holds the data of the (kernel version of the) daemon''s FF clock.
 It is important to note that it will be updated on a poll_period timescale set by
 the daemon, whereas fftimehands will advance to fresh ticks independently of this,
-and 1000''s of times more frequently.   Each member of the cest is initialized to zero by
+and 1000''s of times more frequently.   Each member of the cdat is initialized to zero by
 ffclock_init(), including the update_ffcount variable, which remains unless
 tc_setclock
 	tc_windup
@@ -458,7 +458,7 @@ function: tc_windup, calls that for fftimehands: ffclock_windup.
 FF algo data kernel <--> daemon translation
 ======================================
 
-The FF code defines a data structure, ffclock_estimate, defined in timeffc.h
+The FF code defines a data structure, ffclock_data, defined in timeffc.h
 (on the daemon side, also defined in kclock.h using vcounter_t instead of ffcounter,
 it is assumed these match (extra KV dependence would have to be added to ensure this),
 which contains the key information which the kernel needs
@@ -469,7 +469,7 @@ Essentially, this structure holds a kernel-specific version of the current
 FF clock parameters  (historically called the `global data` in KV<2), which
 should be updated whenever a new stamp is processed by the algo.
 
-struct ffclock_estimate {
+struct ffclock_data {
 	struct bintime	update_time;	/* FFclock time of last update, ie Ca(tlast) */
 	ffcounter	update_ffcount;	/* Counter value at last update */
 	ffcounter	leapsec_expected;	/* Estimated counter value of next leap sec */
@@ -486,10 +486,10 @@ As the architypal FF algorithm, we will describe this data structure in relation
 to the fields of the algo''s radclock_data structure.
 The critical conversion functions between these two are in radapi-base.c :
 
-//  radclock_data --> ffclock_estimate		[ FF <-- algo ]
-void fill_ffclock_estimate(struct radclock_data *rad_data, *rad_err, struct ffclock_estimate *cest);
-//  ffclock_estimate --> radclock_data		[ FF --> algo ]
-void fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data);
+//  radclock_data --> ffclock_data		[ FF <-- algo ]
+void fill_ffclock_data(struct radclock_data *rad_data, *rad_err, struct ffclock_data *cdat);
+//  ffclock_data --> radclock_data		[ FF --> algo ]
+void fill_radclock_data(struct ffclock_data *cdat, struct radclock_data *rad_data);
 
 Details of when these are called within the various kernel <--> daemon communications
 are given in RADclockDoc_library.  Here we detail the meaning of the fields and
@@ -497,10 +497,10 @@ justify the mappings applied in these functions.
 
 The translation is non-trivial, because
  - some radclock fields are not fully FF generic, and so need to be translated/removed
- - to support operations on ffclock_estimate in the kernel without floating point,
+ - to support operations on ffclock_data in the kernel without floating point,
    fields are converted to binary and integer friendly forms
  - radclock_data is based on underlying parameters which can be used to construct/read the time,
-   ffclock_estimate is oriented toward the fftimehands interface view: tick-start-time + ∆,
+   ffclock_data is oriented toward the fftimehands interface view: tick-start-time + ∆,
 	needed to simultaneously support reading the FF clock, the FF counter itself,
 	`fast` forms of clock reading, and the FFmono and FFdiff clock variants.
  - leap second fields are needed on both sides, but on the deamon side the algo
@@ -620,17 +620,17 @@ Setting of FFclock data
 ======================================
 
 We document the complete set of ways in which FFclock data can be set.
-Initialization to 0 of all members of fftimehands, and hence all members of fftimehands.cest
+Initialization to 0 of all members of fftimehands, and hence all members of fftimehands.cdat
 for each timehand, is first performed in kern_tc:SYSINIT-->inittimecounter-->ffclock_init .
 
-After this a cest in a current tick can be modified in one of three ways:
+After this a cdat in a current tick can be modified in one of three ways:
   - push `update` from the daemon
   - RTCreset branch of ffclock_windup (via tc_setclock)
       sets all fftimehands fields
   - by ffclock_change_tc (call by tc_windup() if needed)
       sets {period,status}, resets all other fields to zero
       sets  global ffclock_updated--;  to effectively ignore next update
-	 [ fftimehand fields beyond cest:  {tick_ffcount, period_lerp} ]
+	 [ fftimehand fields beyond cdat:  {tick_ffcount, period_lerp} ]
 
 
 A common scenario after boot is:
@@ -651,7 +651,7 @@ A common scenario after boot is:
 			ffclock_windup [ sets ffclock_boottime, and resets FFclocks ]
 			
 	no change for 1000s of invocations of ffclock_windup
-	daemon launched,  pulls current kernel value of cest
+	daemon launched,  pulls current kernel value of cdat
    first daemon push of rad_data
 		setting;   all fields,  now secs_to_nextupdate>0
 
@@ -659,11 +659,11 @@ A common scenario after boot is:
 If the daemon is initializing, then fill_radclock_data will provide the very rough value
 of period to the algo as a option for use, prior to any algo update push.
 However the daemon will probably ignore it as using it is dangerous.
-It will flag if it seems the kernel cest was never set or reset.
+It will flag if it seems the kernel cdat was never set or reset.
 
 If the daemon was running but later ceases to push updates, then the value of
-cest will likely never change.  This is detected in ffclock_windup by observing
-that cest is old (update_ffcount) and late (secs_to_nextupdate).
+cdat will likely never change.  This is detected in ffclock_windup by observing
+that cdat is old (update_ffcount) and late (secs_to_nextupdate).
 
 Libprocesses in that scenario will be using this out of date kernel version via
 the inversion routine fill_radclock_data, with inversion failures:
@@ -702,11 +702,11 @@ struct timeval boottime;		// UTC time of boot, timeval format
 
 The complete set supporting the FFtimecounter extension is
 
-struct ffclock_estimate ffclock_estimate;	// FF clock state variable
+struct ffclock_data ffclock_data;	// FF clock state variable
 struct bintime ffclock_boottime;	/* FF boot time estimate. */
 int8_t ffclock_updated;			/* New estimates are available. Note this is signed! special values: {..,-1,0,1} */
 uint32_t ffclock_status;		/* Feed-forward clock status */
-struct mtx ffclock_mtx;			/* Mutex on ffclock_estimate */
+struct mtx ffclock_mtx;			/* Mutex on ffclock_data */
 
 static struct fftimehands ffth[10];
 static struct fftimehands *volatile fftimehands = ffth;  // pointer to current tick within ftimehands array
@@ -848,8 +848,8 @@ ffclock_windup(delta): simplified code:  [*** Out of date, see self-documenting 
 	/* Acceptable FFdata update available */
 	if (ffclock_updated > 0 ) {
  		/* update Ca members */
-		tick_time = cest->update_time + ffdelta*period;  etc  		// recalculate directly off last update
-	   tick_error = cest->errb_abs + cest->errb_rate*period*delta	// re-base from update:
+		tick_time = cdat->update_time + ffdelta*period;  etc  		// recalculate directly off last update
+	   tick_error = cdat->errb_abs + cdat->errb_rate*period*delta	// re-base from update:
 		  // That is, all UTC members are updated using the new tick data to project from
 		  // where the update occured in the previous tick, to new tick-start
 		  // (ie a `rebase`, plus projection over less than 1 tick)
@@ -871,11 +871,11 @@ ffclock_windup(delta): simplified code:  [*** Out of date, see self-documenting 
 			tick_time_lerp = tick_time			// jump lerp to make gap=0
 		
  		/* Reset CaMono period for next pollperiod interval before the next FFdata update */
-	 	ffth->period_lerp = cest->period;	   // start afresh with this update, no past dynamics
+	 	ffth->period_lerp = cdat->period;	   // start afresh with this update, no past dynamics
 		gap_lerp = min(gap_lerp,secs_til_nextupdate*5000PPM) // cap rate of gap reduction to 5000PPM
 	   period_lerp += gap_lerp/ffdelta        // adjust to reduce gap to zero over ffdelta cycles
    
-		ffclock_status = cest->status;		// now kernel status acted on, override with update
+		ffclock_status = cdat->status;		// now kernel status acted on, override with update
 		ffclock_updated = 0;		// signal that latest update is processed
 	}
 	
@@ -887,12 +887,12 @@ ffclock_windup(delta): simplified code:  [*** Out of date, see self-documenting 
 Complete breakdown of  ffclock_updated usage
 -------------------------------------------
 This is used to communicate the availability of fresh FFdata in the global
-ffclock_estimate, both in the kernel and in the daemon.
+ffclock_data, both in the kernel and in the daemon.
 
  Set in:
    ffclock_init :    		 ->0
    ffclock_windup           ->0    [ no action if <=0 ]
-	sys_ffclock_setestimate	 ++  // new update available
+	sys_ffclock_setdata	 ++  // new update available
 	ffclock_change_tc   :	 --
  
  Tested in
@@ -950,7 +950,7 @@ counters up to 32bits, even if the underlying hardware counter is wider.
 FB: this is sufficient to keep track of a delta over a tc_tick, which is all that is
     needed for the C(t) = th_offset + th_scale*∆(tc)  in-tick tracking paradigm where ∆ is small
 FF: the same ∆(tc) is convenient to use as in FB to maintain tick-state, but to support
-	 the  Ca(t) = tick_time + cest->period*∆(T) paradigm  where T never wraps, a 64bit FFcounter T is
+	 the  Ca(t) = tick_time + cdat->period*∆(T) paradigm  where T never wraps, a 64bit FFcounter T is
 	 synthesized from the tc counter (this is done within ffclock_windup and ffclock_change_tc).
 	 
 The mask is used in counter reading to ensure that unimplemented bits are zeroed
@@ -1251,7 +1251,7 @@ in timeffc.h).  For convenience we use the following to track input parameters.
 	 t  = struct bintime *bt    	// a time in seconds
 	 ∆t = struct bintime *bt    	// a time difference in seconds
 	 eb = struct bintime *bt    	// an absolute time error bound
-FFdata = ffclock_estimate* cest  // FF clock data
+FFdata = ffclock_data* cdat  // FF clock data
 
 Conceptually the organisation of these variants is as follows.
 The FFdata holds the data defining a single dual (Ca,Cd) clock, which
@@ -1446,11 +1446,11 @@ The interactions via sysctl (next section) are to test/set more static parameter
 There are three syscalls. The relationship to functions mediating their use in
 the daemon are summarized in RADclockDoc_library, repeated here:
 
-syscall (defined in kernel)   linked userspace fn		   OS-dep wrapper {ffkernel,kclock}-{fbsd,,}.c
+syscall (defined in kernel) linked userspace fn        OS-dep wrapper {ffkernel,kclock}-{fbsd,,}.c
 ---------------------------------------------------------------------------------------------------
-sys_ffclock_getcounter  		ffclock_getcounter(vcount) radclock_get_vcounter_syscall(clock,vc)
-sys_ffclock_setestimate			ffclock_setestimate(cest)	set_kernel_ffclock(clock, cest)
-sys_ffclock_getestimate			ffclock_getestimate(cest)	get_kernel_ffclock(clock, cest)
+sys_ffclock_getcounter      ffclock_getcounter(vcount) radclock_get_vcounter_syscall(clock,vc)
+sys_ffclock_setdata         ffclock_setdata(cdat)      set_kernel_ffclock(clock, cdat)
+sys_ffclock_getdata         ffclock_getdata(cdat)      get_kernel_ffclock(clock, cdat)
 
 The syscalls, along with dummy versions returning ENOSYS if !FFCLOCK, and individual
 user argument passing structures (if not already collected and included in sysproto.h),
@@ -1461,8 +1461,8 @@ ffclock_getcounter
 	received as a vcounter_t.
 
 sys_ffclock_{set,get}estimate
-   {setting,getting} the global FFclock state variable cest of type ffclock_estimate.
-	Access to  cest  is protected by ffclock_mtx, preventing potential multiple
+   {setting,getting} the global FFclock state variable cdat of type ffclock_data.
+	Access to  cdat  is protected by ffclock_mtx, preventing potential multiple
 	user processes from any inconsistent actions or consequences.
 	Setting (updating) of the FF data is communicated to the ffclock_windup controlling
 	fftimehands updating via the global  ffclock_updated++ (typically from 0 to 1).
@@ -2079,7 +2079,7 @@ Leapsecond system  [ kernel, and kernel<-->daemon ]
 
 The leapsecond system is independent of that used for the traditional FB clock.
 All required leap second information is provided by the daemon, via the three
-relevant members in rad_data, passed directly into ffclock_estimate:
+relevant members in rad_data, passed directly into ffclock_data:
 	vcounter_t	leapsec_next;		/* Estimated counter value of next leap second. */
 	int16_t		leapsec_total;		/* Sum of leap seconds seen since clock start. */
 	int8_t		leapsec;				/* Next leap second (in {-1,0,1}). */
@@ -2091,9 +2091,9 @@ flags that we want to incorporate leap seconds, thereby converting the native
 leap-free absolute FFclock into FFclock''s UTC clock.
 
 	if ((flags & FFCLOCK_LEAPSEC) == FFCLOCK_LEAPSEC) {	// want UTC
-		bt->sec -= cest.leapsec_total;	// subtracting means including leaps!
-		if (ffc > cest.leapsec_next)		// if past expected imminent leap,
-			bt->sec -= cest.leapsec;		// include it
+		bt->sec -= cdat.leapsec_total;	// subtracting means including leaps!
+		if (ffc > cdat.leapsec_next)		// if past expected imminent leap,
+			bt->sec -= cdat.leapsec;		// include it
 		
 The FF components of the leap system are simple, being very low cost actioning
 of decision made by the daemon, where the hard work is performed.

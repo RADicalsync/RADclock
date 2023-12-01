@@ -397,7 +397,7 @@ push_data_vm(struct radclock_handle *handle)
 int
 receive_loop_vm(struct radclock_handle *handle)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	int sysclock_firstadj;
 
 	sysclock_firstadj = 0;
@@ -486,8 +486,8 @@ receive_loop_vm(struct radclock_handle *handle)
 					return (0);
 				}
 #endif
-				fill_ffclock_estimate(RAD_DATA(handle), RAD_ERROR(handle), &cest);
-				set_kernel_ffclock(handle->clock, &cest);
+				fill_ffclock_data(RAD_DATA(handle), RAD_ERROR(handle), &cdat);
+				set_kernel_ffclock(handle->clock, &cdat);
 				verbose(VERB_DEBUG, "Feed-forward kernel clock has been set.");
 			}
 		}

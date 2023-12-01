@@ -149,7 +149,7 @@ Leap issues:
   - what to pass to algo, what else the kernel needs
   - how to handle historical conversions, ie if passed a vcounter before a leap, to a clock that already built in the leap..
   - how much in kernel compared to in daemon, duplicate functionality? complementary
-  - do the leap fields in ffclock_estimate  get updated inbetween daemon updates?
+  - do the leap fields in ffclock_data  get updated inbetween daemon updates?
     - nice to keep the daemon structure of updates only at stamps
 	 - but what if daemon dies?  still want to pick up extra leaps to add into clock reading.
   - in bpf.c:bpf_bintime2ts   UTC is obtained by adding a constant to the monotonic (uptime)

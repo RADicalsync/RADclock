@@ -84,7 +84,7 @@ init_kernel_clock(struct radclock *clock)
 		PRIV_DATA(clock)->dev_fd = fd;
 		break;
 
-	/* ffclock_setestimate syscall offered by kernel through libc */
+	/* ffclock_setdata syscall offered by kernel through libc */
 	case 2:
 	case 3:
 		break;
@@ -103,7 +103,7 @@ init_kernel_clock(struct radclock *clock)
  *                    0    success
  */
 int
-get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+get_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat)
 {
 	int err;
 
@@ -113,7 +113,7 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 	}
 
 	/* FreeBSD system call */
-	err = ffclock_getestimate(cest);
+	err = ffclock_getdata(cdat);
 	if (err < 0) {
 		logger(RADLOG_ERR, "Failed to recover FFdata from kernel");
 		return (-1);
@@ -133,18 +133,18 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
  */
 //#ifdef HAVE_SYS_TIMEFFC_H
 int
-set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+set_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat)
 {
 	int err;
 
 	switch (clock->kernel_version) {
 	case 0:
 	case 1:
-		err = syscall(clock->syscall_set_ffclock, cest);
+		err = syscall(clock->syscall_set_ffclock, cdat);
 		break;
 	case 2:
 	case 3:
-		err = ffclock_setestimate(cest);
+		err = ffclock_setdata(cdat);
 		break;
 	default:
 		logger(RADLOG_ERR, "Unknown kernel version");
@@ -160,7 +160,7 @@ set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 }
 //#else
 //int
-//set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+//set_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat)
 //{
 //	return (0);
 //}

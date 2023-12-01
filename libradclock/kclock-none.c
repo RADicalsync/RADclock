@@ -42,14 +42,14 @@ init_kernel_clock(struct radclock *clock)
 
 
 int
-get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+get_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat)
 {
 	return (1);
 }
 
 
 int
-set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+set_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat)
 {
 	return (1);
 }

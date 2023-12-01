@@ -425,6 +425,11 @@ FBSD_1.7 {
 	timerfd_settime;
 };
 
+FBSD_1.8 {
+	ffclock_getdata;
+	ffclock_setdata;
+};
+
 FBSDprivate_1.0 {
 	___acl_aclcheck_fd;
 	__sys___acl_aclcheck_fd;

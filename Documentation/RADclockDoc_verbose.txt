@@ -111,7 +111,7 @@ convenient runtime verbosity control of non-VERB messages (this does not work fo
 user radclocks).  Namely, verbose_level values above 1 can be used
 to activate arbitrary additional verbosity, including that written using
 verbose(LOG_*) or logger(RADLOD_*) levels.  For example in clock_init_live:
-if ( VERB_LEVEL>1 ) printout_FFdata(&cest);   // printout_FFdata uses logger(RADLOG_NOTICE
+if ( VERB_LEVEL>1 ) printout_FFdata(&cdat);   // printout_FFdata uses logger(RADLOG_NOTICE
 
 
 In all cases, the actual string printed is as follows :

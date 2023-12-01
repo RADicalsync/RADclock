@@ -552,7 +552,7 @@ static int
 clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	struct radclock_error *rad_error)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	struct radclock_data rd;
 	struct radclock_error rde;
 	int err;
@@ -579,7 +579,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	 * ** Currently suppressed due to RTC reset complications making such initialization
 	 *    dangerous.
 	 */
-	err = get_kernel_ffclock(clock, &cest);
+	err = get_kernel_ffclock(clock, &cdat);
 	if (err != 1) {		// if this kernel supports FFdata getting
 
 		if (err < 0) {
@@ -588,22 +588,22 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 		}
 		verbose(LOG_NOTICE, "Initial retrieve of FFclock data successful");
 		if ( VERB_LEVEL > 1 )
-			printout_FFdata(&cest);
+			printout_FFdata(&cdat);
 
 		/* Sanity check warnings when FFdata not fully set */
-		if ((cest.update_time.sec == 0) || (cest.period == 0)) {
+		if ((cdat.update_time.sec == 0) || (cdat.period == 0)) {
 			logger(RADLOG_WARNING, "kernel FFdata is uninitialized!");
-			printout_FFdata(&cest);
+			printout_FFdata(&cdat);
 		}
 
 		/* Debug code: check FFdata <--> rad_data mapping inverts as expected */
 		if ( VERB_LEVEL > 2 ) {
-			fill_radclock_data(&cest, &rd);
+			fill_radclock_data(&cdat, &rd);
 			verbose(LOG_NOTICE, "  Conversion to raddata :");
 			printout_raddata(&rd);
-			fill_ffclock_estimate(&rd, &rde, &cest);
+			fill_ffclock_data(&rd, &rde, &cdat);
 			verbose(LOG_NOTICE, "  Inversion back to FFdata :");
-			printout_FFdata(&cest);
+			printout_FFdata(&cdat);
 		}
 
 		/* Override default rad_data value with current kernel version */

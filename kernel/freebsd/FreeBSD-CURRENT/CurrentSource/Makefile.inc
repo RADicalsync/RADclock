@@ -402,8 +402,8 @@ MLINKS+=extattr_get_file.2 extattr.2 \
 	extattr_get_file.2 extattr_set_file.2 \
 	extattr_get_file.2 extattr_set_link.2
 MLINKS+=ffclock.2 ffclock_getcounter.2 \
-	ffclock.2 ffclock_getestimate.2 \
-	ffclock.2 ffclock_setestimate.2
+	ffclock.2 ffclock_getdata.2 \
+	ffclock.2 ffclock_setdata.2
 MLINKS+=fhlink.2 fhlinkat.2
 MLINKS+=fhopen.2 fhstat.2 fhopen.2 fhstatfs.2
 MLINKS+=fork.2 _Fork.2

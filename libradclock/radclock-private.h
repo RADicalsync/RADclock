@@ -239,11 +239,11 @@ read_RADabs_UTC(struct radclock_data *rad_data, vcounter_t *vcount,
 }
 
 
-struct ffclock_estimate;
+struct ffclock_data;
 
 /* Functions to print out rad_data and FF_data neatly and fully */
 void printout_raddata(struct radclock_data *rad_data);
-void printout_FFdata(struct ffclock_estimate *cest);
+void printout_FFdata(struct ffclock_data *cdat);
 
 /* OS/KV dependent function that interprets the contents of the timeval-typed
  * ts field from the pcap header according to the kernel support timestamping

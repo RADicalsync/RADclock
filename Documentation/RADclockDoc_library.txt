@@ -231,7 +231,7 @@ WITH_FFKERNEL_{LINUX,FBSD} maps NTP_ADJTIME to be the right function name.
 
 More generically controlled OS dependence is very rare:
   #ifdef linux						// in radclock_private.h to define PRIV_DATA shortcut
-  #if defined (__FreeBSD__)	// in kclock.h so bintime, syscall functions, struct ffclock_estimate defined
+  #if defined (__FreeBSD__)	// in kclock.h so bintime, syscall functions, struct ffclock_data defined
 
 
 
@@ -416,8 +416,8 @@ IPC:	syscalls, for KV>2  (FreeBSD)
 syscall (kernel: kern_ffclock.c)  linked userspace fn		OS-dep wrapper {ffclock,kclock}-fbsd.c
 ---------------------------------------------------------------------------------------------------
 sys_ffclock_getcounter  		ffclock_getcounter(vcount) radclock_get_vcounter_syscall(clock,vc)
-sys_ffclock_setestimate			ffclock_setestimate(cest)	set_kernel_ffclock(clock, cest)
-sys_ffclock_getestimate			ffclock_getestimate(cest)	get_kernel_ffclock(clock, cest)
+sys_ffclock_setdata			ffclock_setdata(cdat)	set_kernel_ffclock(clock, cdat)
+sys_ffclock_getdata			ffclock_getdata(cdat)	get_kernel_ffclock(clock, cdat)
 
 
 
@@ -737,8 +737,8 @@ their update functions back-to-back within process_stamp :
 	  RADalgo_bidir(handle, algodata, &stamp_noleap, ..)); // update native RADclock
 	  update handle->rad_data                 // update UTC RADabsclock
 	update_ipc_shared_memory(handle)	    		// update SMS segment
-	fill_ffclock_estimate(rad_data, rad_error, &cest); // convert to kernel-format cest
-	set_kernel_ffclock(handle->clock, &cest); // update kernel FFclock data
+	fill_ffclock_data(rad_data, rad_error, &cdat); // convert to kernel-format cdat
+	set_kernel_ffclock(handle->clock, &cdat); // update kernel FFclock data
 	push_data_vm(handle)								// update VM store
 	update_FBclock(handle);							// update kernel FBclock
 
@@ -770,8 +770,8 @@ struct radclock_sms {
 which is a perfect copy of the current rad_data and rad_error, plus a record of the
 previous values (accessible by pointer members), plus additional information.
 
-In contrast, for FBSD KV>1 the kernel variable *cest (kclock.h) is defined as a structure :
-struct ffclock_estimate
+In contrast, for FBSD KV>1 the kernel variable *cdat (kclock.h) is defined as a structure :
+struct ffclock_data
 {
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) (native, no leaps) */
 	vcounter_t	update_ffcount;	/* Counter value at last update */
@@ -815,9 +815,9 @@ Simplified Code:
 			  ioctl(PRIV_DATA(clock)->dev_fd, BIOCSRADCLOCKFIXED, fpdata);
   else
 	  check for hw_counter change;
-	  fill_ffclock_estimate				// transform rad_data to FFclock format
+	  fill_ffclock_data				// transform rad_data to FFclock format
 	  set_kernel_ffclock					// wrapper for syscall
-		  ffclock_setestimate(cest)  	// links to syscall sys_ffclock_setestimate
+		  ffclock_setdata(cdat)  	// links to syscall sys_ffclock_setdata
 
 The push to the kernel is disabled if  conf->adjust_FFclock is set to OFF.
 
@@ -825,7 +825,7 @@ The push to the kernel is disabled if  conf->adjust_FFclock is set to OFF.
 Pulling FFclock data from the kernel is only well supported under FBSD, KV>1
 in which case it is achieved by
 	  get_kernel_ffclock					// wrapper for syscall
-		  ffclock_getestimate(cest)  	// links to syscall sys_ffclock_getestimate
+		  ffclock_getdata(cdat)  	// links to syscall sys_ffclock_getdata
 
 In other cases it could be achieved by using the older interfaces if needed.
 
@@ -1016,10 +1016,10 @@ int radclock_get_status				(clock, unsigned int *status)		// status = status
 
 For each of these functions, if the SMS segment does not exist, the data is taken from
 the kernel copy instead via:
-		 get_kernel_ffclock(clock, &cest))			// get kernel copy
-		 fill_radclock_data(&cest, &rad_data);		// extract rad_data from it
+		 get_kernel_ffclock(clock, &cdat))			// get kernel copy
+		 fill_radclock_data(&cdat, &rad_data);		// extract rad_data from it
 		 *desiredparam = rad_data.relevantfield
-where cest is of type ffclock_estimate .
+where cdat is of type ffclock_data .
 If the daemon has died, the SMS segment will exist and be used, but,
 like the kernel copy, will not be updated.
 

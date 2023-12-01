@@ -347,7 +347,7 @@ void init_state( struct radclock_handle *handle, struct radclock_phyparam *phypa
 	 * XXX: update comment, if reading first data from kernel timecounter /
 	 * clocksource info. If the user put a default value in the config file,
 	 * trust his choice. Otherwise, use kernel info from the first
-	 * ffclock_getestimate.
+	 * ffclock_getdata.
 	 */
 	if (handle->conf->phat_init == DEFAULT_PHAT_INIT)	// ie if no user override
 		// FIXME: kernel value not yet extracted, rad_data still blank, need to revisit all this

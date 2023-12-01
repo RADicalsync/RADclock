@@ -613,11 +613,11 @@ insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct
 	 * Algo doesn't run on insane stamps, so RTC reset can be caught subsequently
 	 * on a sane stamp.
 	 */
-//	struct ffclock_estimate cest;
+//	struct ffclock_data cdat;
 //	long double resettime;
-//	get_kernel_ffclock(handle->clock, &cest);
-//	bintime_to_ld(&resettime, &cest.update_time);
-//	if ( cest.secs_to_nextupdate == 0 && BST(stamp)->Tb < resettime ) {
+//	get_kernel_ffclock(handle->clock, &cdat);
+//	bintime_to_ld(&resettime, &cdat.update_time);
+//	if ( cdat.secs_to_nextupdate == 0 && BST(stamp)->Tb < resettime ) {
 //		verbose(LOG_WARNING, "Insane Stamp: seems to predate last RTC reset");
 //		return (1);
 //	}
@@ -779,7 +779,7 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Bi-directional stamp passed to the algo for processing */
 	struct stamp_t stamp;
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	int qual_warning = 0;
 	struct bidir_stamp bdstamp_noleap;
 
@@ -849,18 +849,18 @@ process_stamp(struct radclock_handle *handle)
 		 * Hence a reset is missed if it occurs before this.
 		 * TODO: currently not OS-dependent neutral. Need to define these signals to daemon universally
 		 */
-		if ( get_kernel_ffclock(handle->clock, &cest) == 0) {
-			if ((cest.update_time.sec == 0) || (cest.period == 0)) {
+		if ( get_kernel_ffclock(handle->clock, &cdat) == 0) {
+			if ((cdat.update_time.sec == 0) || (cdat.period == 0)) {
 				verbose(LOG_WARNING, "FFdata has been hardcore re-initialized! due to RTC reset?");
-				printout_FFdata(&cest);
+				printout_FFdata(&cdat);
 				//return (-1);
 			} else {
-				if (cest.secs_to_nextupdate == 0 && !HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
+				if (cdat.secs_to_nextupdate == 0 && !HAS_STATUS(RAD_DATA(handle), STARAD_UNSYNC)) {
 					state = &algodata->state[handle->pref_sID];
 					if ( VERB_LEVEL>2 ) {
 						verbose(LOG_WARNING, "RADclock noticed a FFdata reset after stamp %d, "
 												"may require a restart I'm afraid", state->stamp_i);
-						printout_FFdata(&cest);
+						printout_FFdata(&cdat);
 					}
 					//return -1;
 				}
@@ -932,11 +932,11 @@ process_stamp(struct radclock_handle *handle)
 	bdstamp_noleap = stamp.st.bstamp;
 	bdstamp_noleap.Tb += output->leapsec_total;	// adding means removing
 	bdstamp_noleap.Te += output->leapsec_total;
-	//get_kernel_ffclock(handle->clock, &cest);				// check for RTC reset
+	//get_kernel_ffclock(handle->clock, &cdat);				// check for RTC reset
 	// TODO: need to make  RTCreset = secs_to_nextupdate==0 && not yet pushed to kernel
 	//  easy and definitive way to to record a stamp_firstpush = stamp_i  in peer
 	RADalgo_bidir(handle, state, &bdstamp_noleap, qual_warning, rad_data, rad_error, output);
-//						cest.secs_to_nextupdate == 0 && stamp_i > stamp_firstpush);
+//						cdat.secs_to_nextupdate == 0 && stamp_i > stamp_firstpush);
 
 	/* Update RADclock data with new algo outputs, and leap second update
 	 * the rad_data->status bits are jointly owned by the algo, and this function,
@@ -1038,14 +1038,14 @@ process_stamp(struct radclock_handle *handle)
 				}
 
 				/* Examine FF form of new updated rad_data */
-				fill_ffclock_estimate(RAD_DATA(handle), RAD_ERROR(handle), &cest);
+				fill_ffclock_data(RAD_DATA(handle), RAD_ERROR(handle), &cdat);
 				if ( VERB_LEVEL>2 ) {
 					verbose(VERB_DEBUG, "updated raddata in FFdata form is :");
-					printout_FFdata(&cest);
+					printout_FFdata(&cdat);
 				}
 
 				if (handle->conf->adjust_FFclock == BOOL_ON) {
-					if (!set_kernel_ffclock(handle->clock, &cest))
+					if (!set_kernel_ffclock(handle->clock, &cdat))
 						//stamp_firstpush = stamp_i;
 						verbose(VERB_DEBUG, "FF kernel data has been updated.");
 				}
@@ -1053,8 +1053,8 @@ process_stamp(struct radclock_handle *handle)
 				/* Check FFclock data in the kernel now */
 				if ( VERB_LEVEL>2 ) {
 					verbose(VERB_DEBUG, "Kernel FFdata is now :");
-					get_kernel_ffclock(handle->clock, &cest);
-					printout_FFdata(&cest);
+					get_kernel_ffclock(handle->clock, &cdat);
+					printout_FFdata(&cdat);
 				}
 
 				/* Check accuracy of RAD->FF->RAD inversion for Ca read */
@@ -1066,8 +1066,8 @@ process_stamp(struct radclock_handle *handle)
 					verbose(LOG_NOTICE, "RADdata from daemon");
 					printout_raddata(RAD_DATA(handle));
 
-					get_kernel_ffclock(handle->clock, &cest);
-					fill_radclock_data(&cest, &inverted_raddata);
+					get_kernel_ffclock(handle->clock, &cdat);
+					fill_radclock_data(&cdat, &inverted_raddata);
 					verbose(LOG_NOTICE, "RADdata inverted from matching FFdata");
 					printout_raddata(&inverted_raddata);
 

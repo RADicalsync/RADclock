@@ -52,7 +52,7 @@
 
 /* For testing, but is outside the library */
 #include <radclock-private.h>
-#include "kclock.h"             // struct ffclock_estimate, get_kernel_ffclock
+#include "kclock.h"             // struct ffclock_data, get_kernel_ffclock
 
 #define BPF_PACKET_SIZE   108
 #define PCAP_TIMEOUT   15       // [ms]  Previous value of 5 caused huge delays
@@ -174,7 +174,7 @@ main (int argc, char *argv[])
 	//struct radclock_sms *sms;
 
 	/* FFdata */
-	//struct ffclock_estimate cest;
+	//struct ffclock_data cdat;
 
 
 	/* packet timestamp capture mode */
