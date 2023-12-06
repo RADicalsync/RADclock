@@ -49,7 +49,7 @@ There are also the man pages in repo/man,  and in the case of FreeBSD,
 repo/kernel/freebsd/FreeBSD-XX/CurrentSource and in the system once installed :
 
  RADclock:	&nbsp;&nbsp;&nbsp;	radclock.conf.5	&nbsp;	radclock.8  
- FFclockBSD:	&nbsp;&nbsp;		ffclock.2	&nbsp;	ffclock.4  &nbsp;	ffclock_{getcounter,{get,set}estimate}.2    &nbsp; (identical to ffclock.2)
+ FFclockBSD:	&nbsp;&nbsp;		ffclock.2	&nbsp;	ffclock.4  &nbsp;	ffclock_{getcounter,{get,set}data}.2    &nbsp; (identical to ffclock.2)
 
 
 Research papers on RADclock can be found on Darryl Veitch''s webpage at
@@ -127,8 +127,14 @@ FreeBSD 10.1 and later natively provide this via FFCLOCK support,
 however that support was incomplete and is now outdated.
 Updated FFCLOCK code is available here from FreeBSD 11.2, but
 currently requires the kernel to be patched (this will go away when the changes
-are merged upstream into FreeBSD from, hopefully, 13.0).
-The kernel patch is provided with the radclock source tarball.
+are merged upstream into FreeBSD from, hopefully, 15.0).
+The kernel patch is provided with the radclock source tarball. 
+
+** Note: the tarball is no longer the recommended method and may be out of date.
+Instead, one can clone the RADclock repo at github.com/RADicalsync/RADclock,
+and compile the kernel using the source found in the 
+kernel/freebsd/FreeBSD-VERSION/CurrentSource  directory. Scripts found in 
+Workflow_scripts/VM/ can facilitate this (see Workflow_scripts/readme.md) .
 
 ### FFCLOCK kernel
 
@@ -141,10 +147,10 @@ Imagine you have downloaded radclock-0.4.0.tar.gz into /tmp .
 	sudo Tools/update_FFkernelsource		# overwrite altered kernel files directly
 
 Alternatively, the provided patch against the FreeBSD release versions can be
-used. Eg in the case of FreeBSD-12.1 :
+used. Eg in the case of FreeBSD-13.1 :
 
 	cd /usr/src
-	patch -Np0 < /tmp/radclock-0.4.0/kernel-patches/freebsd/FreeBSD-12.1/FFclock-FreeBSD-12.1.patch
+	patch -Np0 < /tmp/radclock-0.4.0/kernel-patches/freebsd/FreeBSD-13.1/FFclock-FreeBSD-13.1.patch
 	
 We recommend the use of  update_FFkernelsource  as it will work directly on top of any other 
 FFclock patched release that may already be installed.  It also installs the header files in  
@@ -266,11 +272,11 @@ data traces, but can't run live or act as a daemon for the system clock.
 Now make and install the daemon.
 
 	make
-	sudo make install				# copies the executable to /usr/local/bin/radclock
+	sudo make install      # copies the executable to /usr/local/bin/radclock
 
 You can quickly test radclock is working with
 
-	radclock -h					# take a look at the command line options
+	radclock -h            # take a look at the command line options
 	
 and test it on the sample ascii input data provided :
 
@@ -573,16 +579,16 @@ The available clocks are:
 
   FB class: &nbsp;  FB             :  Absolute clock with an interface matched to a FB based daemon
   FF class: &nbsp;  FFnativeclock  :  corresponds to the Absolute clock provided by the daemon
-				  FFclock	  :  carefully adjusted version of FFnativeclock to ensure monotonicity
-				  FFdiffclock	  :  version of FFnativeclock equivalent to the daemons''s Difference clock
-				  
+                    FFclock        :  carefully adjusted version of FFnativeclock to ensure monotonicity
+                    FFdiffclock    :  version of FFnativeclock equivalent to the daemons''s Difference clock
+
 Required daemons:
 
 	FB class:  typically ntpd  [ alternatives exist ]
                 radclock daemon [if configuration parameter  adjust_FBclock  is set ]
-               
+
 	FF class:  radclock daemon [if configuration parameter  adjust_FFclock  is set ]
-				
+
 Note that the FFclock daemon directly synchronizes FFnativeclock. The other
 FFclocks are created within the kernel, based off FFnativeclock.
 
@@ -625,16 +631,16 @@ CLOCK:   which kind of clock?  FB?  FF{native,diff,}clock?
 To avoid the need to deal with low level details the following presets are defined
 (see comment block in radclock.h for more details)
 
-	enum pktcap_tsmode {
-		PKTCAP_TSMODE_NOMODE = 0,		// no FF support in pcap, or very early versions
-		PKTCAP_TSMODE_SYSCLOCK = 1,		// get raw, plus normal timestamp from sysclock
-		PKTCAP_TSMODE_FBCLOCK = 2,		//                "                    FBclock
-		PKTCAP_TSMODE_FFCLOCK = 3,		//                "                    FFclock (mono)
-		PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
-		PKTCAP_TSMODE_FFDIFFCLOCK = 5,		//                "                    FF difference clock
-		PKTCAP_TSMODE_RADCLOCK = 6,		//    "   , plus RADclock timestamp (userland) [expert use]
-		PKTCAP_TSMODE_CUSTOM = 100,		// direct accept a customised tsmode input
-	};
+   enum pktcap_tsmode {
+      PKTCAP_TSMODE_NOMODE = 0,       // no FF support in pcap, or very early versions
+      PKTCAP_TSMODE_SYSCLOCK = 1,     // get raw, plus normal timestamp from sysclock
+      PKTCAP_TSMODE_FBCLOCK = 2,      //                "                    FBclock
+      PKTCAP_TSMODE_FFCLOCK = 3,      //                "                    FFclock (mono)
+      PKTCAP_TSMODE_FFNATIVECLOCK = 4,//                "                    FFclock (native)
+      PKTCAP_TSMODE_FFDIFFCLOCK = 5,  //                "                    FF difference clock
+      PKTCAP_TSMODE_RADCLOCK = 6,     //    "   , plus RADclock timestamp (userland) [expert use]
+      PKTCAP_TSMODE_CUSTOM = 100,     // direct accept a customised tsmode input
+   };
 
 The nominal choice here is FFNATIVECLOCK.  This selects the FF kernel clock
 that corresponds directly to the daemon''s RADclock, returns a raw timestamp also
