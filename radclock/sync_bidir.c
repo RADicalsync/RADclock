@@ -49,14 +49,13 @@
 #include "rawdata.h"
 #include "verbose.h"
 #include "config_mgr.h"
-#include "proto_ntp.h"	// XXX ??
+#include "proto_ntp.h"
 #include "misc.h"
 #include "jdebug.h"
 
 
 
-
-/* Function to copy a stamp. Not the reverse of the origina/copy convention */
+/* Function to copy a stamp. Note argument reversal. */
 inline void copystamp(struct bidir_stamp *orig, struct bidir_stamp *copy)
 {
 	memcpy(copy, orig, sizeof(struct bidir_stamp));
@@ -66,40 +65,86 @@ inline void copystamp(struct bidir_stamp *orig, struct bidir_stamp *copy)
 
 
 /* =============================================================================
- * ALGO INITIALISATION ROUTINES
- * =============================================================================
+ * INITIALISATION ROUTINES
+ * ===========================================================================*/
+
+/* Set algo error thresholds based on the parameters of the counter model */
+static void
+set_err_thresholds( struct radclock_phyparam *phyparam, struct bidir_algostate *state)
+{
+	/* XXX Tuning history:
+	 * original: 10*TSLIMIT = 150 mus
+	 *    state->Eshift =  35*phyparam->TSLIMIT;  // 525 mus for Shouf Shouf?
+	 */
+	state->Eshift    = 10*phyparam->TSLIMIT;
+	state->Ep        = 3*phyparam->TSLIMIT;
+	state->Ep_qual   = phyparam->RateErrBOUND/5;
+	state->Ep_sanity = 3*phyparam->RateErrBOUND;
+
+	/* XXX Tuning history:
+	 *    state->Eplocal_qual = 4*phyparam->BestSKMrate;  // Original
+	 *    state->Eplocal_qual = 4*2e-7;   // Big Hack during TON paper
+	 *    state->Eplocal_qual = 40*1e-7;  // Tuning for Shouf Shouf tests ??
+	 * but finally introduced a new parameter in the config file */
+	state->Eplocal_qual   = phyparam->plocal_quality;
+	state->Eplocal_sanity = 3*phyparam->RateErrBOUND;
+
+	/* XXX Tuning history:
+	 *    *Eoffset = 6*phyparam->TSLIMIT;  // Original
+	 * but finally introduced a new parameter in the config file */
+	state->Eoffset = phyparam->offset_ratio * phyparam->TSLIMIT;
+
+	/* XXX Tuning history:
+	 * We should decouple Eoffset and Eoffset_qual ... conclusion of shouf shouf
+	 * Added the effect of poll period as a first try (~ line 740)
+	 * [UPDATE] - reverted ... see below
+	 */
+	state->Eoffset_qual        = 3*(state->Eoffset);
+	state->Eoffset_sanity_min  = 100*phyparam->TSLIMIT;
+	state->Eoffset_sanity_rate	= 20*phyparam->RateErrBOUND;
+}
+
+
+/* Derive algo windows measured in stamp-index units from timescales in [s]
+ * The top level history window (width h_win) specifies the greatest memory depth
+ * used by the overall algo, that is no stamp information further back than h_win
+ * is used. All other windows are thus smaller than h_win, and in fact of h_win/2.
+ * The value of h_win is hardwired as it is so large, the algos are very
+ * insensitive to its value, so it does not need to be a configuration parameter.
+ * Its goals are to
+ *   (i)  limit memory complexity requirements of the code to be O(1)
+ *   (ii) insure that the past is ultimately forgotten, this is essential to
+ *        take into account unforseen circumstances, and ultimately oscillator ageing
  */
-
-
 static void
 set_algo_windows(struct radclock_phyparam *phyparam, struct bidir_algostate *p )
 {
-	index_t history_scale = 3600 * 24 * 7;		/* time-scale of top level window */
-
-	/* top level window, must forget past */
-	p->top_win = (index_t) ( history_scale / p->poll_period );
+	index_t history_scale = 3600 * 24 * 7;  // time-scale [s] of h_win
+	p->h_win = (index_t) ( history_scale / p->poll_period );
 
 	/* shift detection. Ensure min of 100 samples (reference poll=16).
-	 * TODO: right function? 
-	 */
+	 * TODO: right function? */
 	p->shift_win = MAX( (index_t) ceil( (10*phyparam->TSLIMIT/1e-7)/p->poll_period ), 100 );
 
 	/* offset estimation, based on SKM scale (don't allow too small) */
 	p->offset_win = (index_t) MAX( (phyparam->SKM_SCALE/p->poll_period), 2 );
 
-	/* local period, not the right function! should be # samples and time based */ 
+	/* local period, not the right function! should be # samples and time based */
 	p->plocal_win = (index_t) MAX( ceil(p->offset_win*5), 4);
-/*	p->plocal_win = (index_t) MAX( ceil(p->offset_win*4), 4);  // XXX Tuning purposes SIGCOMM */ 
+   //	p->plocal_win = (index_t) MAX( ceil(p->offset_win*4), 4);  // Tuning for SIGCOMM
 }
 
 
 /* Adjust window values to avoid window mismatches generating unnecessary complexity
- * This version initialises warmup_win on the first pkt, otherwise, after a parameter reload,
- * it takes the new algo windows and again increases the warmup period if necessary.
- * it will never decrease it in time to avoid problems, so there will always be more stamps to serve.
- * it will always recommend keeping existing packets so warmup history is not lost.
- * It also ensures that top_win is large enough.
- */ 
+ * Key goal is to ensure warmup_win consistent with algo windows for easy
+ * initialisation of main algo after warmup.
+ * This version initialises warmup_win on the first stamp, otherwise, after a
+ * parameter reload, it takes the new algo windows and again increases the warmup
+ * period if necessary. It will:
+ * - never decrease it in time to avoid problems, so will always be more stamps to serve
+ * - always recommend keeping existing packets so warmup history is not lost
+ * - ensure that h_win is large enough
+ */
 static void
 adjust_warmup_win(index_t i, struct bidir_algostate *p, unsigned int plocal_winratio)
 {
@@ -110,42 +155,508 @@ adjust_warmup_win(index_t i, struct bidir_algostate *p, unsigned int plocal_winr
 	
 	/* Adjust warmup wrt shift, plocal, and offset windows */
 	win = MAX(p->offset_win, MAX(p->shift_win, p->plocal_win + p->plocal_win/(plocal_winratio/2) ));
-	// hack to avoid bug in RTT history wrapping killing final value needed for shift algo
-	// No idea why win+=1 won't work, as that makes the buffer history longer than the needed shift_win
-	// Without the hack I think I get it now:  RTT is pushed into history very early on, effectively updated
-	// to the current stamp i already, whereas the RTThat_sh code in process_RTT_full is still
-	// operating in the `i am updating for it now' mode, working with pre-update data
-	win += 2;
-	
+
 	if (i==0) {
-		if ( win > p->warmup_win ) {	// simplify full algo a little
+		if ( win > p->warmup_win ) {    // simplify full algo a little
 			verbose(VERB_CONTROL, "Warmup window smaller than algo windows, increasing "
-					"from %lu to %lu stamps", p->warmup_win, win);
+			    "from %lu to %lu stamps", p->warmup_win, win);
 			p->warmup_win = win;
-		} 
+		}
 	} else { // Simply add on entire new Warmup using new param: code can't fail
-		WU_dur = (double) (win * p->poll_period);	// new warmup remaining [s]
+		WU_dur = (double) (win * p->poll_period);    // new warmup remaining [s]
 		p->warmup_win = (index_t) ceil(WU_dur / p->poll_period) + i;
-		verbose(VERB_CONTROL, 
-				"After adjustment, %4.1lf [sec] of warmup left to serve, or %lu stamps. "
-				"Warmup window now %lu", WU_dur, p->warmup_win - i, p->warmup_win);
+		verbose(VERB_CONTROL,
+		    "After adjustment, %4.1lf [sec] of warmup left to serve, or %lu stamps. "
+		    "Warmup window now %lu", WU_dur, p->warmup_win - i, p->warmup_win);
 	}
 
-   /* Adjust top window wrt warmup and shift windows */
-	/* Ensures warmup and shift windows < top_win/2 , so top win can be ignored in warmup */
-	if ( p->warmup_win + p->shift_win > p->top_win/2 ) {
+	/* Adjust history window wrt warmup and shift windows */
+	/* Ensures warmup and shift windows < h_win/2 , so h_win can be ignored in warmup */
+	if ( p->warmup_win + p->shift_win > p->h_win/2 ) {
 		win = 3*( (p->warmup_win + p->shift_win) * 2 + 1 ); // 3x minimum, as short history bad
-		verbose(VERB_CONTROL,
-				"Warmup + shift window hits history half window, increasing history "
-				"window from %lu to %lu", p->top_win, win);
-		p->top_win = win;
+		verbose(VERB_CONTROL, "Warmup + shift window hits history half window,"
+		    " increasing history window from %lu to %lu", p->h_win, win);
+		p->h_win = win;
 	}
 
 	verbose(VERB_CONTROL,"Warmup Adjustment Complete");
 }
 
 
+/* Print parameter summary: physical, network, windows, thresholds, sanity */
+static void
+print_algo_parameters(struct radclock_phyparam *phyparam, struct bidir_algostate *state)
+{
+	verbose(VERB_CONTROL, "Machine Parameters:  TSLIMIT: %g, SKM_SCALE: %d, RateErrBOUND: %g, BestSKMrate: %g",
+	    phyparam->TSLIMIT, (int)phyparam->SKM_SCALE, phyparam->RateErrBOUND, phyparam->BestSKMrate);
 
+	verbose(VERB_CONTROL, "Network Parameters:  poll_period: %u, h_win: %d ", state->poll_period, state->h_win);
+
+	verbose(VERB_CONTROL, "Windows (in pkts):   warmup: %lu, history: %lu, shift: %lu "
+	    "(thres = %4.0lf [mus]), plocal: %lu, offset: %lu (SKM scale is %u)",
+	    state->warmup_win, state->h_win, state->shift_win, state->Eshift*1000000, state->plocal_win, state->offset_win,
+	    (int) (phyparam->SKM_SCALE/state->poll_period) );
+
+	verbose(VERB_CONTROL, "Error thresholds :   phat:  Ep %3.2lg [ms], Ep_qual %3.2lg [PPM], "
+	    "plocal:  Eplocal_qual %3.2lg [PPM]", 1000*state->Ep, 1.e6*state->Ep_qual, 1.e6*state->Eplocal_qual);
+
+	verbose(VERB_CONTROL, "                     offset:  Eoffset %3.1lg [ms], Eoffset_qual %3.1lg [ms]",
+	    1000*state->Eoffset, 1000*state->Eoffset_qual);
+
+	verbose(VERB_CONTROL, "Sanity Levels:       phat  %5.3lg, plocal  %5.3lg, offset: "
+	    "absolute:  %5.3lg [ms], rate: %5.3lg [ms]/[sec] ( %5.3lg [ms]/[stamp])",
+	    state->Ep_sanity, state->Eplocal_sanity, 1000*state->Eoffset_sanity_min,
+	    1000*state->Eoffset_sanity_rate, 1000*state->Eoffset_sanity_rate*state->poll_period);
+}
+
+
+static void
+update_state(struct radclock_phyparam *phyparam, struct bidir_algostate *state,
+    unsigned int plocal_winratio, int poll_period)
+{
+	index_t si = state->stamp_i;  // convenience
+
+	unsigned int stamp_sz;        // Stamp max history size
+	unsigned int RTT_sz;          // RTT max history size
+	unsigned int RTThat_sz;       // RTThat max history size
+	unsigned int thnaive_sz;      // thnaive max history size
+	index_t oldest_i;             // index of oldest item in a history, or -1 flag if empty
+	vcounter_t *RTThat_tmp;       // RTThat value pointer
+
+	verbose(VERB_CONTROL, "** update_state triggered on stamp %lu **", si);
+
+	/* Initialize the error thresholds */
+	set_err_thresholds(phyparam, state);
+
+	/* Record change of poll period.
+	 * Set poll_transition_th, poll_ratio and poll_changed_i for thetahat
+	 * processing. poll_transition_th could be off by one depending on when NTP
+	 * pkt rate changed, but not important.
+	 */
+	if (poll_period != state->poll_period) {
+		state->poll_transition_th = state->offset_win;
+		state->poll_ratio = (double)poll_period / (double)state->poll_period;
+		state->poll_period = poll_period;
+		state->poll_changed_i = si;
+	}
+
+	/* Set pkt-index algo windows.
+	 * With possibly new phyparam and/or polling period
+	 * These control the algo, independent of implementation.
+	 */
+	set_algo_windows(phyparam, state);
+
+	/* Ensure warmup_win consistent with algo windows for easy
+	 * initialisation of main algo after warmup 
+	 */
+	if (si < state->warmup_win)
+		adjust_warmup_win(si, state, plocal_winratio);
+	else {
+		/* Re-init shift window from stamp i-1 back
+		 * ensure don't go past 1st stamp, using history constraint (follows 
+		 * that of RTThat already tracked). Window was reset, not 'slid'
+		 * note: currently stamps [_end,i-1] in history, i not yet processed
+		 */
+		if ( (si-1) > (state->shift_win-1) )
+			state->shift_end = (si-1) - (state->shift_win-1);
+		else
+			state->shift_end = 0;
+
+		oldest_i = history_old(&state->RTT_hist);
+		state->shift_end = MAX(state->shift_end, oldest_i);
+		// TODO: check if this is stupidly complicated
+		RTThat_tmp = history_find(&state->RTT_hist, history_min(&state->RTT_hist, state->shift_end, si-1) );
+		state->RTThat_shift = *RTThat_tmp;
+	}
+
+	/* Set timeseries history array sizes.
+	 * These detailed histories always lie within the history window of width h_win.
+	 * If warmup is to be sacred, each must be larger than the current warmup_win 
+	 * NOTE:  if set right, new histories will be big enough for future needs, 
+	 * doesn't mean required data is in them after window resize!!
+	 */
+	if ( si < state->warmup_win ) {
+		stamp_sz   = state->warmup_win;
+		RTT_sz     = state->warmup_win;
+		RTThat_sz  = state->warmup_win;
+		thnaive_sz = state->warmup_win;
+	} else {
+		stamp_sz   = MAX(state->plocal_win + state->plocal_win/(plocal_winratio/2), state->offset_win);
+		RTT_sz     = MAX(state->plocal_win + state->plocal_win/(plocal_winratio/2), MAX(state->offset_win, state->shift_win));
+		RTThat_sz  = state->offset_win;    // need >= offset_win
+		thnaive_sz = state->offset_win;    // need >= offset_win
+	}
+
+
+	/* Resize timeseries histories if needed.
+	 * Currently stamps [_end,stamp_i-1] in history, stamp_i not yet processed.
+	 */
+	unsigned long int curr_i;    // store index of most recent stamp in history
+
+	if ( state->stamp_hist.buffer_sz != stamp_sz )
+	{
+		oldest_i = history_old(&state->stamp_hist);
+		if (oldest_i == -1)    // flags empty buffer
+			curr_i = 0;
+		else
+			curr_i = oldest_i + state->stamp_hist.item_count - 1;
+		verbose(VERB_CONTROL, "Resizing st_win history from %u to %u. Current stamp range is [%ld %lu]",
+		    state->stamp_hist.buffer_sz, stamp_sz, oldest_i, curr_i);
+		history_resize(&state->stamp_hist, stamp_sz);
+		oldest_i = history_old(&state->stamp_hist);
+		verbose(VERB_CONTROL, "Range on exit: [%ld %lu]", oldest_i, curr_i);
+	}
+
+	/* Resize RTT History */
+	if ( state->RTT_hist.buffer_sz != RTT_sz )
+	{
+		oldest_i = history_old(&state->RTT_hist);
+		if (oldest_i == -1)    // flags empty buffer
+			curr_i = 0;
+		else
+			curr_i = oldest_i + state->RTT_hist.item_count - 1;
+		verbose(VERB_CONTROL, "Resizing RTT_win history from %u to %u. Current stamp range is [%ld %lu]",
+		    state->RTT_hist.buffer_sz, RTT_sz, oldest_i, curr_i);
+		history_resize(&state->RTT_hist, RTT_sz);
+		oldest_i = history_old(&state->RTT_hist);
+		verbose(VERB_CONTROL, "Range on exit: [%ld %lu]", oldest_i, curr_i);
+	}
+
+	/* Resize RTThat History */
+	if ( state->RTThat_hist.buffer_sz != RTThat_sz )
+	{
+		/* Unnecessary alternative since history_old already flags empty buffer */
+		//		unsigned int count;           // number of items held in a history
+		//		count = state->RTThat_hist.item_count;
+		//		if (count == 0) {  // empty buffer
+		//			oldest_i = -1;   // flags empty buffer
+		//			curr_i = 0;      // incorrect but must remain unsigned
+		//		} else {
+		//			oldest_i = history_old(&state->RTThat_hist);
+		//			curr_i = oldest_i + count - 1;
+		//		}
+		oldest_i = history_old(&state->RTThat_hist);
+		if (oldest_i == -1)    // flags empty buffer  [** Bizzarely, (oldest_i < 0) test consistently failed!! ]
+			curr_i = 0;
+		else
+			curr_i = oldest_i + state->RTThat_hist.item_count - 1;
+		verbose(VERB_CONTROL, "Resizing RTThat_win history from %u to %u. Current stamp range is [%ld %lu]",
+		    state->RTThat_hist.buffer_sz, RTThat_sz, oldest_i, curr_i);
+		history_resize(&state->RTThat_hist, RTThat_sz);
+		oldest_i = history_old(&state->RTThat_hist);
+		verbose(VERB_CONTROL, "Range on exit: [%ld %lu]", oldest_i, curr_i);
+	}
+
+	/* Resize thnaive History */
+	if ( state->thnaive_hist.buffer_sz != thnaive_sz ) {
+		oldest_i = history_old(&state->thnaive_hist);
+		if (oldest_i == -1)    // flags empty buffer
+			curr_i = 0;
+		else
+			curr_i = oldest_i + state->thnaive_hist.item_count - 1;
+		verbose(VERB_CONTROL, "Resizing thnaive_win history from %u to %u.  Current stamp range is [%ld %lu]",
+		    state->thnaive_hist.buffer_sz, thnaive_sz, oldest_i, curr_i);
+		history_resize(&state->thnaive_hist, thnaive_sz);
+		oldest_i = history_old(&state->thnaive_hist);
+		verbose(VERB_CONTROL, "Range on exit: [%ld %lu]", oldest_i, curr_i);
+	}
+
+	/* OWD and Asym resizing has the same parameters as RTT, no need for verbosity */
+	history_resize(&state->Df_hist,      RTT_sz);
+	history_resize(&state->Db_hist,      RTT_sz);
+	history_resize(&state->Dfhat_hist,   RTT_sz);
+	history_resize(&state->Dbhat_hist,   RTT_sz);
+	history_resize(&state->Asymhat_hist, RTT_sz);
+
+	print_algo_parameters(phyparam, state);
+
+}
+
+
+
+
+/* =============================================================================
+ * ALGO ROUTINES
+ * ===========================================================================*/
+
+/* Manage the sliding forward of the top level history window when full, and
+ * re-initialize any variables affected by the history loss.
+ * At the end of warmup history window is initialized to [0 history_end] where
+ * history_end = h_win-1 .  When this is full and more space is needed,
+ * we extend the history window by sliding it forward by h_win/2.
+ * Thus we forget half of the prior full history, and make room for the
+ * next half window of stamps to come, starting with the current stamp.
+ * Half way through a history window we begin preparing the re-initialization of
+ * variables that will take over when the window is next slid, so that the
+ * new values will only depend on stamp indices lying within the next window.
+ */
+static void
+manage_historywin(struct bidir_algostate *state, struct bidir_stamp *stamp, vcounter_t RTT)
+{
+	index_t si = state->stamp_i;  // convenience
+
+	/* Initialize:  middle of first history window [0 ... i ... history_end] */
+	if ( si == state->h_win/2 ) {
+
+		/* Reset half window estimate (up until now RTThat=next_RTThat)
+		 * This simple initialization will be updated with the current stamp. */
+		state->next_RTThat = state->stamp.Tf - state->stamp.Ta;
+
+		/* Initialize on-line algo for new pstamp_i calculation [needs to be in
+		 * surviving half of window!] */
+		state->jsearch_win = state->warmup_win;
+		state->jcount = 1;
+		state->next_pstamp_i = si;
+		state->next_pstamp_RTThat = state->RTThat;
+		state->next_pstamp_perr = state->phat*((double)(RTT) - state->RTThat);
+		copystamp(stamp, &state->next_pstamp);
+		/* Now DelTb >= h_win/2,  become fussier */
+		state->Ep_qual /= 10;
+
+		/* Successor error bounds reinitialisation */
+		ALGO_ERROR(state)->cumsum_hwin = 0;
+		ALGO_ERROR(state)->sq_cumsum_hwin = 0;
+		ALGO_ERROR(state)->nerror_hwin = 0;
+
+		verbose(VERB_CONTROL, "Adjusting history window before normal "
+		    "processing of stamp %lu. FIRST 1/2 window reached", si);
+	}
+
+	/* History window full, slide it, and replace variables with prepared values */
+	if ( si == state->history_end ) {
+
+		/* Advance window by h_win/2 so i is the first stamp in the new 2nd half */
+		state->history_end += state->h_win/2;
+
+		/* Replace online estimates with their successors (Upshifts must be built in) */
+		state->Dfhat = state->next_Dfhat;
+		state->Dbhat = state->next_Dbhat;
+		state->RTThat = state->next_RTThat;
+
+		/* Reset successor estimates (prior shifts irrelevant) using last raw values */
+		double *D_ptr;
+		D_ptr = history_find(&state->Df_hist, si - 1);
+		state->next_Dfhat = *D_ptr;
+		D_ptr = history_find(&state->Db_hist, si - 1);
+		state->next_Dbhat = *D_ptr;
+		state->next_RTThat = state->stamp.Tf - state->stamp.Ta;
+
+		/* Take care of effects on phat algo
+		* - begin using next_pstamp_i that has been precalculated in previous h_win/2
+		* - reinitialise on-line algo for new next_pstamp_i calculation
+		*   Record [index RTT RTThat stamp ]
+		*/
+		state->pstamp_i      = state->next_pstamp_i;
+		state->pstamp_RTThat = state->next_pstamp_RTThat;
+		state->pstamp_perr   = state->next_pstamp_perr;
+		copystamp(&state->next_pstamp, &state->pstamp);
+		state->jcount = 1;
+		state->next_pstamp_i      = si;
+		state->next_pstamp_RTThat = state->RTThat;
+		state->next_pstamp_perr   = state->phat*((double)(RTT) - state->RTThat);
+		copystamp(stamp, &state->next_pstamp);
+
+		/* Successor error bounds being adopted, then reset */
+		ALGO_ERROR(state)->cumsum    = ALGO_ERROR(state)->cumsum_hwin;
+		ALGO_ERROR(state)->sq_cumsum = ALGO_ERROR(state)->sq_cumsum_hwin;
+		ALGO_ERROR(state)->nerror    = ALGO_ERROR(state)->nerror_hwin;
+		ALGO_ERROR(state)->cumsum_hwin    = 0;
+		ALGO_ERROR(state)->sq_cumsum_hwin = 0;
+		ALGO_ERROR(state)->nerror_hwin    = 0;
+
+		verbose(VERB_CONTROL, "Total number of sanity events:  phat: %u, plocal: %u, Offset: %u ",
+		    state->phat_sanity_count, state->plocal_sanity_count, state->offset_sanity_count);
+		verbose(VERB_CONTROL, "Total number of low quality events:  Offset: %u ",
+		    state->offset_quality_count);
+		verbose(VERB_CONTROL, "Adjusting history window before normal processing of stamp %lu. "
+		    "New pstamp_i = %lu ", si, state->pstamp_i);
+	}
+
+}
+
+
+/* Performs initialisation of all sub-algos based on the first stamp (stamp0).
+ * At this early stage phat cannot be estimated, and most state variables are
+ * left at their null initialisation (0).
+ * On entry, the only state variable already set is stamp_i.
+ */
+static void
+init_algos(struct radclock_config *conf, struct bidir_algostate *state,
+    struct bidir_stamp *stamp, struct radclock_data *rad_data, vcounter_t RTT,
+    struct bidir_algooutput *output)
+{
+	index_t si = state->stamp_i;  // convenience
+
+	/* Print the first timestamp tuple obtained */
+	verbose(VERB_SYNC, "i=%lu: Beginning Warmup Phase. Stamp read check: %llu "
+	    "%22.10Lf %22.10Lf %llu", si, stamp->Ta, stamp->Tb, stamp->Te, stamp->Tf);
+
+	verbose(VERB_SYNC, "i=%lu: Assuming 1Ghz oscillator, 1st vcounter stamp is %5.3lf [days] "
+	    "(%5.1lf [min]) since reset, RTT is %5.3lf [ms], SD %5.3Lf [mus]", si,
+	    (double) stamp->Ta * 1e-9/3600/24, (double) stamp->Ta * 1e-9/60,
+	    (double) (stamp->Tf - stamp->Ta) * 1e-9*1000, (stamp->Te - stamp->Tb) * 1e6);
+
+	/* RTT */
+	state->RTThat = RTT;    // already in history
+
+	/* phat algo
+	 * unavailable after only 1 stamp, use config value, rough guess beats zero!
+	 * XXX: update comment, if reading first data from kernel timecounter /
+	 * clocksource info. If the user put a default value in the config file,
+	 * trust his choice. Otherwise, use kernel info from the first ffclock_getdata.
+	 */
+	if (conf->phat_init == DEFAULT_PHAT_INIT)    // ie if no user override
+		// FIXME: kernel value not yet extracted, rad_data still blank, need to revisit all this
+		// state->phat = rad_data->phat;
+		state->phat = conf->phat_init;    // trust conf based value for now
+	else
+		state->phat = conf->phat_init;
+	/* Initialize phat online warmup algo */
+	state->wwidth = 1;
+
+	/* OWD and Asymmetry
+	 * RADclock not calibrated on first stamp, so base OWD on config setting of
+	 * Asym plus rough initialized phat.  Errors in OWDs can be very large here,
+	 * but will not impact the initial Asym value.
+	 */
+	double Df, Db, Asym;
+	Asym = 1e-6 * (conf->asym_host + conf->asym_net);    // params in mus
+	Df = (RTT * state->phat + Asym) / 2;
+	Db = Df - Asym;
+	state->Dfhat = Df;
+	state->Dbhat = Db;
+	state->Asymhat = Asym;
+	history_add(&state->Df_hist, si, &Df);
+	history_add(&state->Db_hist, si, &Db);
+	//history_add(&state->Asym_hist, si, &Asym);
+
+	/* plocal algo */
+	state->plocal = state->phat;
+
+	/* thetahat algo  [ basic rAdclock definition ]
+	 * K now determined, implies Ca(t) = stamp0->Tb  initially
+	 * Subsequently, K only changes to null phat changes.  */
+	state->K = stamp->Tb - (long double) (stamp->Ta * state->phat);
+	verbose(VERB_SYNC, "i=%lu: After initialisation: (far,near) = (%lu,%lu), "
+	    "phat = %.10lg, perr = %5.3lg, K = %7.4Lf",
+	    si, 0, 0, state->phat, state->perr, state->K);
+
+	/* Initialize thetahat online warmup algo */
+	double th_naive = 0;  // no estimated correction, already doing best one can
+	state->thetahat = th_naive;
+	history_add(&state->thnaive_hist, si, &th_naive);
+	copystamp(stamp, &state->thetastamp); // this is ok, but thetastamp setting needs detailed revision
+	output->best_Tf = stamp->Tf;  // other local output fields are zero/unavailable
+
+}
+
+
+/* Initializations for online minimum history and level_shift minima for
+ * RTT, OWD and Asym. As these share the same shift window, they
+ * share the same shift_end and _end indices.
+ * Currently there are no actions for Asym as it is not based on a direct minima.
+ */
+void init_RTTOWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
+{
+	index_t si = state->stamp_i;  // convenience
+
+	index_t end;          // index of last pkts in histories
+	vcounter_t *RTT_tmp;  // vcount history pointer
+	double *D;            // double history pointer
+
+
+	/* Convenient to start tracking next_*hat now instead of in middle of the 1st
+	 * history window, even if not used until then. */
+	state->next_RTThat = state->RTThat;
+	state->next_Dfhat = state->Dfhat;
+	state->next_Dbhat = state->Dbhat;
+	//state->next_Asym = state->Asym;
+
+	/* Initialize shift_end (index of left boundary of shift window).
+	 * Check to ensure stamps at shift_end are actually in history.
+	 */
+	if (si > state->shift_win)
+		state->shift_end = si - (state->shift_win-1);
+	else
+		state->shift_end = 0;    // just in case window sizes incorrectly set
+	end = history_old(&state->RTT_hist);
+	end = MAX(state->shift_end, end);
+	state->shift_end     = end;
+	state->shift_end_OWD = end;    // assumes history storage always in sync
+
+	/* Initialize the variables holding the minima over the shift window.
+	 * Needed so that the min is in window, so history_min_slide() will work later
+	 */
+	D = history_find(&state->Df_hist, history_min_dbl(&state->Df_hist, end, si) );
+	state->Dfhat_shift = *D;
+	D = history_find(&state->Db_hist, history_min_dbl(&state->Db_hist, end, si) );
+	state->Dbhat_shift = *D;
+
+	RTT_tmp = history_find(&state->RTT_hist, history_min(&state->RTT_hist, end, si) );
+	state->RTThat_shift = *RTT_tmp;
+
+	/* RTThat history
+	 * Needed for thetahat_full, not RTT algos themselves, but maintained within them.
+	 * Was ignored in warmup. Now initialize for full by filling with current
+	 * RTThat: not a true history, but sensible for thetahat_full  */
+	for (index_t j=0; j<=si; j++)
+		history_add(&state->RTThat_hist, j, &state->RTThat);
+
+// // Alternative brute force instead of via history_add API
+//	unsigned int RTThat_sz = state->RTThat_hist.buffer_sz;
+//	for ( int j=0; j<RTThat_sz; j++ ) {  // ie [0,warmup_win-1]
+//		RTT_tmp = history_find(&state->RTThat_hist, j);
+//		*RTT_tmp = state->RTThat;
+//	}
+//	state->RTThat_hist.item_count = RTThat_sz;
+//	//state->RTThat_hist.curr_i = si;  // member now obseleted
+
+	verbose(VERB_CONTROL, "i=%lu: Initializing full RTTOWDAsym algos", si);
+}
+
+
+
+/* Initializations for normal phat algo
+ * Need: reliable phat, estimate of its error, initial quality pstamp and associated data
+ * Approximate error of current estimate from warmup algo, must be beaten before phat updated
+ */
+void init_phat_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
+{
+	struct bidir_stamp *stamp_ptr;
+	struct bidir_stamp *stamp_near;
+	struct bidir_stamp *stamp_far;
+	vcounter_t *RTT_far;
+	vcounter_t *RTT_near;
+
+	/* pstamp_i has been tracking the location of the smallest RTT during warmup,
+	 * so we initialize pstamp to it. The recorded point error is zero.
+	 * Error due to poor RTThat value at the time will be picked in the `global'
+	 * error component baseerr in phat_full. To calculate baserr the RTThat
+	 * associated to pstamp is taken to be the current (end-warmup) value, not
+	 * the value at pstamp_i (not recorded) which may be unreliable.
+	 */
+	stamp_ptr = history_find(&state->stamp_hist, state->pstamp_i);
+	copystamp(stamp_ptr, &state->pstamp);
+	state->pstamp_perr = 0;
+	state->pstamp_RTThat = state->RTThat;
+
+	/* RTThat detection and last phat update may not correspond to the same
+	 * stamp. Here we have reliable phat, but the corresponding point error may
+	 * be outdated if RTThat is detected after last update. Reassess point 
+	 * error with latest RTThat value.
+	 */
+	stamp_near = history_find(&state->stamp_hist, state->near_i);
+	stamp_far  = history_find(&state->stamp_hist, state->far_i);
+	RTT_near   = history_find(&state->RTT_hist, state->near_i);
+	RTT_far    = history_find(&state->RTT_hist, state->far_i);
+	state->perr	= ((double)(*RTT_far + *RTT_near) - 2*state->RTThat)
+	    * state->phat / (stamp_near->Tb - stamp_far->Tb);
+
+	/* Reinitialise sanity count at the end of warmup */
+	state->phat_sanity_count = 0;
+	verbose(VERB_CONTROL, "i=%lu: Initializing full phat algo, pstamp_i = %lu, perr = %6.3lg",
+	    state->stamp_i, state->pstamp_i, state->perr);
+}
 
 
 /*
@@ -153,7 +664,7 @@ adjust_warmup_win(index_t i, struct bidir_algostate *p, unsigned int plocal_winr
  * finding near and far pkts * poll_period dependence:  via plocal_win
  */
 static void
-init_plocal(struct bidir_algostate *state, unsigned int plocal_winratio, index_t i)
+reset_plocal(struct bidir_algostate *state, unsigned int plocal_winratio, index_t i)
 {
 	/* History lookup window boundaries */
 	index_t lhs;
@@ -161,7 +672,7 @@ init_plocal(struct bidir_algostate *state, unsigned int plocal_winratio, index_t
 
 	/* XXX Tuning ... Accept too few packets in the window makes plocal varies
 	 * a lot. Let's accept more packets to increase quality.
-	 * 		state->wwidth = MAX(1,plocal_win/plocal_winratio);
+	 *   state->wwidth = MAX(1,plocal_win/plocal_winratio);
 	 */
 	/* not used again for phat */
 	state->wwidth = MAX(4, state->plocal_win/plocal_winratio);
@@ -173,475 +684,9 @@ init_plocal(struct bidir_algostate *state, unsigned int plocal_winratio, index_t
 	rhs = i;
 	state->near_i = history_min(&state->RTT_hist, lhs, rhs);
 	verbose(VERB_CONTROL, "i=%lu: Initializing full plocal algo, wwidth= %lu, "
-			"(far_i,near_i) = (%lu,%lu)",
-			state->stamp_i, state->wwidth, state->far_i, state->near_i);
+	    "(far_i,near_i) = (%lu,%lu)",
+	    state->stamp_i, state->wwidth, state->far_i, state->near_i);
 	state->plocal_problem = 0;
-}
-
-
-
-/* Initialise the error threshold.
- * This procedure is a trick to modify static variables on 
- * reception of the first packet only.
- */
-static void
-init_errthresholds( struct radclock_phyparam *phyparam, struct bidir_algostate *state)
-{
-	/* XXX Tuning history:
-	 * original: 10*TSLIMIT = 150 mus
-	 * 		  state->Eshift =  35*phyparam->TSLIMIT;  // 525 mus for Shouf Shouf?
-	 */
-	state->Eshift			= 10*phyparam->TSLIMIT;
-	state->Ep					= 3*phyparam->TSLIMIT;
-	state->Ep_qual			= phyparam->RateErrBOUND/5;
-	state->Ep_sanity		= 3*phyparam->RateErrBOUND;
-	
-	/* XXX Tuning history:
-	 * 		state->Eplocal_qual	= 4*phyparam->BestSKMrate;  // Original
-	 * 		state->Eplocal_qual	= 4*2e-7; 		// Big Hack during TON paper
-	 * 		state->Eplocal_qual	= 40*1e-7;		// Tuning for Shouf Shouf tests ??
-	 * but finally introduced a new parameter in the config file
-	 */
-	state->Eplocal_qual		= phyparam->plocal_quality;
-	state->Eplocal_sanity		= 3*phyparam->RateErrBOUND;
-
-	/* XXX Tuning history:
-	 * 		*Eoffset		= 6*phyparam->TSLIMIT;  // Original
-	 * but finally introduced a new parameter in the config file
-	 */
-	state->Eoffset				= phyparam->offset_ratio * phyparam->TSLIMIT;
-
-	/* XXX Tuning history:
-	 * We should decouple Eoffset and Eoffset_qual ... conclusion of shouf shouf analysis 
-	 * Added the effect of poll period as a first try (~ line 740) 
-	 * [UPDATE] - reverted ... see below
-	 */
-	state->Eoffset_qual			= 3*(state->Eoffset);
-	state->Eoffset_sanity_min	= 100*phyparam->TSLIMIT;
-	state->Eoffset_sanity_rate	= 20*phyparam->RateErrBOUND;
-}
-
-
-
-
-static void
-print_algo_parameters(struct radclock_phyparam *phyparam, struct bidir_algostate *state)
-{
-	verbose(VERB_CONTROL, "Machine Parameters:  TSLIMIT: %g, SKM_SCALE: %d, RateErrBOUND: %g, BestSKMrate: %g",
-			phyparam->TSLIMIT, (int)phyparam->SKM_SCALE, phyparam->RateErrBOUND, phyparam->BestSKMrate);
-
-	verbose(VERB_CONTROL, "Network Parameters:  poll_period: %u, h_win: %d ", state->poll_period, state->top_win);
-
-	verbose(VERB_CONTROL, "Windows (in pkts):   warmup: %lu, history: %lu, shift: %lu "
-			"(thres = %4.0lf [mus]), plocal: %lu, offset: %lu (SKM scale is %u)",
-			state->warmup_win, state->top_win, state->shift_win, state->Eshift*1000000, state->plocal_win, state->offset_win,
-			(int) (phyparam->SKM_SCALE/state->poll_period) );
-
-	verbose(VERB_CONTROL, "Error thresholds :   phat:  Ep %3.2lg [ms], Ep_qual %3.2lg [PPM], "
-			"plocal:  Eplocal_qual %3.2lg [PPM]", 1000*state->Ep, 1.e6*state->Ep_qual, 1.e6*state->Eplocal_qual);
-
-	verbose(VERB_CONTROL, "                     offset:  Eoffset %3.1lg [ms], Eoffset_qual %3.1lg [ms]",
-			1000*state->Eoffset, 1000*state->Eoffset_qual);
-
-	verbose(VERB_CONTROL, "Sanity Levels:       phat  %5.3lg, plocal  %5.3lg, offset: "
-			"absolute:  %5.3lg [ms], rate: %5.3lg [ms]/[sec] ( %5.3lg [ms]/[stamp])",
-		   	state->Ep_sanity, state->Eplocal_sanity, 1000*state->Eoffset_sanity_min,
-			1000*state->Eoffset_sanity_rate, 1000*state->Eoffset_sanity_rate*state->poll_period);
-}
-
-
-
-
-
-/* Peer initialisation
- * TODO:  clean this up. Currently it mixes state preparation (allocating space, setting
- * parameters), with actual state setting (much of which is superfluous since all
- * already calloc set to zero), and setting of meaningful values corresponding to
- * an interpretation of the `previous' stamp, with finally a little actual stamp0 proessing.
- * the latter should be outside this fn for uniformity, that way RTT will be defined
- * and the goto not needed.
- */
-void init_state( struct radclock_handle *handle, struct radclock_phyparam *phyparam,
-				struct bidir_algostate *state, struct radclock_data *rad_data,
-				struct bidir_stamp *stamp, unsigned int plocal_winratio, int poll_period)
-{
-
-	vcounter_t RTT;		// current RTT
-	double th_naive;		// thetahat naive estimate
-
-	verbose(VERB_SYNC, "Initialising RADclock synchronization");
-
-	state->warmup_win = 100;
-
-	/* Initialise the state polling period to the configuration value
-	* poll_transition_th: begin with no transition for thetahat
-	* poll_changed_i: index of last change
-	*/
-	state->poll_period = poll_period;
-	state->poll_transition_th = 0;
-	state->poll_ratio = 1;
-	state->poll_changed_i = 0;
-
-	state->next_RTThat = 0;
-	state->RTThat_shift = 0;
-
-	state->plocalerr = 0;
-
-	/* Initialize the error thresholds */
-	init_errthresholds( phyparam, state );
-
-	/* Set pkt-index algo windows */
-	set_algo_windows( phyparam, state);
-
-	/* Ensure warmup_win consistent with algo windows for easy 
-	 * initialisation of main algo after warmup 
-	 */
-	adjust_warmup_win(state->stamp_i, state, plocal_winratio);
-
-	/* Create histories
-	 * Set all history sizes to warmup window size
-	 * note: currently stamps [_end,i-1] in history, i not yet processed
-	 */
-	history_init(&state->stamp_hist, (unsigned int) state->warmup_win, sizeof(struct bidir_stamp) );
-	history_init(&state->Df_hist, 	(unsigned int) state->warmup_win, sizeof(double) );
-	history_init(&state->Db_hist, 	(unsigned int) state->warmup_win, sizeof(double) );
-	history_init(&state->Dfhat_hist,	(unsigned int) state->warmup_win, sizeof(double) );
-	history_init(&state->Dbhat_hist, (unsigned int) state->warmup_win, sizeof(double) );
-	history_init(&state->Asymhat_hist, (unsigned int) state->warmup_win, sizeof(double) );
-	history_init(&state->RTT_hist,	  (unsigned int) state->warmup_win, sizeof(vcounter_t) );
-	history_init(&state->RTThat_hist,  (unsigned int) state->warmup_win, sizeof(vcounter_t) );
-	history_init(&state->thnaive_hist, (unsigned int) state->warmup_win, sizeof(double) );
-
-	/* Print out summary of parameters: physical, network, thresholds, and sanity */
-	print_algo_parameters( phyparam, state );
-
-	/* Initialise state stamp. Taken to be the previous, not current stamp */
-	memset(&state->stamp, 0, sizeof(struct bidir_stamp));	//in fact already initialised by init_mRADclocks
-
-	/* Print the first timestamp tuple obtained */
-	verbose(VERB_SYNC, "i=%lu: Beginning Warmup Phase. Stamp read check: %llu %22.10Lf %22.10Lf %llu",
-			state->stamp_i, stamp->Ta, stamp->Tb, stamp->Te, stamp->Tf);
-
-	verbose(VERB_SYNC, "i=%lu: Assuming 1Ghz oscillator, 1st vcounter stamp is %5.3lf [days] "
-			"(%5.1lf [min]) since reset, RTT is %5.3lf [ms], SD %5.3Lf [mus]",
-			state->stamp_i,
-			(double) stamp->Ta * 1e-9/3600/24, (double) stamp->Ta * 1e-9/60, 
-			(double) (stamp->Tf - stamp->Ta) * 1e-9*1000, (stamp->Te - stamp->Tb) * 1e6);
-
-
-	/* Taken to be 'MinET_old' from previous pkt? */
-	state->minET = 0;			// in fact already initialised by init_mRADclocks
-
-	/* Record stamp 0 */
-	history_add(&state->stamp_hist, state->stamp_i, stamp);
-
-	/* RTT */
-	RTT = stamp->Tf - stamp->Ta;
-	state->RTThat = RTT;
-	history_add(&state->RTT_hist, state->stamp_i, &RTT);
-	state->pstamp_i = 0;
-
-	/* vcount period and clock definition.
-	 * Once determined, K only altered to correct phat changes
-	 * note: phat unavailable after only 1 stamp, use config value, rough guess of 1Ghz beats zero!
-	 * XXX: update comment, if reading first data from kernel timecounter /
-	 * clocksource info. If the user put a default value in the config file,
-	 * trust his choice. Otherwise, use kernel info from the first
-	 * ffclock_getdata.
-	 */
-	if (handle->conf->phat_init == DEFAULT_PHAT_INIT)	// ie if no user override
-		// FIXME: kernel value not yet extracted, rad_data still blank, need to revisit all this
-		// state->phat = rad_data->phat;
-		state->phat = handle->conf->phat_init;		// trust conf based value for now
-	else
-		state->phat = handle->conf->phat_init;
-	state->perr = 0;
-	state->plocal = state->phat;
-
-	/* OWD and Asymmetry
-	 * RADclock not calibrated on first stamp, so base OWD on config setting of
-	 * Asym plus rough initializaed RTT.  Errors in OWDs can be very large here,
-	 * but will not impact the initial Asym value.
-	 */
-	double Df, Db, Asym;
-	Asym = 1e-6 * (handle->conf->asym_host + handle->conf->asym_net); // params in mus
-	Df = (RTT * state->phat + Asym) / 2;
-	Db = Df - Asym;
-	state->Dfhat = Df;
-	state->Dbhat = Db;
-	state->Asymhat = Asym;
-	history_add(&state->Df_hist, state->stamp_i, &Df);
-	history_add(&state->Db_hist, state->stamp_i, &Db);
-	//history_add(&state->Asym_hist, state->stamp_i, &Asym);
-
-	/* switch off pstamp_i search until initialised at top_win/2 */
-	state->jcount = 1;
-	state->jsearch_win = 0;
-
-	/* Initializations for phat warmup algo 
-	 * wwidth: initial width of end search windows. 
-	 * near_i: index of stamp with minimal RTT in near window  (larger i)
-	 * far_i: index of stamp with minimal RTT in  far window  (smaller i)
-	 */
-	state->wwidth = 1;
-	state->near_i = 0;
-	state->far_i  = 0;
-
-	/* K now determined.  For now C(t) = t_init */
-	state->K = stamp->Tb - (long double) (stamp->Ta * state->phat);
-	verbose(VERB_SYNC, "i=%lu: After initialisation: (far,near) = (%lu,%lu), "
-			"phat = %.10lg, perr = %5.3lg, K = %7.4Lf",
-			state->stamp_i, 0, 0, state->phat, state->perr, state->K);
-
-
-	/* thetahat algo initialise on-line warmup algo */
-	th_naive = 0;
-	state->thetahat = th_naive;
-	history_add(&state->thnaive_hist, state->stamp_i, &th_naive);
-
-	/* Peer error metrics */
-	ALGO_ERROR(state)->Ebound_min_last	= 0;
-	ALGO_ERROR(state)->error_bound	= 0;
-	ALGO_ERROR(state)->nerror 			= 0;
-	ALGO_ERROR(state)->cumsum 			= 0;
-	ALGO_ERROR(state)->sq_cumsum 		= 0;
-	ALGO_ERROR(state)->nerror_hwin 		= 0;
-	ALGO_ERROR(state)->cumsum_hwin 		= 0;
-	ALGO_ERROR(state)->sq_cumsum_hwin 	= 0;
-
-	/* Peer statistics */
-	state->stats_sd[0] = 0;
-	state->stats_sd[1] = 0;
-	state->stats_sd[2] = 0;
-}
-
-
-void update_state(struct bidir_algostate *state, struct radclock_phyparam *phyparam, int poll_period,
-					unsigned int plocal_winratio )
-{
-	index_t stamp_sz;			// Stamp max history size
-	index_t RTT_sz;				// RTT max history size
-	index_t RTThat_sz;			// RTThat max history size
-	index_t thnaive_sz;			// thnaive max history size
-	index_t st_end;				// index of last pkts in stamp history
-	index_t RTT_end;			// index of last pkts in RTT history
-	index_t RTThat_end;			// index of last pkts in RTThat history
-	index_t thnaive_end;		// index of last pkts in thnaive history
-	vcounter_t *RTThat_tmp;		// RTT hat value holder
-
-	/* Initialize the error thresholds */
-	init_errthresholds( phyparam, state );
-
-	/* Record change of poll period.
-	 * Set poll_transition_th, poll_ratio and poll_changed_i for thetahat
-	 * processing. poll_transition_th could be off by one depending on when NTP
-	 * pkt rate changed, but not important.
-	 */
-	if ( poll_period != state->poll_period )
-	{
-		state->poll_transition_th = state->offset_win;
-		state->poll_ratio = (double)poll_period / (double)state->poll_period;
-		state->poll_period = poll_period;
-		state->poll_changed_i = state->stamp_i;
-	}
-
-	/* Set pkt-index algo windows.
-	 * With possibly new phyparam and/or polling period
-	 * These control the algo, independent of implementation.
-	 */
-	set_algo_windows(phyparam, state);
-
-	/* Ensure warmup_win consistent with algo windows for easy 
-	 * initialisation of main algo after warmup 
-	 */
-	if (state->stamp_i < state->warmup_win)
-		adjust_warmup_win(state->stamp_i, state, plocal_winratio);
-	else 
-	{
-		/* Re-init shift window from stamp i-1 back
-		 * ensure don't go past 1st stamp, using history constraint (follows 
-		 * that of RTThat already tracked). Window was reset, not 'slid'
-	 	 * note: currently stamps [_end,i-1] in history, i not yet processed
-		 *
-		 */
-		// Former code which requires to cast into signed variables. This macro
-		// is dangerous because it does not check the sign of the variables (if
-		// unsigned rolls over, it gives the wrong result
-		//state->shift_end = MAX(0, (state->stamp_i-1) - state->shift_win+1);
-		if ( (state->stamp_i-1) > (state->shift_win-1) )
-			state->shift_end = (state->stamp_i-1) - (state->shift_win-1);
-		else
-			state->shift_end = 0;
-
-		RTT_end = history_end(&state->RTT_hist);
-		state->shift_end = MAX(state->shift_end, RTT_end);
-		RTThat_tmp = history_find(&state->RTT_hist, history_min(&state->RTT_hist, state->shift_end, state->stamp_i-1) );
-		state->RTThat_shift = *RTThat_tmp;
-	}
-
-	/* Set history array sizes.
-	 * If warmup is to be sacred, each must be larger than the current warmup_win 
-	 * NOTE:  if set right, new histories will be big enough for future needs, 
-	 * doesn't mean required data is in them after window resize!!
-	 */
-	if ( state->stamp_i < state->warmup_win ) {
-		stamp_sz 	= state->warmup_win;
-		RTT_sz 		= state->warmup_win;
-		RTThat_sz 	= state->warmup_win;
-		thnaive_sz	= state->warmup_win;
-	}
-	else {
-		stamp_sz 	= MAX(state->plocal_win + state->plocal_win/(plocal_winratio/2), state->offset_win);
-		RTT_sz 		= MAX(state->plocal_win + state->plocal_win/(plocal_winratio/2), MAX(state->offset_win, state->shift_win));
-		RTThat_sz 	= state->offset_win;				// need >= offset_win
-		thnaive_sz 	= state->offset_win;				// need >= offset_win
-	}
-
-	/* Resize histories if needed.
-	 * Note: currently stamps [_end,stamp_i-1] in history, stamp_i not yet processed, so all
-	 * global index based on stamp_i-1.
-	 */
-
-	/* Resize Stamp History */
-	if ( state->stamp_hist.buffer_sz != stamp_sz )
-	{
-		st_end = history_end(&state->stamp_hist);
-		verbose(VERB_CONTROL, "Resizing st_win history from %lu to %lu. Current stamp range is [%lu %lu]",
-			state->stamp_hist.buffer_sz, stamp_sz, st_end, state->stamp_i-1);
-		history_resize(&state->stamp_hist, stamp_sz, state->stamp_i-1);
-		st_end = history_end(&state->stamp_hist);
-		verbose(VERB_CONTROL, "Range on exit: [%lu %lu]", st_end, state->stamp_i-1);
-	}
-
-	/* Resize RTT History */
-	if ( state->RTT_hist.buffer_sz != RTT_sz )
-	{
-		RTT_end = history_end(&state->RTT_hist);
-		verbose(VERB_CONTROL, "Resizing RTT_win history from %lu to %lu. Current stamp range is [%lu %lu]", 
-			state->RTT_hist.buffer_sz, RTT_sz, RTT_end, state->stamp_i-1);
-		history_resize(&state->RTT_hist, RTT_sz, state->stamp_i-1);
-		RTT_end = history_end(&state->RTT_hist);
-		verbose(VERB_CONTROL, "Range on exit: [%lu %lu]", RTT_end, state->stamp_i-1);
-	}
-
-	/* Resize RTThat History */
-	if ( state->RTThat_hist.buffer_sz != RTThat_sz )
-	{
-		RTThat_end = history_end(&state->RTThat_hist);
-		verbose(VERB_CONTROL, "Resizing RTThat_win history from %lu to %lu. Current stamp range is [%lu %lu]", 
-				state->RTThat_hist.buffer_sz, RTThat_sz, RTThat_end, state->stamp_i-1);
-		history_resize(&state->RTThat_hist, RTThat_sz, state->stamp_i-1);
-		RTThat_end = history_end(&state->RTThat_hist);
-		verbose(VERB_CONTROL, "Range on exit: [%lu %lu]", RTThat_end, state->stamp_i-1);
-	}
-
-	/* Resize Thnaive History */
-	if ( state->thnaive_hist.buffer_sz != thnaive_sz ) {
-		thnaive_end = history_end(&state->thnaive_hist);
-		verbose(VERB_CONTROL, "Resizing thnaive_win history from %lu to %lu.  Current stamp range is [%lu %lu]",
-				state->thnaive_hist.buffer_sz, thnaive_sz, thnaive_end, state->stamp_i-1);
-		history_resize(&state->thnaive_hist, thnaive_sz, state->stamp_i-1);
-		thnaive_end = history_end(&state->thnaive_hist);
-		verbose(VERB_CONTROL, "Range on exit: [%lu %lu]", thnaive_end, state->stamp_i-1);
-	}
-
-	/* Print out summary of parameters:
-	 * physical, network, thresholds, and sanity 
-	 */
-	print_algo_parameters( phyparam, state );
-
-
-}
-
-
-
-
-/* Initializations for online minimum history and level_shift minima for
- * RTT, OWD and Asym. As these share the same shift window, they
- * share the same shift_end and _end indices.
- * Currently there are no actions for Asym as it is not based on a direct minima.
- */
-void end_warmup_RTTOWDAsym( struct bidir_algostate *state, struct bidir_stamp *stamp)
-{
-	index_t end;			// index of last pkts in histories
-	vcounter_t *RTT_tmp;
-	double *D;
-
-	/* Convenient to start tracking next_*hat now instead of in middle of 1st
-	 * top window, even if not used until then. */
-	state->next_Dfhat = state->Dfhat;
-	state->next_Dbhat = state->Dbhat;
-	state->next_RTThat = state->RTThat;
-	//state->next_Asym = state->Asym;
-
-	/* Initialize shift_end (index of left boundary of shift window).
-	 * Check to ensure stamps at shift_end are actually in history.
-	 */
-	if ( state->stamp_i > state->shift_win )
-		state->shift_end = state->stamp_i - (state->shift_win-1);
-	else
-		state->shift_end = 0;	// just in case window sizes incorrectly set
-	end = history_end(&state->RTT_hist);
-	end = MAX(state->shift_end, end);
-	state->shift_end 		= end;
-	state->shift_end_OWD = end;		// assumes history storage always in sync
-
-   /* Initialize the variables holding the minima over the shift window.
-    * Needed so that the min is in window, so history_min_slide() will work later
-	 */
-	D = history_find(&state->Df_hist, history_min_dbl(&state->Df_hist, end, state->stamp_i) );
-	state->Dfhat_shift  = *D;
-	D = history_find(&state->Db_hist, history_min_dbl(&state->Db_hist, end, state->stamp_i) );
-	state->Dbhat_shift  = *D;
-
-	RTT_tmp = history_find(&state->RTT_hist, history_min(&state->RTT_hist, end, state->stamp_i) );
-	state->RTThat_shift  = *RTT_tmp;
-
-}
-
-
-
-/* Initializations for normal phat algo
- * Need: reliable phat, estimate of its error, initial quality pstamp and associated data
- * Approximate error of current estimate from warmup algo, must be beaten before phat updated
- */
-void end_warmup_phat(struct bidir_algostate *state, struct bidir_stamp *stamp)
-{
-	struct bidir_stamp *stamp_ptr;
-	struct bidir_stamp *stamp_near;
-	struct bidir_stamp *stamp_far;
-	vcounter_t *RTT_far;
-	vcounter_t *RTT_near;
-
-	/* pstamp_i has been tracking RTThat during warmup, which is the stamp we
-	 * choose to initialise pstamp to.
-	 * This first pstamp is supposed to be 'perfect'. Error due to poor RTT 
-	 * estimate will be picked in `global' error component baseerr.
-	 * Note: the RTThat estimate associated to pstamp is the current RTThat and
-	 * *not* the one in use at the time pstamp_i was last recorded. They should
-	 * be the same, no?
-	 */
-	stamp_ptr = history_find(&state->stamp_hist, state->pstamp_i);
-	copystamp(stamp_ptr, &state->pstamp);
-	state->pstamp_perr 	= 0;
-	state->pstamp_RTThat = state->RTThat;
-
-	/* RTThat detection and last phat update may not correspond to the same
-	 * stamp. Here we have reliable phat, but the corresponding point error may
-	 * be outdated if RTThat is detected after last update. Reassess point 
-	 * error with latest RTThat value.
-	 */
-	stamp_near	= history_find(&state->stamp_hist, state->near_i);
-	stamp_far	= history_find(&state->stamp_hist, state->far_i);
-	RTT_near		= history_find(&state->RTT_hist, state->near_i);
-	RTT_far		= history_find(&state->RTT_hist, state->far_i);
-	state->perr	= ((double)(*RTT_far + *RTT_near) - 2*state->RTThat)
-						* state->phat / (stamp_near->Tb - stamp_far->Tb);
-
-	/* Reinitialise sanity count at the end of warmup */
-	state->phat_sanity_count = 0;
-	verbose(VERB_CONTROL, "i=%lu: Initializing full phat algo, pstamp_i = %lu, perr = %6.3lg",
-		   	state->stamp_i, state->pstamp_i, state->perr);
 }
 
 
@@ -649,66 +694,50 @@ void end_warmup_phat(struct bidir_algostate *state, struct bidir_stamp *stamp)
  * [may not be enough history even in warmup, poll_period will only change timescale]
  */
 void
-end_warmup_plocal(struct bidir_algostate *state, struct bidir_stamp *stamp,
-		unsigned int plocal_winratio)
+init_plocal_full(struct bidir_algostate *state, struct bidir_stamp *stamp,
+    unsigned int plocal_winratio)
 {
-	index_t st_end;				// indices of last pkts in stamp history
-	index_t RTT_end;			// indices of last pkts in RTT history
+	index_t si = state->stamp_i;  // convenience
+
+	index_t st_end;    // indices of last pkts in stamp history
+	index_t RTT_end;   // indices of last pkts in RTT history
 
 	/*
 	 * Index of stamp we require to be available before proceeding (different
 	 * usage to shift_end etc!)
 	 */
-	state->plocal_end = state->stamp_i - state->plocal_win + 1 -
-			state->wwidth-state->wwidth / 2;
-	st_end  = history_end(&state->stamp_hist);
-	RTT_end = history_end(&state->RTT_hist);
+	state->plocal_end = si - state->plocal_win + 1 -
+	    state->wwidth-state->wwidth / 2;
+	st_end  = history_old(&state->stamp_hist);
+	RTT_end = history_old(&state->RTT_hist);
 	if (state->plocal_end >= MAX(state->poll_changed_i, MAX(st_end, RTT_end))) {
 		/* if fully past poll transition and have history read
-		 * resets wwidth as well as finding near and far pkts
-		 */
-		init_plocal(state, plocal_winratio, state->stamp_i);
+		 * resets wwidth as well as finding near and far pkts */
+		reset_plocal(state, plocal_winratio, si);
 	}
 	else {
 		/* record a problem, will have to restart when it resolves */
 		state->plocal_problem = 1;
 		verbose(VERB_CONTROL, "i=%lu:  plocal problem following parameter "
-				"changes (desired window first stamp %lu unavailable), "
-				"defaulting to phat while windows fill", state->stamp_i,
-				state->plocal_end);
+		    "changes (desired window first stamp %lu unavailable), "
+		    "defaulting to phat while windows fill", si,
+		    state->plocal_end);
 	}
 	state->plocal_sanity_count = 0;
 }
 
 
 /* Initialisation for normal thetahat algo */
-void end_warmup_thetahat(struct bidir_algostate *state, struct bidir_stamp *stamp)
+void init_thetahat_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
 {
-	index_t RTThat_sz;		// RTThat max history size
-	vcounter_t *RTThat_tmp;		// RTT hat value holder
-	int j;
-
-	/* fill entire RTThat history with current RTThat not a true history, but
-	 * appropriate for offset
-	 * TODO: reassess if this should be in end_warmup_RTT
-	 */
-	RTThat_sz = state->RTThat_hist.buffer_sz;
-	for ( j=0; j<RTThat_sz; j++ )
-	{
-		RTThat_tmp = history_find(&state->RTThat_hist, j);
-		*RTThat_tmp = state->RTThat;
-	}
-	state->RTThat_hist.item_count = RTThat_sz;
-	state->RTThat_hist.curr_i = state->stamp_i;
-
 	state->offset_sanity_count = 0;
 	state->offset_quality_count = 0;
-// XXX TODO we should probably track the correct stamp in warmup instead of this
-// bogus one ...
+	/* Initialize thetastamp tracking (ie stamp of last true update) */
+	 // TODO: consider starting this facility immediately in warmup
 	copystamp(stamp, &state->thetastamp);
 	verbose(VERB_CONTROL, "i=%lu: Switching to full thetahat algo, RTThat_hist "
-			"set to RTThat=%llu, current est'd minimum error= %5.3lg [ms]", 
-			state->stamp_i, state->RTThat, 1000*state->minET);
+	    "set to RTThat=%llu, current est'd minimum error= %5.3lg [ms]",
+	    state->stamp_i, state->RTThat, 1000*state->minET);
 }
 
 
@@ -720,27 +749,30 @@ void end_warmup_thetahat(struct bidir_algostate *state, struct bidir_stamp *stam
  * makes sense to recalibrate what we can after warmup, eg if path sucks,
  * need to be less fussy with plocal.  The list of such will no doubt grow.
  * TODO: do this more systematically at some point.
+ * TODO: check if this should be earlier, or split into calibrations according to sub-algos
+ *       eg: currently is ONLY set here, so it not a modification over an init, this is it!
  */
 void parameters_calibration( struct bidir_algostate *state)
 {
+	index_t si = state->stamp_i;  // convenience
+
 	/* Near server = <3ms away */
 	if ( state->RTThat < (3e-3 / state->phat) ) {
-		verbose(VERB_CONTROL, "i=%lu: Detected close server based on minimum RTT", state->stamp_i);
+		verbose(VERB_CONTROL, "i=%lu: Detected close server based on minimum RTT", si);
 		/* make RTThat_shift_thres constant to avoid possible phat dynamics */
 		state->RTThat_shift_thres = (vcounter_t) ceil( state->Eshift/state->phat );
 		/* Decoupling Eoffset and Eoffset_qual .. , for nearby servers, the
-		 * looser quality has no (or very small?) effect
-		 */
+		 * looser quality has no (or very small?) effect */
 		state->Eoffset_qual = 3 * state->Eoffset;
 	} else {
-		verbose(VERB_CONTROL, "i=%lu: Detected far away server based on minimum RTT", state->stamp_i);
+		verbose(VERB_CONTROL, "i=%lu: Detected far away server based on minimum RTT", si);
 		state->RTThat_shift_thres = (vcounter_t) ceil( 3*state->Eshift/state->phat );
 
 		/* Decoupling Eoffset and Eoffset_qual .. , for far away servers, increase the number
 		 * of points accepted for processing. The bigger the pool period the looser we
 		 * have to be. Provide here a rough estimate of the increase of the window based
 		 * on data observed with sugr-glider and shouf shouf plots
-		 * 		Eoffset_qual =  exp(log((double) poll_period)/2)/2 * 3 * Eoffset;
+		 *     Eoffset_qual =  exp(log((double) poll_period)/2)/2 * 3 * Eoffset;
 		 * [UPDATE]: actually doesn't work because the gaussian penalty function makes these 
 		 * additional points be insignificant. Reverted back
 		 */
@@ -755,89 +787,83 @@ void parameters_calibration( struct bidir_algostate *state)
 	state->Dbhat_shift_thres = state->Dfhat_shift_thres;
 
 	verbose(VERB_CONTROL, "i=%lu:   Adjusted Eoffset_qual %3.1lg [ms] (Eoffset %3.1lg [ms])",
-			state->stamp_i, 1000*state->Eoffset_qual, 1000*state->Eoffset);
+	    si, 1000*state->Eoffset_qual, 1000*state->Eoffset);
 	verbose(VERB_CONTROL, "i=%lu:   Adjusted Eplocal_qual %4.2lg [PPM]",
-			state->stamp_i, 1000000*state->Eplocal_qual);
+	    si, 1000000*state->Eplocal_qual);
 
 	verbose(VERB_CONTROL, "i=%lu:   Upward RTT shift detection activated, "
-			"threshold set at %llu [vcounter] (%4.0lf [mus])",
-			state->stamp_i, state->RTThat_shift_thres,
-			state->RTThat_shift_thres * state->phat*1000000);
+	    "threshold set at %llu [vcounter] (%4.0lf [mus])",
+	    si, state->RTThat_shift_thres,
+	    state->RTThat_shift_thres * state->phat*1000000);
 }
 
 
+/* Simple server delay (SD) stats.
+ * Maintain counts in categories: (good, average, bad)
+ */
 void collect_stats_state(struct bidir_algostate *state, struct bidir_stamp *stamp)
 {
-	long double SD;	
+	long double SD;
 	SD = stamp->Te - stamp->Tb;
 
-	/*
-	 * Fairly ad-hoc values based on observed servers. Good if less than 
-	 * 100 us, avg if less than 300 us, bad otherwise.
-	 */
 	if (SD < 50e-6)
 		state->stats_sd[0]++;
 	else if (SD < 200e-6)
 		state->stats_sd[1]++;
-	else 
+	else
 		state->stats_sd[2]++;
 }
 
 
 void print_stats_state(struct bidir_algostate *state)
 {
+	index_t si = state->stamp_i;  // convenience
+
 	int total_sd;
 	long basediff;
 
-	/* 
-	 * Most of the variables needed for these stats are not used during warmup
-	 */
-	if (state->stamp_i < state->warmup_win) {
+	/* Most of the variables needed for these stats are not used during warmup */
+	if (si < state->warmup_win) {
 		state->stats_sd[0] = 0;
 		state->stats_sd[1] = 0;
 		state->stats_sd[2] = 0;
 		return;
 	}
 
-	if (state->stamp_i % (int)(6 * 3600 / state->poll_period))
+	if (si % (int)(6 * 3600 / state->poll_period))
 		return;
 	
 	total_sd = state->stats_sd[0] + state->stats_sd[1] + state->stats_sd[2];
 
-	verbose(VERB_CONTROL, "i=%lu: Server recent statistics:", state->stamp_i);
+	verbose(VERB_CONTROL, "i=%lu: Server recent statistics:", si);
 	verbose(VERB_CONTROL, "i=%lu:   Internal delay: %d%% < 50us, %d%% < 200us, %d%% > 200us",
-		state->stamp_i,
-		100 * state->stats_sd[0]/total_sd,
-		100 * state->stats_sd[1]/total_sd,
-		100 * state->stats_sd[2]/total_sd);
+	    si,
+	    100 * state->stats_sd[0]/total_sd,
+	    100 * state->stats_sd[1]/total_sd,
+	    100 * state->stats_sd[2]/total_sd);
 
 	verbose(VERB_CONTROL, "i=%lu:   Last stamp check: %llu %22.10Lf %22.10Lf %llu",
-		state->stamp_i,
-		state->stamp.Ta, state->stamp.Tb, state->stamp.Te, state->stamp.Tf);
+	    si, state->stamp.Ta, state->stamp.Tb, state->stamp.Te, state->stamp.Tf);
 
-	verbose(VERB_SYNC, "i=%lu: Timekeeping summary:",
-		state->stamp_i);
+	verbose(VERB_SYNC, "i=%lu: Timekeeping summary:", si);
 	verbose(VERB_SYNC, "i=%lu:   Period = %.10g, Period error = %.10g",
-		state->stamp_i, state->phat, state->perr);
-		
+	    si, state->phat, state->perr);
+
 	if (state->RTThat > state->pstamp_RTThat)
 		basediff = state->RTThat - state->pstamp_RTThat;
 	else
 		basediff = state->pstamp_RTThat - state->RTThat;
-		
+
 	/* TODO check near and far what we want */
 	verbose(VERB_SYNC, "i=%lu:   Tstamp pair = (%lu,%lu), base err = %.10g, "
-		"DelTb = %.3Lg [hrs]",
-		state->stamp_i, state->far_i, state->near_i,
-		state->phat * basediff,
-		(state->stamp.Tb - state->pstamp.Tb)/3600);
+	    "DelTb = %.3Lg [hrs]", si, state->far_i, state->near_i,
+	    state->phat * basediff, (state->stamp.Tb - state->pstamp.Tb)/3600);
 
 	verbose(VERB_SYNC, "i=%lu:   Thetahat = %5.3lf [ms], minET = %.3lf [ms], "
-		"RTThat = %.3lf [ms]", 
-		state->stamp_i,
-		1000 * state->thetahat,
-		1000 * state->minET,
-		1000 * state->phat * state->RTThat);
+	    "RTThat = %.3lf [ms]", si,
+	    1000 * state->thetahat,
+	    1000 * state->minET,
+	    1000 * state->phat * state->RTThat);
 
 	/* Reset stats for this period */
 	state->stats_sd[0] = 0;
@@ -848,18 +874,21 @@ void print_stats_state(struct bidir_algostate *state)
 
 
 /* =============================================================================
- * RTT
- * =============================================================================
- */
+ * RTT / OWD-Asym
+ * ============================================================================*/
+
+/* The raw RTT is calculated and stored in RTT_hist prior to these fns */
 
 void
 process_RTT_warmup(struct bidir_algostate *state, vcounter_t RTT)
 {
+	index_t si = state->stamp_i;  // convenience
+
 	/* Rough threshold during warmup TODO: set this up properly */
-//	if (state->stamp_i == 10) {		// prior to this is zero I think
+//	if (si == 10) {    // prior to this is zero I think
 //		state->RTThat_shift_thres = (vcounter_t) ceil(state->Eshift/4/state->phat);
 //		verbose(VERB_SYNC, "i=%lu: Restricting alerts for downward shifts exceeding %3.0lf [mus]",
-//				state->stamp_i, 1.e6 * state->Eshift/3);
+//		    si, 1.e6 * state->Eshift/3);
 //	}
 
 	/* Downward Shifts.
@@ -867,41 +896,41 @@ process_RTT_warmup(struct bidir_algostate *state, vcounter_t RTT)
 	 * Shift location is simply the current stamp.
 	 */
 //	if ( state->RTThat > (RTT + state->RTThat_shift_thres) ) {
-	if ( state->RTThat > RTT ) {		// flag all shifts, no matter how small
-		verbose(VERB_SYNC, "i=%lu: Downward RTT shift of %5.1lf [mus], RTT now %4.1lf [ms]", state->stamp_i,
-				(state->RTThat - RTT) * state->phat * 1.e6, RTT * state->phat * 1.e3);
-	}
-	
-	/* Record the new minimum
-	 * Record corresponding index for full phat processing */
-	if (RTT < state->RTThat) {
-		state->RTThat = RTT;
-		state->pstamp_i = state->stamp_i;
+	if ( RTT < state->RTThat ) {    // flag all shifts, no matter how small
+		verbose(VERB_SYNC, "i=%lu: Downward RTT shift of %5.1lf [mus], RTT now %4.1lf [ms]",
+		    si, (state->RTThat - RTT) * state->phat * 1.e6, RTT * state->phat * 1.e3);
 	}
 
-	
+	/* Record the new minimum
+	 * Record corresponding index for full phat processing
+	 * No storage in RTThat_hist in warmup */
+	if (RTT < state->RTThat) {
+		state->RTThat = RTT;
+		state->pstamp_i = si;    // needed for phat
+	}
+
 	/* Upward Shifts.  Information only.
 	 * This checks for detection over window of width shift_win prior to stamp i
 	 * lastshift is the index of first known stamp after shift
 	 */
 //	if ( state->RTThat_shift > (state->RTThat + state->RTThat_shift_thres) ) {
-//		lastshift = state->stamp_i - state->shift_win + 1;
+//		lastshift = si - state->shift_win + 1;
 //		verbose(VERB_SYNC, "Upward shift of %5.1lf [mus] triggered when i = %lu ! "
-//				"shift detected at stamp %lu",
-//				(state->RTThat_shift - state->RTThat)*state->phat*1.e6,
-//				state->stamp_i, lastshift);
+//		    "shift detected at stamp %lu",
+//		    (state->RTThat_shift - state->RTThat)*state->phat*1.e6,
+//		    si, lastshift);
 
 }
 
 
 /* OWD algorithm [ identical for each direction ]
- *  OWD warmup period (<=filstart) Minimum filtering is skipped, since RADclock
+ *  OWDwarmup period (<=filstart) Minimum filtering is skipped, since RADclock
  *  parameters are unreliable, and minimum estimates could be trapped at an
  *  incorrect low value, or temporarily be at a very large value (eg for stamp 1).
  *  To avoid these cases, all estimates are clipped to lie in [0,globalmin]
  *  (however the raw values are stored).
  *
- *  After warmup period
+ *  After OWDwarmup period
  *   - ignore non +ve values, otherwise global minimum over all stamps
  *   - no upward detection (not even informational, as has window complexities)
  *     A (silent) exception is made in case of an increase from an impossible 0
@@ -921,47 +950,49 @@ process_RTT_warmup(struct bidir_algostate *state, vcounter_t RTT)
 void
 process_OWDAsym_warmup(struct bidir_algostate *state, struct bidir_stamp *stamp)
 {
-	double Df, Db, Asym;	// `raw' values calculated for this stamp
-	double TS;				// central server value, defines asym, ensures Df+Db=RTT
-	int filstart = 20;	// don't use minimum filtering before this
-	float globalmin = 0.2;	// upper bound on OWD minimum [s] for any sane client<->server path
+	index_t si = state->stamp_i;  // convenience
+
+	double Df, Db, Asym;   // `raw' values calculated for this stamp
+	double TS;             // central server value, defines asym, ensures Df+Db=RTT
+	int filstart = 20;     // don't use minimum filtering before this
+	float globalmin = 0.2; // upper bound on OWD minimum [s] for any sane client<->server path
 	int crazy = 0;
 
 	/* Calculate raw OWD values for this stamp, and record */
 	TS = (stamp->Tb + stamp->Te) / 2;
 	Df = -((long double)state->phat * (long double)stamp->Ta + state->K - state->thetahat - TS);
 	Db =   (long double)state->phat * (long double)stamp->Tf + state->K - state->thetahat - TS;
-	history_add(&state->Df_hist, state->stamp_i, &Df);
-	history_add(&state->Db_hist, state->stamp_i, &Db);
+	history_add(&state->Df_hist, si, &Df);
+	history_add(&state->Db_hist, si, &Db);
 
 	/* Perform minimum filtering after OWDwarmup for each OWD separately */
 	/* Update Df minimum */
-	if ( state->stamp_i < filstart ) {
+	if ( si < filstart ) {
 		state->Dfhat = MIN(globalmin,MAX(0,Df));
 		verbose(VERB_SYNC, "i=%lu: Df startup: (Df,minDf) = (%5.2lf, %5.2lf) [ms]",
-						state->stamp_i, Df*1e3, state->Dfhat*1e3);
+		    si, Df*1e3, state->Dfhat*1e3);
 	} else
 		if (state->Dfhat == 0 && Df > 0)	// allow Upjump immediately if Dfhat bogus
 			state->Dfhat = Df;
 		else
 			if (Df < state->Dfhat && Df > 0) {
 				verbose(VERB_SYNC, "i=%lu: Downward Df shift of %5.2lf [mus], %5.2lf --> %5.2lf [ms]",
-						state->stamp_i, (state->Dfhat - Df)*1.e6, state->Dfhat*1e3, Df*1e3);
+				    si, (state->Dfhat - Df)*1.e6, state->Dfhat*1e3, Df*1e3);
 				state->Dfhat = Df;
 			}
 
 	/* Update Db minimum */
-	if ( state->stamp_i < filstart ) {
+	if ( si < filstart ) {
 		state->Dbhat = MIN(globalmin,MAX(0,Db));
 		verbose(VERB_SYNC, "i=%lu: Db startup: (Db,minDb) = (%5.2lf, %5.2lf) [ms]",
-						state->stamp_i, Db*1e3, state->Dbhat*1e3);
+		    si, Db*1e3, state->Dbhat*1e3);
 	} else
 		if (state->Dbhat == 0 && Db > 0)	// allow Upjump immediately if Dbhat bogus
 			state->Dbhat = Db;
 		else
 			if (Db < state->Dbhat && Db > 0) {
 				verbose(VERB_SYNC, "i=%lu: Downward Db shift of %5.2lf [mus], %5.2lf --> %5.2lf [ms]",
-						state->stamp_i, (state->Dbhat - Db)*1.e6, state->Dbhat*1e3, Db*1e3);
+				    si, (state->Dbhat - Db)*1.e6, state->Dbhat*1e3, Db*1e3);
 				state->Dbhat = Db;
 			}
 
@@ -971,7 +1002,7 @@ process_OWDAsym_warmup(struct bidir_algostate *state, struct bidir_stamp *stamp)
 		  state->Dbhat == globalmin || state->Dbhat == 0 ) {
 		crazy = 1;
 		verbose(VERB_SYNC, "i=%lu: OWD found to be crazy:  (minDf,minDb) = (%5.2lf, %5.2lf) [ms]",
-						state->stamp_i, state->Dfhat*1e3, state->Dbhat*1e3);
+		    si, state->Dfhat*1e3, state->Dbhat*1e3);
 	}
 
 	/* Update Asym */
@@ -994,38 +1025,39 @@ process_OWDAsym_warmup(struct bidir_algostate *state, struct bidir_stamp *stamp)
 void
 process_OWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
 {
-	double Df, Db, Asym;		// `raw' values calculated for this stamp
-	double TS;			// central server value, defines asym, ensures Df+Db=RTT
+	index_t si = state->stamp_i;  // convenience
 
-	index_t lastshift = 0;	// index of first stamp after last detected upward shift
-	index_t j;					// loop index, signed to avoid problem when j hits zero
-	index_t jmin = 0;			// index that hits low end of loop
-	double* D_ptr;				// points to a given entry in in D#hat_hist
-	double next_Df, last_Df;
-	double next_Db, last_Db;
+	double Df, Db, Asym;    // `raw' values calculated for this stamp
+	double TS;              // central server value, defines asym, ensures Df+Db=RTT
+
+	index_t lastshift = 0;  // index of first stamp after last detected upward shift
+//	index_t j;              // loop index, signed to avoid problem when j hits zero
+//	double* D_ptr;          // points to a given entry in in D#hat_hist
+//	double next_Df, last_Df;
+//	double next_Db, last_Db;
 
 	/* Calculate raw OWD values for this stamp, and record */
 	TS = (stamp->Tb + stamp->Te) / 2;
 	Df = -((long double)state->phat * (long double)stamp->Ta + state->K - state->thetahat - TS);
 	Db =   (long double)state->phat * (long double)stamp->Tf + state->K - state->thetahat - TS;
-	history_add(&state->Df_hist, state->stamp_i, &Df);
-	history_add(&state->Db_hist, state->stamp_i, &Db);
+	history_add(&state->Df_hist, si, &Df);
+	history_add(&state->Db_hist, si, &Db);
 
 	/* Perform minimum filtering for each OWD separately.
 	 * All downshifts are flagged, no matter how small for simplicity (are rare).
 	 * Filtered update ignored if value is negative.
 	 * TODO: add informational Dshift detections
 	 */
-	last_Df = state->Dfhat;
-	last_Db = state->Dbhat;
+//	last_Df = state->Dfhat;
+//	last_Db = state->Dbhat;
 	if (Df < state->Dfhat && Df > 0) {
 		verbose(VERB_SYNC, "i=%lu: Downward Df shift of %5.2lf [mus], minDf now %5.2lf [ms]",
-					state->stamp_i, (state->Dfhat - Df) * 1.e6, Df*1e3);
+		    si, (state->Dfhat - Df) * 1.e6, Df*1e3);
 		state->Dfhat = Df;
 	}
 	if (Db < state->Dbhat && Db > 0) {
 		verbose(VERB_SYNC, "i=%lu: Downward Db shift of %5.2lf [mus], minDb now %5.2lf [ms]",
-					state->stamp_i, (state->Dbhat - Db) * 1.e6, Db*1e3);
+		    si, (state->Dbhat - Db) * 1.e6, Db*1e3);
 		state->Dbhat = Db;
 	}
 
@@ -1036,17 +1068,17 @@ process_OWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
 		state->next_Dbhat = Db;
 
 	/* Update shift window minima and the window itself (shared over both OWDs) */
-	if ( state->stamp_i < (state->shift_win-1) + state->shift_end_OWD ) {
+	if ( si < (state->shift_win-1) + state->shift_end_OWD ) {
 		verbose(VERB_CONTROL, "In shift_win_OWD transition following window change, "
-				"[shift transition] windows are [%lu %lu] wide",
-				state->shift_win, state->stamp_i - state->shift_end_OWD + 1);
+		    "[shift transition] windows are [%lu %lu] wide",
+		    state->shift_win, si - state->shift_end_OWD + 1);
 		state->Dfhat_shift =  MIN(state->Dfhat_shift,Df);
 		state->Dbhat_shift =  MIN(state->Dbhat_shift,Db);
 	} else {
 		state->Dfhat_shift = history_min_slide_value_dbl(&state->Df_hist,
-							state->Dfhat_shift, state->shift_end_OWD, state->stamp_i-1);
+		    state->Dfhat_shift, state->shift_end_OWD, si-1);
 		state->Dbhat_shift = history_min_slide_value_dbl(&state->Db_hist,
-							state->Dbhat_shift, state->shift_end_OWD, state->stamp_i-1);
+		    state->Dbhat_shift, state->shift_end_OWD, si-1);
 		state->shift_end_OWD++;
 	}
 
@@ -1057,75 +1089,83 @@ process_OWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *stamp)
 	 */
 	/* Df */
 	if ( state->Dfhat_shift > (state->Dfhat + state->Dfhat_shift_thres) ) {
-		lastshift = state->stamp_i - state->shift_win + 1;
+		lastshift = si - state->shift_win + 1;
 		verbose(VERB_SYNC, "i=%lu: Upward Df shift of %5.1lf [mus], detected at stamp %lu, minDf now %5.2lf [ms]",
-			state->stamp_i, (state->Dfhat_shift - state->Dfhat)*1.e6, lastshift, 1e3 * state->Dfhat_shift);
+		    si, (state->Dfhat_shift - state->Dfhat)*1.e6, lastshift, 1e3 * state->Dfhat_shift);
 
 		/* Reset online estimators to match post-shift value */
 		state->Dfhat 		= state->Dfhat_shift;
 		state->next_Dfhat = state->Dfhat_shift;
-		//verbose(VERB_SYNC, "i=%lu: Minima(Df,Db) = (%5.2lf, %5.2lf) [ms]", state->stamp_i,
-								//1e3*state->Dfhat, 1e3*state->Dbhat);
+		//verbose(VERB_SYNC, "i=%lu: Minima(Df,Db) = (%5.2lf, %5.2lf) [ms]", si,
+		//    1e3*state->Dfhat, 1e3*state->Dbhat);
 	}
-	history_add(&state->Dfhat_hist, state->stamp_i, &state->Dfhat);
+	history_add(&state->Dfhat_hist, si, &state->Dfhat);
 
 	/* Db */
 	if ( state->Dbhat_shift > (state->Dbhat + state->Dbhat_shift_thres) ) {
-		lastshift = state->stamp_i - state->shift_win + 1;
+		lastshift = si - state->shift_win + 1;
 		verbose(VERB_SYNC, "i=%lu: Upward Db shift of %5.1lf [mus], detected at stamp %lu, minDb now %5.2lf [ms]",
-			state->stamp_i, (state->Dbhat_shift - state->Dbhat)*1.e6, lastshift, 1e3 * state->Dbhat_shift);
+		    si, (state->Dbhat_shift - state->Dbhat)*1.e6, lastshift, 1e3 * state->Dbhat_shift);
 
 		/* Reset online estimators to match post-shift value */
-		state->Dbhat 		= state->Dbhat_shift;
+		state->Dbhat      = state->Dbhat_shift;
 		state->next_Dbhat = state->Dbhat_shift;
 	}
-	history_add(&state->Dbhat_hist, state->stamp_i, &state->Dbhat);
+	history_add(&state->Dbhat_hist, si, &state->Dbhat);
 
 	/* Asym */
-	Asym = state->Dfhat - state->Dbhat;	// raw value for this stamp
-	state->Asymhat = Asym;					// is also final estimate, already a fn of minima filtering
-	history_add(&state->Asymhat_hist, state->stamp_i, &Asym);
+	Asym = state->Dfhat - state->Dbhat;  // raw value for this stamp
+	state->Asymhat = Asym;  // is also final estimate, already a fn of minima filtering
+	history_add(&state->Asymhat_hist, si, &Asym);
 
 }
 
 
-/* Normal RTT updating.
- * This processes the new RTT=RTT_hist[i] of stamp i
- * Algos always simple: History transparently handled before stamp i
- * shifts below after normal i
- * - RTThat always below or equal RTThat_shift since top_win/2 > shift_win
- * - next_RTThat above or below RTThat_shift depending on position in history
- * - RTThat_end tracks last element stored
+/* Full RTT updating algos.
+ * Algos always simple via hierarchical organisation :
+ *    - raw RTT for stamp i already stored in history
+ *    - history window management transparently handled prior to this function
+ *    - online RTT algos can therefore assume windows are fine
+ *    - shift update code assumes online RTTs up to date
+ *    - Upshift code assumes RTT and shift windows up to date
+ * Note
+ *  - RTThat always below or equal RTThat_shift since h_win/2 > shift_win
+ *  - next_RTThat above or below RTThat_shift depending on position in history
+ *  - RTThat_end tracks last element stored (held internally in RTThat history)
  */
 void
 process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, vcounter_t RTT)
 {
-	index_t lastshift = 0;	//  index of first stamp after last detected upward shift 
-	index_t j;				// loop index, needs to be signed to avoid problem when j hits zero
-	index_t jmin = 0;		// index that hits low end of loop
-	vcounter_t* RTThat_ptr;	// points to a given RTThat in RTThat_hist
+	index_t si = state->stamp_i;  // convenience
+
+	index_t lastshift = 0;   // last Upshift start
+	index_t j;               // loop index, signed to avoid problem when j hits zero
+	index_t jmin = 0;        // index that hits low end of loop
+	vcounter_t* RTThat_ptr;  // points to a given RTThat in RTThat_hist
 	vcounter_t next_RTT, last_RTT;
 
 	/* Update on-line RTT minima:  RTThat and next_RTThat */
 	last_RTT = state->RTThat;
 	state->RTThat = MIN(state->RTThat, RTT);
-	history_add(&state->RTThat_hist, state->stamp_i, &state->RTThat);
+	history_add(&state->RTThat_hist, si, &state->RTThat);
 	state->next_RTThat = MIN(state->next_RTThat, RTT);
 
-	/* Update of shift window minima and the window itself.
-	 * If window (including processing of i) not full,
-	 * keep left hand side (ie shift_end) fixed and add pkt i on the right.
-	 * Else window is full, and min inside it (thanks to reinit), can slide.
+	/* Update of shift window minima RTThat_shift.
+	 * If shift_win itself has changed due to an on-the-fly poll_period change,
+	 * then stamps [0..i] may not yet be enough to fill it.
+	 * In that case must also grow the window by keeping the lhs (ie shift_end)
+	 * fixed and add stamp i on the right. Else window is full just as in the
+	 * normal case (and min inside it thanks to reinit in update_state if applicable),
+	 * so can update RTThat_shift via slide.
 	 */
-	//	if ( MAX(0, state->stamp_i - state->shift_win+1) < state->shift_end ) { // not safe
-	if ( state->stamp_i < (state->shift_win-1) + state->shift_end ) {
+	if ( si < (state->shift_win-1) + state->shift_end ) {
 		verbose(VERB_CONTROL, "In shift_win transition following window change, "
-				"[shift transition] windows are [%lu %lu] wide", 
-				state->shift_win, state->stamp_i - state->shift_end + 1);
+		    "[shift transition] windows are [%lu %lu] wide",
+		    state->shift_win, si - state->shift_end + 1);
 		state->RTThat_shift =  MIN(state->RTThat_shift,RTT);
 	} else {
 		state->RTThat_shift = history_min_slide_value(&state->RTT_hist,
-							state->RTThat_shift, state->shift_end, state->stamp_i-1);
+		    state->RTThat_shift, state->shift_end, si-1);
 		state->shift_end++;
 	}
 
@@ -1134,52 +1174,48 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 	 * At this point all minima have been updated so detection at stamp i visible
 	 * Detection about reaction to RTThat_shift. RTThat_shift itself is simple,
 	 * always just a sliding window.
-	 * lastshift is the index of first known stamp after shift
+	 * If detected, needed recalculations based on upshifted stamps over
+	 *  [lastshift, i] = [i-shift_win+1 i]  By design, won't run into last history change.
 	 */
-	if ( state->RTThat_shift > (state->RTThat + state->RTThat_shift_thres) ) {
-		lastshift = state->stamp_i - state->shift_win + 1;
-		verbose(VERB_SYNC, "i=%lu: Upward RTT shift of %5.1lf [mus], detected at stamp %lu, minRTT now %4.1lf [ms]",
-			state->stamp_i, (state->RTThat_shift - state->RTThat)*state->phat*1.e6,
-					lastshift, state->RTThat_shift * state->phat*1.e3 );
+	if ( state->RTThat_shift > (state->RTThat + state->RTThat_shift_thres) )
+	{
+		lastshift = si - state->shift_win + 1;
+		verbose(VERB_SYNC, "i=%lu: Upward RTT shift of %5.1lf [mus], detected at "
+		    "stamp %lu, minRTT now %4.1lf [ms]", si,
+		    (state->RTThat_shift - state->RTThat)*state->phat*1.e6, lastshift,
+		    state->RTThat_shift * state->phat*1.e3 );
 
-		/* Recalc from  [lastshift, i] = [i-shift_win+1 i]
-		 * By design, won't run into last history change.
-		 */
+		/* Recalc for online RTT estimators back to Upshift start */
 		state->RTThat = state->RTThat_shift;
-		state->next_RTThat = state->RTThat;		// ensure successor Upshift corrected
+		state->next_RTThat = state->RTThat;  // ensure successor Upshift corrected
 
 		/* Recalc necessary for phat
-		 * - note pstamp_i must be before lastshift by design
-		 * - note that phat not the same as before, but that's ok
+		 * - pstamp_i < lastshift by design, but next_pstamp_i may not be
+		 * - phat used in error calc not the same as before, but that's ok
 		 */
 		if ( state->next_pstamp_i >= lastshift) {
 			next_RTT = state->next_pstamp.Tf - state->next_pstamp.Ta;
 			verbose(VERB_SYNC, "        Recalc necessary for RTT state recorded at"
-				" next_pstamp_i = %lu", state->next_pstamp_i);
+			    " next_pstamp_i = %lu", state->next_pstamp_i);
 			state->next_pstamp_perr = state->phat*((double)next_RTT - state->RTThat);
 			state->next_pstamp_RTThat = state->RTThat;
 		} else
 			verbose(VERB_SYNC, "        Recalc not needed for RTT state recorded at"
-				" next_pstamp_i = %lu", state->next_pstamp_i);
+			    " next_pstamp_i = %lu", state->next_pstamp_i);
 
 
 		/* Recalc of RTThist necessary for offset
 		 * Correct RTThat history back as far as necessary or possible
-		 * (typically shift_win >> offset_win, so lastshift won't bite)
-		 */
-		//for ( j=state->stamp_i; j>=MAX(lastshift,state->stamp_i-state->offset_win+1); j--)
-		if ( state->stamp_i > (state->offset_win-1) )
-			jmin = state->stamp_i - (state->offset_win-1);
-		else
-			jmin = 0;
+		 * (typically shift_win >> offset_win, so lastshift won't bite) */
+		if ( si > (state->offset_win-1) ) jmin = si - (state->offset_win-1); else jmin = 0;
 		jmin = MAX(lastshift, jmin);
 
-		for ( j=state->stamp_i; j>=jmin; j--) {
+		for (j=si; j>=jmin; j--) {
 			RTThat_ptr = history_find(&state->RTThat_hist, j);
 			*RTThat_ptr = state->RTThat;
 		}
 		verbose(VERB_SYNC, "i=%lu: Recalc necessary for RTThat for %lu stamps back to i=%lu",
-				state->stamp_i, state->shift_win, lastshift);	// TODO: fix the values here
+		    si, state->shift_win, lastshift);
 		ADD_STATUS(rad_data, STARAD_RTT_UPSHIFT);
 	} else
 		DEL_STATUS(rad_data, STARAD_RTT_UPSHIFT);
@@ -1191,8 +1227,8 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 	 * TODO: establish a dedicated downward threshold parameter and setting code
 	 */
 	if ( last_RTT > (state->RTThat + (state->RTThat_shift_thres)/4) ) {
-		verbose(VERB_SYNC, "i=%lu: Downward RTT shift of %5.1lf [mus], RTT now %4.1lf [ms]", state->stamp_i,
-				(last_RTT - state->RTThat) * state->phat * 1.e6, RTT * state->phat*1.e3);
+		verbose(VERB_SYNC, "i=%lu: Downward RTT shift of %5.1lf [mus], RTT now %4.1lf [ms]",
+		    si, (last_RTT - state->RTThat)*state->phat * 1.e6, RTT * state->phat*1.e3);
 	}
 }
 
@@ -1204,58 +1240,52 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 
 /* =============================================================================
  * PHAT ALGO 
- * =============================================================================
- */
+ * ===========================================================================*/
 
-double compute_phat (struct bidir_algostate* state,
-		struct bidir_stamp* far, struct bidir_stamp* near)
+/* Compute a naive phat given two stamps, with just a basic sanity check */
+double compute_phat(struct bidir_algostate* state,
+    struct bidir_stamp* far, struct bidir_stamp* near)
 {
-	long double DelTb, DelTe;	// Server time intervals between stamps j and i
-	vcounter_t DelTa, DelTf;	// Counter intervals between stamps j and i 
-	double phat;					// Period estimate for current stamp
-	double phat_b;					// Period estimate for current stamp (backward dir)
-	double phat_f; 				// Period estimate for current stamp (forward dir)
+	long double DelTb, DelTe;  // Server time intervals between stamps j and i
+	vcounter_t DelTa, DelTf;   // Counter intervals between stamps j and i
+	double phat;               // Period estimate for current stamp
+	double phat_b;             // Period estimate for current stamp (backward dir)
+	double phat_f;             // Period estimate for current stamp (forward dir)
 
 	DelTa = near->Ta - far->Ta;
 	DelTb = near->Tb - far->Tb;
 	DelTe = near->Te - far->Te;
 	DelTf = near->Tf - far->Tf;
 
-	/* 
-	 * Check for crazy values, and NaN cases induced by DelTa or DelTf equal
-	 * zero Log a major error and hope someone will call us
-	 */
+	/* Check for crazy values, and NaN cases induced by DelTa or DelTf equal
+	 * zero Log a major error */
 	if ( ( DelTa <= 0 ) || ( DelTb <= 0 ) || (DelTe <= 0 ) || (DelTf <= 0) ) {
 		verbose(LOG_ERR, "i=%lu we picked up the same i and j stamp. "
-				"Contact developer.", state->stamp_i);
+		    "Contact developer.", state->stamp_i);
 		return 0;
 	}
 
-	/*
-	 * Use naive estimates from chosen stamps {i,j}
-	 * forward  (OUTGOING, sender)
-	 * backward (INCOMING, receiver)
-	 */
-	phat_f	= (double) (DelTb / DelTa);
-	phat_b	= (double) (DelTe / DelTf);
-	phat	= (phat_f + phat_b) / 2;
+	/* Use naive estimates from chosen stamps {i,j} */
+	phat_f = (double) (DelTb / DelTa);    // forward  (OUTGOING, sender)
+	phat_b = (double) (DelTe / DelTf);    // backward (INCOMING, receiver)
+	phat = (phat_f + phat_b) / 2;
 
 	return phat;
 }
 
 
-
-
 int process_phat_warmup (struct bidir_algostate* state, vcounter_t RTT,
-		unsigned int warmup_winratio)
+    unsigned int warmup_winratio)
 {
-	vcounter_t *RTT_tmp;		// RTT value holder
-	vcounter_t *RTT_far;		// RTT value holder
-	vcounter_t *RTT_near;		// RTT value holder
+	index_t si = state->stamp_i;  // convenience
+
+	vcounter_t *RTT_tmp;
+	vcounter_t *RTT_far;
+	vcounter_t *RTT_near;
 	struct bidir_stamp *stamp_near;
 	struct bidir_stamp *stamp_far;
-	long double DelTb; 		// Server time intervals between stamps j and i
-	double phat;			// Period estimate for current stamp
+	long double DelTb;    // Server time intervals between stamps j and i
+	double phat;          // Period estimate for current stamp
 
 	long near_i = 0;
 	long far_i = 0;
@@ -1269,15 +1299,15 @@ int process_phat_warmup (struct bidir_algostate* state, vcounter_t RTT,
 	 * Still works if poll_period changed, but rate increase of end windows can
 	 * be different
 	 * if stamp index not yet a multiple of warmup_winratio
-	 * 		find near_i by sliding along one on RHS
+	 *   find near_i by sliding along one on RHS
 	 * else
-	 * 		increase near and far windows by 1, find index of new min RTT in 
-	 * 		both, increase window width
+	 *   increase near and far windows by 1, find index of new min RTT in
+	 *   both, increase window width
 	*/
 
-	if ( state->stamp_i%warmup_winratio ) {
+	if ( si%warmup_winratio ) {
 		state->near_i = history_min_slide(&state->RTT_hist, state->near_i,
-				state->stamp_i - state->wwidth, state->stamp_i - 1);
+		    si - state->wwidth, si - 1);
 	}
 	else {
 		RTT_tmp  = history_find(&state->RTT_hist, state->wwidth);
@@ -1286,7 +1316,7 @@ int process_phat_warmup (struct bidir_algostate* state, vcounter_t RTT,
 		if ( *RTT_tmp < *RTT_far )
 			state->far_i = state->wwidth;
 		if ( RTT < *RTT_near )
-			state->near_i = state->stamp_i;
+			state->near_i = si;
 		state->wwidth++;
 	}
 
@@ -1295,25 +1325,24 @@ int process_phat_warmup (struct bidir_algostate* state, vcounter_t RTT,
 	stamp_far  = history_find(&state->stamp_hist, state->far_i);
 
 	phat = compute_phat(state, stamp_far, stamp_near);
-	if ( phat == 0 )
-	{
+	/* Emergency sanity check rejecting update TODO: check if needed */
+	if (phat == 0) {
 		/* Something bad happen, most likely, we have a bug. The algo may
-		 * recover from this, so do not update and keep going.
-		 */
+		 * recover from this, so do not update and keep goin. */
 		return 1;
 	}
 
 	/* Clock correction
-	 * correct K to keep C(t) continuous at time of last stamp
+	 * correct K to keep C(t) continuous at time of last stamp // TODO: add comment on why this is Laststamp
 	 */
 //	if ( state->phat != phat ) {
 	if ( (near_i != state->near_i) || (far_i != state->far_i) )
 	{
 		state->K += state->stamp.Ta * (long double) (state->phat - phat);
 		verbose(VERB_SYNC, "i=%lu: phat update (far,near) = (%lu,%lu), "
-				"phat = %.10g, rel diff = %.10g, perr = %.10g, K = %7.4Lf",
-				state->stamp_i, state->far_i, state->near_i,
-				phat, (phat - state->phat)/phat, state->perr, state->K);
+		    "phat = %.10g, rel diff = %.10g, perr = %.10g, K = %7.4Lf",
+		    si, state->far_i, state->near_i,
+		    phat, (phat - state->phat)/phat, state->perr, state->K);
 		state->phat = phat;
 		RTT_far  = history_find(&state->RTT_hist, state->far_i);
 		RTT_near = history_find(&state->RTT_hist, state->near_i);
@@ -1325,62 +1354,79 @@ int process_phat_warmup (struct bidir_algostate* state, vcounter_t RTT,
 }
 
 
-/* on-line calculation of new pstamp_i
- * If we are still in the jsearch window attached to start of current half
- * top_win then record this stamp if it is of better quality.
- * Record [index RTT RTThat point-error stamp ]
- * Only track and record the value that will be used in the next top_win/2
- * window it is NOT used for computing phat with the current stamp.
+/* On-line update of next_pstamp, the value that will replace pstamp in the phat
+ * full algo when the history window slides. The point of the online updating is
+ * that pstamp will be far in the past, and so will not be accessible via the
+ * shorter term timeseries histories maintained for other purposes.
+ * This function only updates a Future candidate for pstamp, the phat algo uses
+ * the Current value. Thus this algorithn belongs as much to history management
+ * as to the full phat algo per-se.
+ *
+ * The update only occurs during the "jsearch window" attached to start of the
+ * current second half of the history window, to ensure that the stamp will be
+ * far in the past wrt the current stamp i. This window is initialized to 1
+ * (thus no searching) at the end of warmup as a good initial value of
+ * pstamp is already available from warmup. It is opened up to its normal
+ * value at the end of the first h_win/2 (see manage_historywin).
+ * Thus, whenever the history window is full, a new of pstamp will be available
+ * that will be roughly h_win/2 in the past.
+ *
+ * During the search win, the best quality stamp is updated, and we record its
+ * [index RTThat point-error stamp] . The RTT of the stamp is also required but
+ * can be calculated from the stored stamp.
  */
-void record_packet_j (struct bidir_algostate* state, vcounter_t RTT,
-		struct bidir_stamp* stamp)
+void update_next_pstamp(struct bidir_algostate* state, struct bidir_stamp* stamp, vcounter_t RTT)
 {
-	vcounter_t next_RTT;
-	next_RTT = state->next_pstamp.Tf - state->next_pstamp.Ta;
+	vcounter_t next_pstamp_RTT;
 
-	if ( state->jcount <= state->jsearch_win )
-	{
+	if ( state->jcount <= state->jsearch_win ) {
 		state->jcount++;
-		if ( RTT < next_RTT ) {
-			state->next_pstamp_i 	= state->stamp_i;
-			state->next_pstamp_RTThat 	= state->RTThat;
-			state->next_pstamp_perr 	= state->phat * ((double)(RTT) - state->RTThat);
+		next_pstamp_RTT = state->next_pstamp.Tf - state->next_pstamp.Ta;
+		if ( RTT < next_pstamp_RTT ) {
+			state->next_pstamp_i      = state->stamp_i;
+			state->next_pstamp_RTThat = state->RTThat;
+			state->next_pstamp_perr   = state->phat * (double)(RTT - state->RTThat);
 			copystamp(stamp, &state->next_pstamp);
 		}
 	}
 }
 
 
-/* Return value `ret' allows signal to be sent to plocal algo that phat sanity
- * triggered on This stamp.
+/* The full phat algo is based on selecting two stamps [pstamp, recent] that are
+ * of high quality as well as very far apart (pstamp_i << recent_i). Here pstamp
+ * is selected as the best (according to its local point error) in a wide search
+ * window anchored at the centre of the current history window. It is fixed
+ * until the next pstamp update. Since pstamp is far in the past, it is found
+ * and recorded via an on-line algorithm, not via a (very long) timeseries
+ * history (see update_next_pstamp). The large gap between the stamps reduces
+ * errors in point error estimates in a very robust way.
+ *
+ * "Recent" is based on testing, for each new stamp i, whether total quality of an
+ * estimate arising from the (pstamp, i) pair is sufficiently excellent. If so,
+ * phat is updated (there is no need as it turns out to record the corresponding i).
+ * Total quality includes the point qualities of each stamp, the distance between
+ * them, and the quality of the minRTT baseline.
+ *
+ * The return value `ret' allows a signal to be sent to plocal algo that phat
+ * sanity triggered on This stamp.
  */
-int process_phat_full(struct bidir_algostate* state, struct radclock_data *rad_data,
-	struct radclock_phyparam *phyparam, vcounter_t RTT,
-	struct bidir_stamp* stamp, int qual_warning)
+int process_phat_full(struct radclock_phyparam *phyparam, struct bidir_algostate* state,
+    struct bidir_stamp* stamp, struct radclock_data *rad_data, vcounter_t RTT,
+    int qual_warning)
 {
+	index_t si = state->stamp_i;  // convenience
+
 	int ret;
-	long double DelTb; 	// Server time interval between stamps j and i
-	double phat;		// Period estimate for current stamp
-	double perr_ij;		// Estimate of error of phat using given stamp pair [i,j]
-	double perr_i;		// Estimate of error of phat at stamp i
-	double baseerr;		// Holds difference in quality RTTmin values at
-						// different stamps
+	long double DelTb;  // Server time interval between stamps j and i
+	double phat;        // Period estimate for current stamp
+	double perr_ij;     // Estimate of error of phat using given stamp pair [i,j]
+	double perr_i;      // Estimate of error of phat at stamp i
+	double baseerr;     // Holds difference in quality RTTmin values at different stamps
 
 	ret = 0;
-	DEL_STATUS(rad_data, STARAD_PHAT_UPDATED);		// typical case if no update
+	DEL_STATUS(rad_data, STARAD_PHAT_UPDATED);    // typical case if no update
 
-	/* Compute new phat based on pstamp and current stamp */
-	phat = compute_phat(state, &state->pstamp, stamp);
-	if ( phat == 0 )
-	{
-		/* Something bad happen, most likely, we have a bug. The algo may
-		 * recover from this, so do not update and keep going.
-		 */
-		return 1;
-	}
-
-	/*
-	 * Determine if quality of i sufficient to bother, if so, if (j,i)
+	/* Determine if quality of i sufficient to bother, if so, if (j,i)
 	 * sufficient to update phat
 	 * if error smaller than Ep, quality pkt, proceed, else do nothing
 	 */
@@ -1391,7 +1437,7 @@ int process_phat_full(struct bidir_algostate* state, struct radclock_data *rad_d
 
 	/*
 	 * Point errors (local)
-	 * Level shifts (global)  (can also correct for error in RTThat assuming no true shifts)
+	 * Level shifts (global)  (can also correct for error in RTThat assuming no shifts)
 	 * (total err)/Del(t) = (queueing/Delta(vcount))/p  ie. error relative to p
 	 */
 	DelTb = stamp->Tb - state->pstamp.Tb;
@@ -1411,15 +1457,13 @@ int process_phat_full(struct bidir_algostate* state, struct radclock_data *rad_d
 		return 0;
 
 
-	/* Candidate accepted based on quality, record this */
-	ADD_STATUS(rad_data, STARAD_PHAT_UPDATED);
-	state->perr = perr_ij;
-
+	/* Candidate accepted based on quality, flag the change if large */
+	phat = compute_phat(state, &state->pstamp, stamp);
 	if ( fabs((phat - state->phat)/phat) > phyparam->RateErrBOUND/3 ) {
 		verbose(VERB_SYNC, "i=%lu: Jump in phat update, phat stats: (j,i)=(%lu,%lu), "
-			"rel diff = %.10g, perr = %.3g, baseerr = %.10g, DelTb = %5.3Lg [hrs]",
-			state->stamp_i, state->pstamp_i, state->stamp_i, (phat - state->phat)/phat,
-			state->perr, baseerr, DelTb/3600);
+		    "rel diff = %.10g, perr = %.3g, baseerr = %.10g, DelTb = %5.3Lg [hrs]",
+		    si, state->pstamp_i, si, (phat - state->phat)/phat,
+		    perr_ij, baseerr, DelTb/3600);
 	}
 
 	/* Clock correction and phat update.
@@ -1429,22 +1473,22 @@ int process_phat_full(struct bidir_algostate* state, struct radclock_data *rad_d
 	if ((fabs(state->phat - phat)/state->phat > state->Ep_sanity) || qual_warning) {
 		if (qual_warning)
 			verbose(VERB_QUALITY, "i=%lu: qual_warning received, following "
-					"sanity check for phat", state->stamp_i);
+			    "sanity check for phat", si);
 
 		verbose(VERB_SANITY, "i=%lu: phat update fails sanity check. "
-			"phat stats: (j,i)=(%lu,%lu), "
-			"rel diff = %.10g, perr = %.3g, baseerr = %.10g, "
-			"DelTb = %5.3Lg [hrs]",
-			state->pstamp_i,
-			state->stamp_i, (phat - state->phat)/phat,
-			state->perr, baseerr, DelTb/3600);
+		    "phat stats: (j,i)=(%lu,%lu), rel diff = %.10g, perr = %.3g,"
+		    "perr_ij = %.3g, baseerr = %.10g, DelTb = %5.3Lg [hrs]",
+		    si, state->pstamp_i, si, (phat - state->phat)/phat,
+		    state->perr, perr_ij, baseerr, DelTb/3600);
 
 		state->phat_sanity_count++;
 		ADD_STATUS(rad_data, STARAD_PHAT_SANITY);
 		ret = STARAD_PLOCAL_SANITY;
 	} else {
 		state->K += state->stamp.Ta * (long double) (state->phat - phat);
-		state->phat = phat;
+		state->phat = phat;    // candidate accepted! update phat
+		state->perr = perr_ij;
+		ADD_STATUS(rad_data, STARAD_PHAT_UPDATED);
 		DEL_STATUS(rad_data, STARAD_PHAT_SANITY);
 	}
 
@@ -1456,53 +1500,44 @@ int process_phat_full(struct bidir_algostate* state, struct radclock_data *rad_d
 
 /* =============================================================================
  * PLOCAL ALGO
- * =============================================================================
+ * ===========================================================================*/
+
+/* Warmup: refinement pointless here, just copy.
+ * If not active, never used, no cleanup needed.
  */
-
-
-/*
- * Refinement pointless here, just copy. If not active, never used, no cleanup
- * needed.
- */
-void
-process_plocal_warmup(struct bidir_algostate* state)
-{
-	state->plocal = state->phat;
-}
-
 
 int
 process_plocal_full(struct bidir_algostate* state, struct radclock_data *rad_data,
-		unsigned int plocal_winratio, struct bidir_stamp* stamp,
-		int phat_sanity_raised, int qual_warning)
+    unsigned int plocal_winratio, int p_insane, int qual_warning, struct bidir_algooutput *output)
 {
-	index_t st_end;			// indices of last pkts in stamp history
-	index_t RTT_end;			// indices of last pkts in RTT history
+	index_t si = state->stamp_i;  // convenience
+
+	index_t st_end;        // indices of last pkts in stamp history
+	index_t RTT_end;       // indices of last pkts in RTT history
 
 	/* History lookup window boundaries */
 	index_t lhs;
 	index_t rhs;
-	long double DelTb;			// Time between j and i based on each NTP timestamp
+	long double DelTb;     // Time between j and i based on each NTP timestamp
 	struct bidir_stamp *stamp_near;
 	struct bidir_stamp *stamp_far;
-	double plocal;				// Local period estimate for current stamp
-	double plocalerr;			// estimate of total error of plocal [unitless]
-	vcounter_t *RTT_far;		// RTT value holder
-	vcounter_t *RTT_near;		// RTT value holder
+	double plocal;         // Local period estimate for current stamp
+	double plocalerr;      // estimate of total error of plocal [unitless]
+	vcounter_t *RTT_far;   // RTT value holder
+	vcounter_t *RTT_near;  // RTT value holder
 
 
 	/*
 	 * Compute index of stamp we require to be available before proceeding
 	 * (different usage to shift_end etc!)
 	 * if not fully past poll transition and have not history ready then
-	 *   default to phat copy if problems with data or transitions
-	 *   record a problem, will have to restart when it resolves
+	 *   - default to phat copy if problems with data or transitions
+	 *   - record a problem, will have to restart when it resolves
 	 * else proceed with plocal processing
 	 */
-	state->plocal_end = state->stamp_i - state->plocal_win + 1 - state->wwidth -
-		state->wwidth / 2;
-	st_end  = history_end(&state->stamp_hist);
-	RTT_end = history_end(&state->RTT_hist);
+	state->plocal_end = si - state->plocal_win + 1 - state->wwidth - state->wwidth / 2;
+	st_end  = history_old(&state->stamp_hist);
+	RTT_end = history_old(&state->RTT_hist);
 
 	/*
 	 * If there are not enough points, cannot compute plocal. Flag problem for
@@ -1516,80 +1551,80 @@ process_plocal_full(struct bidir_algostate* state, struct radclock_data *rad_dat
 
 // TODO this is very chatty when it happens ... module the rate?
 		verbose(VERB_CONTROL, "plocal problem following parameter changes "
-				"(desired window first stamp %lu unavailable), defaulting to "
-				"phat while windows fill", state->plocal_end);
+		    "(desired window first stamp %lu unavailable), defaulting to "
+		    "phat while windows fill", state->plocal_end);
 		verbose(VERB_CONTROL, "[plocal_end, lastpoll_i, st_end, RTT_end] : "
-				"%lu %lu %lu %lu ", state->plocal_end, state->poll_changed_i,
-				st_end, RTT_end);
+		    "%lu %lu %lu %lu ", state->plocal_end, state->poll_changed_i, st_end, RTT_end);
 		return (0);
 	}
 	else if (state->plocal_problem)
-		init_plocal(state, plocal_winratio, state->stamp_i);
+		reset_plocal(state, plocal_winratio, si);
 
-	lhs = state->stamp_i - state->wwidth - state->plocal_win - state->wwidth/2;
-	rhs = state->stamp_i - 1 			  - state->plocal_win - state->wwidth/2;
+	lhs = si - state->wwidth - state->plocal_win - state->wwidth/2;
+	rhs = si - 1             - state->plocal_win - state->wwidth/2;
 	state->far_i  = history_min_slide(&state->RTT_hist, state->far_i, lhs, rhs);
+	//       if get qual warning, should we Then exclude the current stamp?
 	state->near_i = history_min_slide(&state->RTT_hist, state->near_i,
-			state->stamp_i-state->wwidth, state->stamp_i-1);
+	    si-state->wwidth, si-1); // is normal to give old win as input
 
 	/* Compute time intervals between NTP timestamps of selected stamps */
 	stamp_near = history_find(&state->stamp_hist, state->near_i);
 	stamp_far  = history_find(&state->stamp_hist, state->far_i);
 
 	plocal = compute_phat(state, stamp_far, stamp_near);
-	/*
-	 * Something bad happen, most likely, we have a bug. The algo may recover
-	 * from this, so do not update and keep going.
-	 */
-	if ( plocal == 0 ) {
+	/* Something bad happen, most likely, we have a bug. The algo may recover
+	 * from this, so do not update and keep going. TODO: check if needed or better handled under sanity */
+	if ( plocal == 0 )
 		return 1;
-	}
 
 	RTT_far  = history_find(&state->RTT_hist, state->far_i);
 	RTT_near = history_find(&state->RTT_hist, state->near_i);
 	DelTb = stamp_near->Tb - stamp_far->Tb;
 	plocalerr = state->phat * ((double)(*RTT_far + *RTT_near) - 2*state->RTThat) / DelTb;
-	state->plocalerr = plocalerr;  // this was omitted, a bug, stopping true quality variation being seen
 
 	/* If quality looks bad, retain previous value */
 	if ( fabs(plocalerr) >= state->Eplocal_qual ) {
 		verbose(VERB_QUALITY, "i=%lu: plocal quality low,  (far,near) = "
-				"(%lu,%lu), not updating plocalerr = %5.3lg, "
-				"Eplocal_qual = %5.3lg, RTT (near,far,hat) = (%5.3lg, %5.3lg, %5.3lg) ",
-				state->stamp_i, state->far_i,
-				state->near_i, state->plocalerr, state->Eplocal_qual,
-				state->phat * (double)(*RTT_near),
-				state->phat * (double)(*RTT_far),
-				state->phat * (double)(state->RTThat)	);
+		    "(%lu,%lu), not updating plocalerr = %5.3lg, "
+		    "Eplocal_qual = %5.3lg, RTT (near,far,hat) = (%5.3lg, %5.3lg, %5.3lg) ",
+		    si, state->far_i, state->near_i, state->plocalerr, state->Eplocal_qual,
+		    state->phat * (double)(*RTT_near),
+		    state->phat * (double)(*RTT_far),
+		    state->phat * (double)(state->RTThat) );
 		ADD_STATUS(rad_data, STARAD_PLOCAL_QUALITY);
-		return 0;
-	}
-
-	/* Candidate acceptable based on quality, record this */
-	DEL_STATUS(rad_data, STARAD_PLOCAL_QUALITY);
-
-	/* if quality looks good, continue but refuse to update if result looks
-	 * insane. qual_warning may not apply to stamp_near or stamp_far, but we
-	 * still follow the logic "there is something strange going on in here".
-	 * Also, plocal searches in two windows for best stamps, which is a decent
-	 * damage control.
-	 */
-	if ( (fabs(state->plocal-plocal)/state->plocal > state->Eplocal_sanity) || qual_warning) {
-		if (qual_warning)
-			verbose(VERB_QUALITY, "qual_warning received, i=%lu, following "
-					"sanity check for plocal", state->stamp_i);
-		verbose(VERB_SANITY, "i=%lu: plocal update fails sanity check: relative "
-				"difference is: %5.3lg estimated error was %5.3lg",
-				state->stamp_i, fabs(state->plocal-plocal)/state->plocal, plocalerr);
-		ADD_STATUS(rad_data, STARAD_PLOCAL_SANITY);
-		state->plocal_sanity_count++;
+		DEL_STATUS(rad_data, STARAD_PLOCAL_SANITY);  // sanity applies only to quality stamps
 	} else {
-		state->plocal = plocal;
-		// TODO, we should actually age this stored value if quality is
-		// bad or sanity and we cannot update to the latest computed
-		state->plocalerr = plocalerr;
-		DEL_STATUS(rad_data, STARAD_PLOCAL_SANITY);
+		/* Candidate acceptable based on quality, record this */
+		DEL_STATUS(rad_data, STARAD_PLOCAL_QUALITY);
+
+		/* Apply Sanity Check
+		 * If quality looks good, continue but refuse to update if result looks
+		 * insane. qual_warning may not apply to stamp_near or stamp_far, but we
+		 * still follow the logic "there is something strange going on in here".
+		 * Also, plocal searches in two windows for best stamps, which is a decent
+		 * damage control.
+		 */
+		if ( (fabs(state->plocal-plocal)/state->plocal > state->Eplocal_sanity) || qual_warning) {
+			if (qual_warning)
+				verbose(VERB_QUALITY, "qual_warning received, i=%lu, following "
+				    "sanity check for plocal", si);
+			verbose(VERB_SANITY, "i=%lu: plocal update fails sanity check: relative "
+			    "difference is: %5.3lg estimated error was %5.3lg",
+			    si, fabs(state->plocal-plocal)/state->plocal, plocalerr);
+			ADD_STATUS(rad_data, STARAD_PLOCAL_SANITY);
+			state->plocal_sanity_count++;
+		} else {
+			state->plocal = plocal;
+			// TODO: should actually age this stored value if quality is
+			// bad or sanity and we cannot update to the latest computed
+			state->plocalerr = plocalerr;
+			DEL_STATUS(rad_data, STARAD_PLOCAL_SANITY);
+		}
 	}
+
+	/* Copy selected internal (not held in state) local vars to output structure */
+	output->plocalerr = plocalerr;  // value for This stamp, perhaps not accepted into state
+
 	return 0;
 }
 
@@ -1598,38 +1633,36 @@ process_plocal_full(struct bidir_algostate* state, struct radclock_data *rad_dat
 
 /* =============================================================================
  * THETAHAT ALGO
- * =============================================================================
- */
+ * ===========================================================================*/
 
 void
-process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad_data,
-		struct radclock_phyparam *phyparam, vcounter_t RTT,
-		struct bidir_stamp* stamp, struct bidir_algooutput *output)
+process_thetahat_warmup(struct radclock_phyparam *phyparam, struct bidir_algostate* state,
+    struct bidir_stamp* stamp, struct radclock_data *rad_data, vcounter_t RTT,
+    struct bidir_algooutput *output)
 {
+	index_t si = state->stamp_i;  // convenience
 
-	double thetahat;	// double ok since this corrects clock which is already almost right
-	double errTa = 0;	// calculate causality errors for correction of thetahat
-	double errTf = 0;	// calculate causality errors for correction of thetahat
-	double wj;			// weight of pkt i
-	double wsum = 0;	// sum of weights
-	double th_naive = 0;// thetahat naive estimate
-	double ET = 0;		// error thetahat ?
-	double minET = 0;	// error thetahat ?
+	double thetahat;     // double ok since this corrects clock which is already almost right
+	double wj;           // weight of pkt i
+	double wsum = 0;     // sum of weights
+	double th_naive = 0; // thetahat naive estimate
+	double ET = 0;       // error thetahat ?
+	double minET = 0;    // error thetahat ?
 
 	double *thnaive_tmp;
-	double gapsize;		// size in seconds between pkts, used to track widest gap in offset_win
+	double gapsize;      // size in seconds between pkts, used to track widest gap in offset_win
 
-	index_t adj_win;		// adjusted window
-	index_t j;				// loop index, needs to be signed to avoid problem when j hits zero
-	index_t jmin  = 0;		// index that hits low end of loop
-	index_t jbest = 0;		// record best packet selected in window
+	index_t adj_win;     // adjusted window
+	index_t j;           // loop index, needs to be signed to avoid problem when j hits zero
+	index_t jmin  = 0;   // index that hits low end of loop
+	index_t jbest = 0;   // record best packet selected in window
 
-	double Ebound;				// per-stamp error bound on thetahat  (currently just ET)
-	double Ebound_min = 0;	// smallest Ebound in offset win
-	index_t RTT_end;			// indices of last pkts in RTT history
-	index_t thnaive_end;		// indices of last pkts in thnaive history
+	double Ebound;         // per-stamp error bound on thetahat  (currently just ET)
+	double Ebound_min = 0; // smallest Ebound in offset win
+	index_t RTT_end;       // indices of last pkts in RTT history
+	index_t thnaive_end;   // indices of last pkts in thnaive history
 	struct bidir_stamp *stamp_tmp;
-	vcounter_t *RTT_tmp;		// RTT value holder
+	vcounter_t *RTT_tmp;   // RTT value holder
 
 
 	/* During warmup, no plocal refinement, no gap detection, no SD error
@@ -1637,16 +1670,13 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 	 */
 	if ( (stamp->Te - stamp->Tb) >= RTT*state->phat*0.95 ) {
 		verbose(VERB_SYNC, "i=%d: Apparent server timestamping error, RTT<SD: "
-				"RTT = %6.4lg [ms], SD= %6.4lg [ms], SD/RTT= %6.4lg.",
-				state->stamp_i, 1000*RTT*state->phat, 1000*(double)(stamp->Te-stamp->Tb),
-				(double)(stamp->Te-stamp->Tb)/RTT/state->phat );
+		    "RTT = %6.4lg [ms], SD= %6.4lg [ms], SD/RTT= %6.4lg.",
+		    si, 1000*RTT*state->phat, 1000*(double)(stamp->Te-stamp->Tb),
+		    (double)(stamp->Te-stamp->Tb)/RTT/state->phat );
 	}
-	/* Calculate naive estimate at stamp i
-	 * Also track last element stored in thnaive_end TODO: this comment out of date
-	 */
 	th_naive = (state->phat*((long double)stamp->Ta + (long double)stamp->Tf) +
-				(2*state->K - (stamp->Tb + stamp->Te)))/2.0;
-	history_add(&state->thnaive_hist, state->stamp_i, &th_naive);
+	    (2*state->K - (stamp->Tb + stamp->Te)))/2.0;
+	history_add(&state->thnaive_hist, si, &th_naive);
 
 
 	/* Calculate weighted sum */
@@ -1655,38 +1685,29 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 	/* Fix old end of thetahat window:  poll_period changes, offset_win changes, history limitations */
 	if ( state->poll_transition_th > 0 ) {
 		/* linear interpolation over new offset_win */
-		adj_win = (state->offset_win - state->poll_transition_th) + (ceil)(state->poll_transition_th * state->poll_ratio);
+		adj_win = (state->offset_win - state->poll_transition_th) +
+		    (ceil)(state->poll_transition_th * state->poll_ratio);
 		verbose(VERB_CONTROL, "In offset_win transition following poll_period change, "
-				"[offset transition] windows are [%lu %lu]", state->offset_win,adj_win);
+		    "[offset transition] windows are [%lu %lu]", state->offset_win,adj_win);
 
-		// Former code which requires to cast into signed variables. This macro
-		// is dangerous because it does not check the sign of the variables (if
-		// unsigned rolls over, it gives the wrong result
-		//jmin = MAX(1, state->stamp_i-adj_win+1);
-		if ( state->stamp_i > (adj_win - 1) )
-			jmin = state->stamp_i - (adj_win - 1);
-		else
-			jmin = 0;
-		jmin = MAX(1,jmin);
+		// Safe form of jmin = MAX(1, si-adj_win+1);
+		if ( si > (adj_win - 1) ) jmin = si - (adj_win - 1); else jmin = 0;
+		jmin = MAX(1, jmin);
 		state->poll_transition_th--;
 	}
 	else {
 		/* ensure don't go past 1st stamp, and don't use 1st, as thnaive set to zero there */
-		// Former code which requires to cast into signed variables.
-		// jmin = MAX(1, state->stamp_i-state->offset_win+1);
-		if ( state->stamp_i > (state->offset_win - 1 ))
-			jmin = state->stamp_i - (state->offset_win - 1);
-		else
-			jmin = 0;
-		jmin = MAX (1, jmin);
+		// Safe form of  jmin = MAX(1, si-state->offset_win+1);
+		if ( si > (state->offset_win - 1 )) jmin = si - (state->offset_win - 1); else jmin = 0;
+		jmin = MAX(1, jmin);
 	}
 	
 	/* find history constraint */
-	RTT_end 		= history_end(&state->RTT_hist);
-	thnaive_end = history_end(&state->thnaive_hist);
+	RTT_end     = history_old(&state->RTT_hist);
+	thnaive_end = history_old(&state->thnaive_hist);
 	jmin = MAX(jmin, MAX(RTT_end, thnaive_end));
 
-	for ( j = state->stamp_i; j >= jmin; j-- ) {
+	for ( j = si; j >= jmin; j-- ) {
 		/* Reassess pt errors each time, as RTThat not stable in warmup.
 		 * Errors due to phat errors are small
 		 * then add aging with pessimistic rate (safer to trust recent)
@@ -1702,7 +1723,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 		/* Record best in window, smaller the better. When i<offset_win, must
 		 * to be zero since arg minRTT is at the new stamp, which has no aging
 		 */
-		if ( j == state->stamp_i ) {
+		if ( j == si ) {
 			minET = ET;
 			jbest = j;
 		} else {
@@ -1722,8 +1743,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 	}
 
 	/* Set Ebound_min to second best ET in window */
-	for ( j = state->stamp_i; j >= jmin; j-- ) {
-
+	for ( j = si; j >= jmin; j-- ) {
 		if ( j == jbest ) continue;
 
 		RTT_tmp   = history_find(&state->RTT_hist, j);
@@ -1732,7 +1752,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
 
 		/* Record best in window excluding jbest */
-		if ( j == state->stamp_i || (jbest == 1) && (j == state->stamp_i - 1) )
+		if ( j == si || (jbest == 1) && (j == si - 1) )
 			Ebound_min = ET;		// initialize
 		else
 			if ( ET < Ebound_min ) Ebound_min = ET;
@@ -1750,19 +1770,19 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 //	if (RTCreset) {
 //		verbose(VERB_QUALITY, "i=%lu: RTCreset (warmup): setting to current stamp, "
 //			"disabling window, quality may be poor until window refills.\n"
-//			"      Jumping rAdclock by = %5.3lf [s]", state->stamp_i, - th_naive);
+//			"      Jumping rAdclock by = %5.3lf [s]", si, - th_naive);
 //
 //		state->K -= th_naive;				// absorb current apparent error into K
 //		thetahat = 0;						// error is zero wrt new K
 //		//state->phat -= 2 * (state->thetahat - th_naive) / (double)(stamp->Ta + stamp->Tf);   // check this!!
 //		state->thetahat = thetahat;
-//		jbest = state->stamp_i;
+//		jbest = si;
 //
 //		/* Overwrite thetahats in window to ensure reset value is adopted.
 //		 * This resets the already stored th_naive also. Retain th_naive variable
 //		 * for verbosity and output to preserve original data and mark event.
 //		 */
-//		for ( j = state->stamp_i; j >= jmin; j-- )
+//		for ( j = si; j >= jmin; j-- )
 //			*(double *)(history_find(&state->thnaive_hist, j)) = 0;
 //
 //		DEL_STATUS(rad_data, STARAD_OFFSET_QUALITY);	// since accepted stamp, even though quality likely poor
@@ -1781,7 +1801,7 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 		DEL_STATUS(rad_data, STARAD_OFFSET_QUALITY);
 		if ( wsum==0 ) {
 			verbose(VERB_QUALITY, "i=%lu, quality looks good (minET = %lg) yet wsum=0! "
-					"Eoffset_qual = %lg may be too large", state->stamp_i, minET, state->Eoffset_qual);
+			    "Eoffset_qual = %lg may be too large", si, minET, state->Eoffset_qual);
 			thetahat = state->thetahat;
 		} else {
 			thetahat /= wsum;
@@ -1794,12 +1814,12 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 			ALGO_ERROR(state)->Ebound_min_last = Ebound_min;	// if quality bad, old value naturally remains
 			copystamp(stamp, &state->thetastamp);
 		}
-		
+
 		/* if result looks insane, give warning */
 		if ( fabs(state->thetahat - thetahat) > (state->Eoffset_sanity_min + state->Eoffset_sanity_rate * gapsize) ) {
 			verbose(VERB_SANITY, "i=%lu: thetahat update fails sanity check: "
-					"difference is: %5.3lg [ms], estimated error was  %5.3lg [ms]",
-					state->stamp_i, 1000*(thetahat - state->thetahat), 1000*minET);
+			    "difference is: %5.3lg [ms], estimated error was  %5.3lg [ms]",
+			    si, 1000*(thetahat - state->thetahat), 1000*minET);
 			state->offset_sanity_count++;
 			ADD_STATUS(rad_data, STARAD_OFFSET_SANITY);
 		} else
@@ -1810,106 +1830,97 @@ process_thetahat_warmup(struct bidir_algostate* state, struct radclock_data *rad
 
 	} else {
 		verbose(VERB_QUALITY, "i=%lu: thetahat quality over offset window poor "
-				"(minET %5.3lg [ms], thetahat = %5.3lg [ms]), repeating current value",
-				state->stamp_i, 1000*minET, 1000*thetahat);
+		    "(minET %5.3lg [ms], thetahat = %5.3lg [ms]), repeating current value",
+		    si, 1000*minET, 1000*thetahat);
 		ADD_STATUS(rad_data, STARAD_OFFSET_QUALITY);
 	}
 
-//	}	// RTCreset hack
-	
-	
+//	}    // RTCreset hack
 
-// TODO should we check causality if state->thetahat has not been updated?
-// TODO also behaviour different in warmup and full algo
+	/* Cauality Check  (monitoring only)
+	 * Perceived OWDs (ie OWDs as seen by Ca) should always be +ve
+	 */
+	double pDf;    // perceived Df,  ie  Tb - Ca(Ta)
+	double pDb;    // perceived Db,  ie  Ca(Tf) - Te
+	pDf = (double)((long double)stamp->Tb - ((long double)stamp->Ta * state->phat + state->K));
+	pDf += state->thetahat;
+	pDb = (double)((long double)stamp->Tf * state->phat + state->K - (long double) stamp->Te);
+	pDb -= state->thetahat;
 
-	/* errTa - thetahat  should be -ve */
-	errTa = (double)((long double)stamp->Ta * state->phat + state->K - (long double) stamp->Tb);
-	if ( errTa > state->thetahat ) {
-		verbose(VERB_CAUSALITY, "i=%lu: causality breach on C(Ta), errTa = %5.3lf [ms], "
-				"thetahat = %5.3lf [ms], diff = %5.3lf [ms] ",
-				state->stamp_i, 1000*errTa, 1000*state->thetahat, 1000*(errTa-state->thetahat));
-	}
+	if (pDf <= 0)
+		verbose(VERB_CAUSALITY, "i=%lu: causality breach seen on C(Ta), pDf = %5.3lf "
+		    "[ms], thetahat = %5.3lf [ms]", si, 1000*pDf, 1000*state->thetahat);
+	if (pDb <= 0)
+		verbose(VERB_CAUSALITY, "i=%lu: causality breach seen on C(Tf), pDb = %5.3lf "
+		    "[ms], thetahat = %5.3lf [ms]", si, 1000*pDb, 1000*state->thetahat);
 
-	/* errTf - thetahat  should be +ve */
-	errTf = (double)((long double)stamp->Tf * state->phat + state->K - (long double) stamp->Te);
-	if ( errTf < state->thetahat ) {
-		verbose(VERB_CAUSALITY, "i=%lu: causality breach on C(Tf), errTf = %5.3lf [ms], "
-				"thetahat = %5.3lf [ms], diff = %5.3lf [ms] ",
-				state->stamp_i, 1000*errTf, 1000*state->thetahat, 1000*(errTf-state->thetahat));
-	}
 
 	/* Warmup to warmup is to pass offset_win */
-	if ( (state->stamp_i < state->offset_win*2) || !(state->stamp_i%50) )
-	{
+	if ( (si < state->offset_win*2) || !(si % 50) ) {
 		verbose(VERB_SYNC, "i=%lu: th_naive = %5.3lf [ms], thetahat = %5.3lf [ms], "
-				"wsum = %7.5lf, minET = %7.5lf [ms], RTThat/2 = %5.3lf [ms]", 
-				state->stamp_i, 1000*th_naive, 1000*thetahat, wsum,
-				1000*minET, 1000*state->phat*state->RTThat/2.);
+		    "wsum = %7.5lf, minET = %7.5lf [ms], RTThat/2 = %5.3lf [ms]",
+		    si, 1000*th_naive, 1000*thetahat, wsum,
+		    1000*minET, 1000*state->phat*state->RTThat/2.);
 	}
 
-
-	/* Fill output data structure to print internal local variables */
-	errTa -= state->thetahat;
-	errTf -= state->thetahat;
-	output->errTa 			= errTa;
-	output->errTf			= errTf;
-	output->th_naive		= th_naive;
-	output->minET			= minET;
-	output->wsum			= wsum;
+	/* Copy selected internal (not held in state) local vars to output structure */
+	output->pDf      = pDf;
+	output->pDb      = pDb;
+	output->th_naive = th_naive;
+	output->minET    = minET;  // value for This stamp, perhaps not accepted into state
+	output->wsum     = wsum;
 	stamp_tmp = history_find(&state->stamp_hist, jbest);
-	output->best_Tf		= stamp_tmp->Tf;
+	output->best_Tf  = stamp_tmp->Tf;
 }
 
 
 
-void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *rad_data,
-		struct radclock_phyparam *phyparam, vcounter_t RTT,
-		struct bidir_stamp* stamp, int qual_warning,  struct bidir_algooutput *output)
+void process_thetahat_full(struct radclock_phyparam *phyparam, struct bidir_algostate* state,
+    struct bidir_stamp* stamp, struct radclock_data *rad_data, vcounter_t RTT,
+    int qual_warning,  struct bidir_algooutput *output)
 {
-	double thetahat;	// double ok since this corrects clock which is almost right
-	double errTa = 0;	// calculate causality errors for correction of thetahat
-	double errTf = 0;	// calculate causality errors for correction of thetahat
-	double wj;			// weight of pkt i
-	double wsum = 0;	// sum of weights
-	double th_naive = 0;// thetahat naive estimate
-	double ET = 0;		// error thetahat ?
-	double minET = 0;	// error thetahat ?
+	index_t si = state->stamp_i;  // convenience
+
+	double thetahat;     // double ok since this corrects clock which is almost right
+	double wj;           // weight of pkt i
+	double wsum = 0;     // sum of weights
+	double th_naive = 0; // thetahat naive estimate
+	double ET = 0;       // error thetahat ?
+	double minET = 0;    // error thetahat ?
 
 	double *thnaive_tmp;
-	double gapsize;		// size in seconds between pkts, tracks widest gap in offset_win
-	//int gap = 0;		// logical: 1 = have found a large gap at THIS stamp  // not used
+	double gapsize;    // size in seconds between pkts, tracks widest gap in offset_win
+	//int gap = 0;    // logical: 1 = have found a large gap at THIS stamp  // not used
 
-	index_t adj_win;					// adjusted window
-	index_t j;				// loop index, needs to be signed to avoid problem when j hits zero
-	index_t jmin  = 0;		// index that hits low end of loop
-	index_t jbest = 0;		// record best packet selected in window
+	index_t adj_win;        // adjusted window
+	index_t j;              // loop index, needs to be signed to avoid problem when j hits zero
+	index_t jmin  = 0;      // index that hits low end of loop
+	index_t jbest = 0;      // record best packet selected in window
 
-	double Ebound;				// per-stamp error bound on thetahat  (currently just ET)
-	double Ebound_min = 0;	// smallest Ebound in offset win
-	index_t st_end;			// indices of last pkts in stamp history
-	index_t RTT_end;			// indices of last pkts in RTT history
-	index_t RTThat_end;			// indices of last pkts in RTThat history
-	index_t thnaive_end;		// indices of last pkts in thnaive history
+	double Ebound;          // per-stamp error bound on thetahat  (currently just ET)
+	double Ebound_min = 0;  // smallest Ebound in offset win
+	index_t st_end;         // indices of last pkts in stamp history
+	index_t RTT_end;        // indices of last pkts in RTT history
+	index_t RTThat_end;     // indices of last pkts in RTThat history
+	index_t thnaive_end;    // indices of last pkts in thnaive history
 	struct bidir_stamp *stamp_tmp;
 	struct bidir_stamp *stamp_tmp2;
-	vcounter_t *RTT_tmp;		// RTT value holder
-	vcounter_t *RTThat_tmp;		// RTT hat value holder
+	vcounter_t *RTT_tmp;    // RTT value holder
+	vcounter_t *RTThat_tmp; // RTThat value holder
 
 
 	if ((stamp->Te - stamp->Tb) >= RTT*state->phat * 0.95) {
 		verbose(VERB_SYNC, "i=%lu: Apparent server timestamping error, RTT<SD: "
-				"RTT = %6.4lg [ms], SD= %6.4lg [ms], SD/RTT= %6.4lg.",
-				state->stamp_i, 1000 * RTT*state->phat,
-				1000 * (double)(stamp->Te-stamp->Tb),
-				(double)(stamp->Te-stamp->Tb)/RTT/state->phat);
+		    "RTT = %6.4lg [ms], SD= %6.4lg [ms], SD/RTT= %6.4lg.",
+		    si, 1000 * RTT*state->phat, 1000 * (double)(stamp->Te-stamp->Tb),
+		    (double)(stamp->Te-stamp->Tb)/RTT/state->phat);
 	}
 
 	/* Calculate naive estimate at stamp i
-	 * Also track last element stored in thnaive_end
-	 */
+	 * Also track last element stored in thnaive_end */
 	th_naive = (state->phat * ((long double)stamp->Ta + (long double)stamp->Tf) +
-			(2 * state->K - (stamp->Tb + stamp->Te))) / 2.0;
-	history_add(&state->thnaive_hist, state->stamp_i, &th_naive);
+	    (2 * state->K - (stamp->Tb + stamp->Te))) / 2.0;
+	history_add(&state->thnaive_hist, si, &th_naive);
 
 	/* Initialize gapsize
 	 * Detect gaps and note large gaps (due to high loss)
@@ -1921,13 +1932,13 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 	/* gapsize is in [sec], but here looking for loss events */
 	if ( gapsize > (double) state->poll_period * 4.5 ) {
 		verbose(VERB_SYNC, "i=%lu: Non-trivial gap found: gapsize = %5.1lf "
-				"stamps or %5.3lg [sec]", state->stamp_i,
-				gapsize/state->poll_period, gapsize);
+		    "stamps or %5.3lg [sec]", si,
+		    gapsize/state->poll_period, gapsize);
 		/* In `big gap' mode, mistrust plocal and trust local th more */
 		if (gapsize > (double) phyparam->SKM_SCALE) {
 			//gap = 1;
 			verbose(VERB_SYNC, "i=%lu: End of big gap found width = %5.3lg [day] "
-					"or %5.2lg [hr]", state->stamp_i, gapsize/(3600*24), gapsize/3600);
+			    "or %5.2lg [hr]", si, gapsize/(3600*24), gapsize/3600);
 		}
 	}
 
@@ -1935,56 +1946,41 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 	wsum = 0;
 	thetahat = 0;
 
-	/*
-	 * Fix old end of thetahat window:  poll_period changes, offset_win changes,
+	/* Fix old end of thetahat window:  poll_period changes, offset_win changes,
 	 * history limitations
 	 */
 	if (state->poll_transition_th > 0) {
 		/* linear interpolation over new offset_win */
 		adj_win = (state->offset_win - state->poll_transition_th) +
-				(ceil)(state->poll_transition_th * state->poll_ratio);
+		    (ceil)(state->poll_transition_th * state->poll_ratio);
 		verbose(VERB_CONTROL, "In offset_win transition following poll_period "
-				"change, [offset transition] windows are [%lu %lu]",
-				state->offset_win, adj_win);
+		    "change, [offset transition] windows are [%lu %lu]",
+		    state->offset_win, adj_win);
 
-		// Former code which requires to cast into signed variables. This macro
-		// is dangerous because it does not check the sign of the variables (if
-		// unsigned rolls over, it gives the wrong result
-		//jmin = MAX(2, state->stamp_i-adj_win+1);
-		if (state->stamp_i > (adj_win - 1))
-			jmin = state->stamp_i - (adj_win - 1);
-		else
-			jmin = 0;
-		jmin = MAX(2, jmin);
+		// TODO: check if in fact this is safe when given arguments that are all signed, like here
+		// Safe form of  jmin = MAX(2, si-adj_win+1);
+		if (si > (adj_win - 1)) jmin = si - (adj_win - 1); else jmin = 0;
+		jmin = MAX(2, jmin);    // check why this should be 1 not 2
 		state->poll_transition_th--;
 	}
 	else {
-		/* ensure don't go past 1st stamp, and don't use 1st, as thnaive set to
-		 * zero there
-		 */
-		// Former code which requires to cast into signed variables. This macro
-		// is dangerous because it does not check the sign of the variables (if
-		// unsigned rolls over, it gives the wrong result
-		// jmin = MAX(1, state->stamp_i-state->offset_win+1);
-		if (state->stamp_i > (state->offset_win-1))
-			jmin = state->stamp_i - (state->offset_win - 1);
-		else
-			jmin = 0;
-		jmin = MAX (1, jmin);
+		/* ensure don't go past 1st stamp, and don't use 1st, as thnaive set to 0 there */
+		// safe form of  min = MAX(1, si-state->offset_win+1);
+		if (si > (state->offset_win-1)) jmin = si - (state->offset_win - 1); else jmin = 0;
+		jmin = MAX(1, jmin);
 	}
 	/* find history constraint */
-	st_end  	= history_end(&state->stamp_hist);
-	RTT_end 	= history_end(&state->RTT_hist);
-	RTThat_end 	= history_end(&state->RTThat_hist);
-	thnaive_end = history_end(&state->thnaive_hist);
+	st_end      = history_old(&state->stamp_hist);
+	RTT_end     = history_old(&state->RTT_hist);
+	RTThat_end  = history_old(&state->RTThat_hist);
+	thnaive_end = history_old(&state->thnaive_hist);
 
 	jmin = MAX(jmin, MAX(st_end, MAX(RTT_end, MAX(RTThat_end, thnaive_end))));
 
-	for (j = state->stamp_i; j >= jmin; j--) {
+	for (j = si; j >= jmin; j--) {
 		/* first one done, and one fewer intervals than stamps
-		 * find largest gap between stamps in window
-		 */
-		if (j < state->stamp_i - 1) {
+		 * find largest gap between stamps in window */
+		if (j < si - 1) {
 			stamp_tmp = history_find(&state->stamp_hist, j);
 			stamp_tmp2 = history_find(&state->stamp_hist, j+1);
 			gapsize = MAX(gapsize, state->phat * (double) (stamp_tmp2->Tf - stamp_tmp->Tf));
@@ -1995,9 +1991,9 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 		 * quality measure (large SD at small RTT=> delayed Te, distorting
 		 * th_naive) then add aging with pessimistic rate (safer to trust recent)
 		 */
-		RTT_tmp = history_find(&state->RTT_hist, j);
+		RTT_tmp    = history_find(&state->RTT_hist, j);
 		RTThat_tmp = history_find(&state->RTThat_hist, j);
-		stamp_tmp = history_find(&state->stamp_hist, j);
+		stamp_tmp  = history_find(&state->stamp_hist, j);
 		ET  = state->phat * ((double)(*RTT_tmp) - *RTThat_tmp);
 		ET += state->phat * (double) ( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
 
@@ -2005,26 +2001,24 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 		//Ebound  = ET;
 
 		/* Add SD penalty to ET
-		 * XXX: SD quality measure has been problematic in different cases:
-		 * - kernel timestamping with hardware based servers(DAG, 1588), punish good packets
+		 * SD quality measure has been problematic in different cases:
+		 * - kernel timestamping with hardware based servers(DAG, 1588), punish good stamps
 		 * - with bad NTP servers that have SD > Eoffset_qual all the time.
 		 * Definitively removed on 28/07/2011
 		 */
 		//ET += stamp_tmp->Te - stamp_tmp->Tb;
 
-
-		/* Record best in window, smaller the better. When i<offset_win, bound
-		 * to be zero since arg minRTT also in win. Initialise minET to first
-		 * one in window.
-		 */
-		if ( j == state->stamp_i ) {
+		/* Record best in window, smaller the better. When i<offset_win, must be
+		 * zero since arg minRTT also in win. Initialise minET to 1st in window. */
+		if ( j == si ) {
 			minET = ET; jbest = j; Ebound_min = Ebound;
 		} else {
 			if (ET < minET) { minET = ET; jbest = j; }
 			//if (Ebound < Ebound_min) { Ebound_min = Ebound; } // dont assume min index same here
 		}
 		/* Calculate weight, is <=1 Note: Eoffset initialised to non-0 value, safe to divide */
-		wj = exp(- ET * ET / state->Eoffset / state->Eoffset); wsum += wj;
+		wj = exp(- ET * ET / state->Eoffset / state->Eoffset);
+		wsum += wj;
 
 		/* Correct phat already used by difference with more locally accurate plocal */
 		thnaive_tmp = history_find(&state->thnaive_hist, j);
@@ -2032,13 +2026,12 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 			thetahat += wj * (*thnaive_tmp);
 		else
 			thetahat += wj * (*thnaive_tmp - (state->plocal / state->phat - 1) *
-				state->phat * (double) (stamp->Tf - stamp_tmp->Tf));
+			    state->phat * (double) (stamp->Tf - stamp_tmp->Tf));
 	}
 
 	/* Set Ebound_min to second best ET in window */
-	for ( j = state->stamp_i; j >= jmin; j-- ) {
-
-		if ( j == jbest ) continue;
+	for (j = si; j >= jmin; j--) {
+		if (j == jbest) continue;
 
 		RTT_tmp   = history_find(&state->RTT_hist, j);
 		stamp_tmp = history_find(&state->stamp_hist, j);
@@ -2046,67 +2039,37 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
 
 		/* Record best in window excluding jbest */
-		if ( j == state->stamp_i || (jbest == 1) && (j == state->stamp_i - 1) )
-			Ebound_min = ET;		// initialize
+		if ( j == si || (jbest == 1) && (j == si - 1) )
+			Ebound_min = ET;    // initialize
 		else
 			if ( ET < Ebound_min ) Ebound_min = ET;
-
 	}
 
-
-
-
-
-
-	/* Check Quality and Calculate new candidate estimate
-	 * quality over window looks good, use weights over window
+	/* Check Quality and calculate new candidate estimate
+	 * If quality over window looks good, use weights over window, otherwise
+	 * forget weights (and plocal refinement) and lean on last reliable estimate
+	 * TODO: replace convoluted thetahat "UPDATE SUPPRESSED' overwritting with clear logic
 	 */
 	if (minET < state->Eoffset_qual) {
 		DEL_STATUS(rad_data, STARAD_OFFSET_QUALITY);
 		/* if wsum==0 just copy thetahat to avoid crashing (can't divide by zero)
-		 * (this problem must be addressed by operator), else safe to normalise
-		 */
+		 * (this must be addressed by operator), else safe to normalise */
 		if (wsum == 0) {
 			verbose(VERB_QUALITY, "i=%lu: quality looks good (minET = %lg) yet "
-					"wsum=0! Eoffset_qual = %lg may be too large",
-					state->stamp_i, minET,state->Eoffset_qual);
-			thetahat = state->thetahat;
-		}
-		else {
+			    "wsum=0! Eoffset_qual = %lg may be too large",
+			    si, minET,state->Eoffset_qual);
+			thetahat = state->thetahat;  // UPDATE SUPPRESSED
+		} else
 			thetahat /= wsum;
-			/* store est'd quality of new estimate */
-			state->minET = minET;   // BUG  wrong place!  and is this minET_old?
-		}
-	} else {  // quality bad, forget weights (and plocal refinement) and lean on last reliable estimate
+	} else {
 		//  BUG  where has gap code gone!!
-		thetahat = state->thetahat;	// this will effectively suppress sanity check
+		thetahat = state->thetahat;  // this will effectively suppress sanity check TODO: make logic clearer
 		verbose(VERB_QUALITY, "i=%lu: thetahat quality very poor. wsum = %5.3lg, "
-				"curr err = %5.3lg, old = %5.3lg, this pt-err = [%5.3lg] [ms]",
-				state->stamp_i, wsum, 1000*minET, 1000*state->minET, 1000*ET);
+		    "curr err = %5.3lg, old = %5.3lg, this pt-err = [%5.3lg] [ms]",
+		    si, wsum, 1000*minET, 1000*state->minET, 1000*ET);
 		state->offset_quality_count++;
 		ADD_STATUS(rad_data, STARAD_OFFSET_QUALITY);
 	}
-
-// TODO behaviour different in warmup and full algo, should check causality on
-// TODO thetahat or state->thetahat?
-
-	/* errTa - thetahat should be -ve */
-	errTa = (double)((long double)stamp->Ta * state->phat + state->K -
-			(long double) stamp->Tb);
-
-	if (errTa > state->thetahat)
-		verbose(VERB_CAUSALITY, "i=%lu: causality breach uncorrected on C(Ta), "
-				"errTa = %5.3lf [ms], thetahat = %5.3lf [ms], diff = %5.3lf [ms]",
-				state->stamp_i, 1000*errTa, 1000*thetahat, 1000*(errTa-thetahat));
-	
-	/* errTf - thetahat should be +ve */
-	errTf = (double)((long double)stamp->Tf * state->phat + state->K -
-			(long double) stamp->Te);
-
-	if (errTf < state->thetahat)
-		verbose(VERB_CAUSALITY, "i=%lu: causality breach uncorrected on C(Tf), "
-				"errTf = %5.3lf [ms], thetahat = %5.3lf [ms], diff = %5.3lf [ms]",
-				state->stamp_i, 1000*errTf, 1000*thetahat,1000*(errTf-thetahat));
 
 
 	/* Apply Sanity Check 
@@ -2115,22 +2078,22 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 	gapsize = MAX(gapsize, state->phat * (double)(stamp->Tf - state->thetastamp.Tf) );
 	/* if looks insane given gapsize, refuse update */
 	if ((fabs(state->thetahat-thetahat) > (state->Eoffset_sanity_min +
-				state->Eoffset_sanity_rate * gapsize)) || qual_warning) {
+	    state->Eoffset_sanity_rate * gapsize)) || qual_warning) {
 		if (qual_warning)
-			verbose(VERB_QUALITY, "i=%lu: qual_warning received, following sanity check for thetahat",
-				   	state->stamp_i);
+			verbose(VERB_QUALITY, "i=%lu: qual_warning received, following sanity"
+			    " check for thetahat", si);
 		verbose(VERB_SANITY, "i=%lu: thetahat update fails sanity check."
-				"diff= %5.3lg [ms], est''d err= %5.3lg [ms], sanity level: %5.3lg [ms] "
-				"with total gapsize = %.0lf [sec]",
-				state->stamp_i, 1000*(thetahat-state->thetahat), 1000*minET,
-				1000*(state->Eoffset_sanity_min+state->Eoffset_sanity_rate*gapsize), gapsize);
+		    "diff= %5.3lg [ms], est''d err= %5.3lg [ms], sanity level: %5.3lg [ms] "
+		    "with total gapsize = %.0lf [sec]",
+		    si, 1000*(thetahat-state->thetahat), 1000*minET,
+		    1000*(state->Eoffset_sanity_min+state->Eoffset_sanity_rate*gapsize), gapsize);
 		state->offset_sanity_count++;
 		ADD_STATUS(rad_data, STARAD_OFFSET_SANITY);
 	}
-	else { // either quality and sane, or repeated due to bad quality
-		state->thetahat = thetahat;  //  it passes! update current value
-		if ( ( minET < state->Eoffset_qual ) && ( wsum != 0 ) ) {
-// TODO check the logic of this branch, why thetahat update not in here as well
+	else {  // either quality and sane, or repeated due to bad quality
+		state->thetahat = thetahat;    // it passes! update current value
+		if ( ( minET < state->Eoffset_qual ) && ( wsum != 0 ) ) { // genuine update, ie if good and !(UPDATE SUPPRESSED)
+			state->minET = minET;
 			copystamp(stamp, &state->thetastamp);
 			// BUG??  where is "lastthetahat = i;" ?  ahh, seems never to have been used..
 			/* Record last good estimate of error bound after sanity check */
@@ -2139,365 +2102,253 @@ void process_thetahat_full(struct bidir_algostate* state, struct radclock_data *
 		DEL_STATUS(rad_data, STARAD_OFFSET_SANITY);
 	}
 
-	if ( !(state->stamp_i % (int)(6 * 3600 / state->poll_period)) )
-	{
+
+	/* Cauality Check  (monitoring only)
+	 * Perceived OWDs (ie OWDs as seen by Ca) should always be +ve
+	 * TODO: For more sanity verb, could consider adding a version comparing against
+	 *       the sanity-rejected candidate thetahat?
+	 */
+	double pDf;    // perceived Df,  ie  Tb - Ca(Ta)
+	double pDb;    // perceived Db,  ie  Ca(Tf) - Te
+	pDf = (double)((long double)stamp->Ta * state->phat + state->K - (long double) stamp->Tb);
+	pDf = -(pDf - state->thetahat);
+	pDb = (double)((long double)stamp->Tf * state->phat + state->K - (long double) stamp->Te);
+	pDb -= state->thetahat;
+
+	if (pDf <= 0)
+		verbose(VERB_CAUSALITY, "i=%lu: post-sanity causality breach on C(Ta), pDf = %5.3lf "
+		    "[ms], thetahat = %5.3lf [ms]", si, 1000*pDf, 1000*state->thetahat);
+	if (pDb <= 0)
+		verbose(VERB_CAUSALITY, "i=%lu: post-sanity causality breach on C(Tf), pDb = %5.3lf "
+		    "[ms], thetahat = %5.3lf [ms]", si, 1000*pDb, 1000*state->thetahat);
+
+	if ( !(si % (int)(6 * 3600 / state->poll_period)) ) {
 		verbose(VERB_SYNC, "i=%lu: th_naive = %5.3lf [ms], thetahat = %5.3lf [ms], "
-				"wsum = %7.5lf, minET = %7.5lf [ms], RTThat/2 = %5.3lf [ms]", 
-				state->stamp_i, 1000*th_naive, 1000*thetahat, wsum,
-				1000*minET, 1000*state->phat*state->RTThat/2.);
+		    "wsum = %7.5lf, minET = %7.5lf [ms], RTThat/2 = %5.3lf [ms]",
+		    si, 1000*th_naive, 1000*thetahat, wsum,
+		    1000*minET, 1000*state->phat*state->RTThat/2.);
 	}
 
-	/* Fill output data structure to print internal local variables */
-	errTa -= state->thetahat;
-	errTf -= state->thetahat;
-	output->errTa 			= errTa;
-	output->errTf 			= errTf;
-	output->th_naive 		= th_naive;
-	output->minET 			= minET;
-	output->wsum 			= wsum;
+	/* Copy selected internal (not held in state) local vars to output structure */
+	output->pDf      = pDf;
+	output->pDb      = pDb;
+	output->th_naive = th_naive;
+	output->minET    = minET;  // value for This stamp, perhaps not accepted into state
+	output->wsum     = wsum;
 	stamp_tmp = history_find(&state->stamp_hist, jbest);
-	output->best_Tf 		= stamp_tmp->Tf;
+	output->best_Tf  = stamp_tmp->Tf;
 
 }
 
 
+
 /* =============================================================================
  * CLOCK SYNCHRONISATION ALGORITHM
- * =============================================================================
- */
+ * ===========================================================================*/
 
-
-/* This routine takes in a new bi-directional stamp and uses it to update the
- * estimates of the clock calibration.   It implements the full `algorithm' and
- * is abstracted away from the lower and interface layers.  It should be
- * entirely portable.  It returns updated clock in the global clock format,
- * pre-corrected.
+/* This routine takes in a new bi-directional stamp, a four-tuple (Ta,Tb,Te,Tf)
+ * associated to a given time server, that is assumed to be fundamentally sane,
+ * and uses it to update the parameters of the bidir RADclock.
  *
- * Offset estimation C(t) = vcount(t)*phat + K
- * theta(t) = C(t) - t
+ * The RADclock can we thought of a dual algorithm, which maintains a robust
+ * estimation of the parameters (phat,K) of the "Uncorrected clock" :
+ *   C(t) = vcount(t)*phat + K
+ * which forms the basis of the "difference clock" Cd, used for the measurement
+ * of time intervals below a certain timescale (~1000s), and the "Corrected" or
+ * "Absolute clock"
+ *   Ca(t) = C(t) - theta(t)
+ * where the estimation of the drift correction function theta(t) enables its
+ * use for the measurement of Absolute time (on a leap-free timescale).
+ *
+ * state: holds all variables, stored from the previous stamp (i-1), needed to
+ *   process the new stamp (i) and hence update algo parameters.
+ *   As the algo proceeds, state members are progressively updated, starting with
+ *   stamp_i and RTT before the calling of the sub-algos, and ending with the
+ *   stamp argument. Other members are updated within the sub-algos in order:
+ *   {[window management], RTT, phat, OWDasym, plocal, thetahat}.  Once updated,
+ *   they move from an interpretation of "previous stamp value" to "current value".
+ *   Outside the algo (inbetween stamp arrivals), all members relate to the last
+ *   stamp processed.
+ *   Note that updated variables may not actually have changed in value: the
+ *   previous value may still be appropriate, or a candidate replacement value
+ *   rejected due to quality or sanity-checking reasons.
+ *
+ * RADclock is structured hierarchically for robustness. The sub-algos
+ *    {window management, RTT, phat, plocal,  thetahat}
+ *    {                              OWDasym,         }
+ * address progressively more difficult problems and depend only on the
+ * sub-algos on its left in this list, but there is no dependency to the right.
+ * An exception is when RTT (measured natively in raw counter units) needs
+ * to be expressed in seconds for some purposes very early on, requiring an
+ * estimate of phat to do so. However this estimate need not be highly accurate.
+ *
  */
 int
 RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
-		struct bidir_stamp *input_stamp, int qual_warning,
-		struct radclock_data *rad_data, struct radclock_error *rad_error,
-		struct bidir_algooutput *output)
+    struct bidir_stamp *stamp, int qual_warning,
+    struct radclock_data *rad_data, struct radclock_error *rad_error,
+    struct bidir_algooutput *output)
 {
-	struct bidir_stamp *stamp;		// remember, here, stamp is not a stamp_t !
 	struct radclock_phyparam *phyparam;
 	struct radclock_config *conf;
-	int poll_period;
-	vcounter_t RTT;		// Current RTT (vcount units to avoid pb if phat bad */
 	unsigned int warmup_winratio;
 	unsigned int plocal_winratio;
-
-	/*
-	 * Error bound reporting. Error bound correspond to the last effective update of
-	 * thetahat (i.e. it may not be the value computed with the current stamp).
-	 * avg and std are tracked based on the size of the top window
-	 * Only the ones needed to track top level window replacing values need to be
-	 * static (until the window mechanism is rewritten to proper data structure to
-	 * avoid statics).
-	 * No need for a "_last", it is maintained outside the algo (as well as the
-	 * current number)
-	*/
-	double error_bound;
-	int phat_sanity_raised;
+	vcounter_t RTT;  // Current RTT (vcount units to avoid pb if phat bad)
+	int p_insane;    // records if phat algo inferred insanity on This stamp
 
 	JDEBUG
 
-	stamp = input_stamp;		// why bother?  input_stamp is a local var anyway..
-	phyparam = &(handle->conf->phyparam);
 	conf = handle->conf;
-	poll_period = conf->poll_period;
+	phyparam = &(conf->phyparam);
 
-	/*
-	 * Warmup and plocal window, gives fraction of Delta(t) sacrificed to near
-	 * and far search windows.
-	 */
-	warmup_winratio = 4;
-	plocal_winratio = 5;
+	/* Search window meta parameters  (not in algo state)
+	 * Gives fraction of Delta(t) sacrificed to near and far search windows. */
+	warmup_winratio = 4;    // used in phat warmup algo
+	plocal_winratio = 5;    // used in plocal full algo
 
-	/*
-	 * First thing is to react to configuration updates passed to the process.
-	 * If the poll period or environment quality has changed, some key algorithm
-	 * parameters have to be updated.
-	 */
-	if (HAS_UPDATE(conf->mask, UPDMASK_POLLPERIOD) ||
-			HAS_UPDATE(conf->mask, UPDMASK_TEMPQUALITY)) {
-		update_state(state, phyparam, poll_period, plocal_winratio);
-	}
+	/* Now processing stamp i {0,1,2,...) */
+	state->stamp_i++;   // initialized to -1 (no stamps processed)
 
-	/*
-	 * It is the first stamp, we initialise the state structure, push the first
-	 * stamp in history, initialize key algorithm variables: algo parameters,
-	 * window sizes, history structures, states, poll period effects and return
-	 */
+	/* First stamp (stamp 0): perform basic state initialization beyond null. */
 	if (state->stamp_i == 0) {
-		init_state(handle, phyparam, state, rad_data, stamp, plocal_winratio, poll_period);
-		copystamp(stamp, &state->stamp);
-		copystamp(stamp, &state->thetastamp); // thetastamp setting needs detailed revision
-		state->stamp_i++;
- 	
-// TODO fixme, just a side effect
-// Make sure we have a valid RTT for the output file
-		RTT = stamp->Tf - stamp->Ta;
+		verbose(VERB_SYNC, "Initialising RADclock synchronization");
 
-		output->best_Tf = stamp->Tf;
+		/* Set algo error thresholds based on counter model parameters */
+		set_err_thresholds(phyparam, state);
 
-		/* Set the status of the clock to STARAD_WARMUP */
-		ADD_STATUS(rad_data, STARAD_WARMUP);
-		ADD_STATUS(rad_data, STARAD_UNSYNC);
+		/* Derive algo windows measured in stamp-index from timescales [s] */
+		state->poll_period = conf->poll_period;
+		state->poll_ratio = 1;
+		set_algo_windows(phyparam, state);
 
-		goto output_results;
+		/* Ensure warmup duration (warmup_win) long enough wrt algo windows */
+		state->warmup_win = 100;
+		adjust_warmup_win(state->stamp_i, state, plocal_winratio);
+
+		/* Create sufficient storage in needed per-stamp histories */
+		history_init(&state->stamp_hist,   (unsigned int) state->warmup_win, sizeof(struct bidir_stamp) );
+		history_init(&state->Df_hist,      (unsigned int) state->warmup_win, sizeof(double) );
+		history_init(&state->Db_hist,      (unsigned int) state->warmup_win, sizeof(double) );
+		history_init(&state->Dfhat_hist,   (unsigned int) state->warmup_win, sizeof(double) );
+		history_init(&state->Dbhat_hist,   (unsigned int) state->warmup_win, sizeof(double) );
+		history_init(&state->Asymhat_hist, (unsigned int) state->warmup_win, sizeof(double) );
+		history_init(&state->RTT_hist,     (unsigned int) state->warmup_win, sizeof(vcounter_t) );
+		history_init(&state->RTThat_hist,  (unsigned int) state->warmup_win, sizeof(vcounter_t) );
+		history_init(&state->thnaive_hist, (unsigned int) state->warmup_win, sizeof(double) );
+
+		/* Parameter summary: physical, network, windows, thresholds, sanity */
+		print_algo_parameters(phyparam, state);
 	}
 
+	/* React to on-the-fly configuration updates: if the poll period or
+	 * environment quality changed, key algorithm parameters have to be updated. */
 
-
-//	/* On second packet, i=1, let's get things started */
-//	if ( state->stamp_i == 1 )
-//	{
-//		/* Set the status of the clock to STARAD_WARMUP */
-//		verbose(VERB_CONTROL, "Beginning Warmup Phase");
-//		ADD_STATUS(rad_data, STARAD_WARMUP);
-//		ADD_STATUS(rad_data, STARAD_UNSYNC);
+//	if (state->stamp_i==1000) {
+//		conf->mask = UPDMASK_TEMPQUALITY;
 //	}
 
 
-	/*
-	 * Clear UNSYNC status once the burst of NTP packets is finished. This
-	 * corresponds to the first update passed to the kernel. Cannot really do
-	 * push an update before this, and not much after either. It should be
-	 * driven by some quality metrick, but implementation is taking priority at
-	 * this stage.
-	 * This status should be put back on duing long gaps (outside the algo
-	 * thread then), and cleared once recover from gaps or data starvation.
-	 * Ideally, should not be right on recovery (i.e. the > test) but when
-	 * quality gets good. 
-	 */
-	if (state->stamp_i == NTP_BURST) {
-		DEL_STATUS(rad_data, STARAD_UNSYNC);
+	if (HAS_UPDATE(conf->mask, UPDMASK_POLLPERIOD) ||
+	    HAS_UPDATE(conf->mask, UPDMASK_TEMPQUALITY)) {
+		update_state(phyparam, state, plocal_winratio, conf->poll_period);
 	}
 
 
 
-
-	/* =============================================================================
+	/* ==========================================================================
 	 * BEGIN SYNCHRONISATION
-	 *
-	 * First, Some universal processing for all stamps i > 0
-	 * =============================================================================
-	 */
+	 * ========================================================================*/
 
-	/* Current RTT - universal! */
+	/* Current RTT (in raw counter units) */
 	RTT = stamp->Tf - stamp->Ta;
 
-	/* Store history of basics
-	 * [use circular buffer   a%b  performs  a - (a/b)*b ,  a,b integer]
-	 * copy stamp i into history immediately, will be used in loops
-	 */
-	history_add(&state->stamp_hist, state->stamp_i, stamp);
+	/* These variables not yet updated in state, but insert into history
+	 * immediately for availability in history hunting loops. */
 	history_add(&state->RTT_hist,   state->stamp_i, &RTT);
-
-
-
-
-	/* =============================================================================
-	 * HISTORY WINDOW MANAGEMENT
-	 * This should only be kicked in when we are out of warmup,
-	 * but since history window way bigger than warmup, this is safe
-	 * This resets history prior to stamp i
-	 * Shift window not affected
-	 * =============================================================================
-	 */
-
-	/* Initialize:  middle of very first window */
-	if ( state->stamp_i == state->top_win/2 ) {
-
-		/* Reset half window estimate (up until now RTThat=next_RTThat)
-		 * TODO: reassess why use the last stamp instead of RTT from this one
-		 */
-		state->next_RTThat = state->stamp.Tf - state->stamp.Ta;
-
-		/* Initiate on-line algo for new pstamp_i calculation [needs to be in
-		 * surviving half of window!] record next_pstamp_i (index), RTT, RTThat,
-		 * point error and stamp
-		 * TODO: jsearch_win should be chosen < ??
-		 */
-		state->jsearch_win = state->warmup_win;
-		state->jcount = 1;
-		state->next_pstamp_i = state->stamp_i;
-		state->next_pstamp_RTThat = state->RTThat;
-		state->next_pstamp_perr = state->phat*((double)(RTT) - state->RTThat);
-		copystamp(stamp, &state->next_pstamp);
-		/* Now DelTb >= top_win/2,  become fussier */
-		state->Ep_qual /= 10;
-
-		/* Successor error bounds reinitialisation */
-		ALGO_ERROR(state)->cumsum_hwin = 0;
-		ALGO_ERROR(state)->sq_cumsum_hwin = 0;
-		ALGO_ERROR(state)->nerror_hwin = 0;
-
-		verbose(VERB_CONTROL, "Adjusting history window before normal "
-				"processing of stamp %lu. FIRST 1/2 window reached", state->stamp_i);
-	}
-
-	/* At end of history/top window */
-	if ( state->stamp_i == state->top_win_half ) {
-
-		/* Advance window by top_win/2 so i is the first stamp in the new 2nd half */
-		state->top_win_half += state->top_win/2;
-
-		/* Replace online estimates with their successors (Upshifts must be built in) */
-		state->Dfhat = state->next_Dfhat;
-		state->Dbhat = state->next_Dbhat;
-		state->RTThat = state->next_RTThat;
-
-		/* Reset successor estimates (prior shifts irrelevant) using last raw values */
-		double *D_ptr;
-		D_ptr = history_find(&state->Df_hist, state->stamp_i - 1);
-		state->next_Dfhat = *D_ptr;
-		D_ptr = history_find(&state->Db_hist, state->stamp_i - 1);
-		state->next_Dbhat = *D_ptr;
-		state->next_RTThat = state->stamp.Tf - state->stamp.Ta;
-
-		/* Take care of effects on phat algo
-		* - begin using next_pstamp_i that has been precalculated in previous top_win/2
-		* - reinitialise on-line algo for new next_pstamp_i calculation
-		*   Record [index RTT RTThat stamp ]
-		*/
-		state->pstamp_i 		= state->next_pstamp_i;
-		state->pstamp_RTThat	= state->next_pstamp_RTThat;
-		state->pstamp_perr	= state->next_pstamp_perr;
-		copystamp(&state->next_pstamp, &state->pstamp);
-		state->jcount = 1;
-		state->next_pstamp_i			= state->stamp_i;
-		state->next_pstamp_RTThat	= state->RTThat;
-		state->next_pstamp_perr		= state->phat*((double)(RTT) - state->RTThat);
-		copystamp(stamp, &state->next_pstamp);
-
-		/* Successor error bounds being adopted, then reset. */
-		ALGO_ERROR(state)->cumsum 		= ALGO_ERROR(state)->cumsum_hwin;
-		ALGO_ERROR(state)->sq_cumsum	= ALGO_ERROR(state)->sq_cumsum_hwin;
-		ALGO_ERROR(state)->nerror 		= ALGO_ERROR(state)->nerror_hwin;
-		ALGO_ERROR(state)->cumsum_hwin 		= 0;
-		ALGO_ERROR(state)->sq_cumsum_hwin	= 0;
-		ALGO_ERROR(state)->nerror_hwin 		= 0;
-
-		verbose(VERB_CONTROL, "Total number of sanity events:  phat: %u, plocal: %u, Offset: %u ",
-				state->phat_sanity_count, state->plocal_sanity_count, state->offset_sanity_count);
-		verbose(VERB_CONTROL, "Total number of low quality events:  Offset: %u ", state->offset_quality_count);
-		verbose(VERB_CONTROL, "Adjusting history window before normal processing of stamp %lu. "
-				"New pstamp_i = %lu ", state->stamp_i, state->pstamp_i);
-	}
-
-
+	history_add(&state->stamp_hist, state->stamp_i, stamp);
 
 
 	/* =============================================================================
-	* GENERIC DESCRIPTION
+	* INITIALIZATION Phase :  i=0
+	*  Only basic state can be set
 	*
-	* WARMUP MODDE
-	* 0<i<warmup_win
-	* pt errors are unreliable, need different algos 
-	* RTT:  standard on-line 
-	* upward shift detection:  disabled 
-	* history window:  no overlap by design, so no need to map stamp indices via  [i%XX_win] 
-	* phat:  use plocal type algo, or do nothing if stored value (guarantees value available ASAP), no sanity 
-	* plocal:  not used, just copies phat, no sanity.
-	* thetahat:  simple on-line weighted average with aging, no SD quality refinement (but non-causal warnings)
-	* sanity checks:  switched off except for NAN check (warning in case of offset)
+	* WARMUP Phase :  0<i<warmup_win
+	*  Here pt errors are unreliable, need more robust algo forms
+	*    history window:  no overlap by design, so no need to map stamp indices
+	*    RTT:      obvious on-line
+	*              upward shift detection:  disabled
+	*    phat:     use plocal-type algo
+	*              no sanity checking (can't trust inference)
+	*    plocal:   just copies phat
+	*    thetahat: simple on-line weighted average with aging
+	*              no sanity checking
 	*
-	* FULL ALGO
-	* Main body, i >= warmup_win
-	* Start using full algos [still some initialisations left]
-	* Start wrapping history vectors
-	* =============================================================================
-	*/
+	* FULL ALGO Initialization :  i=warmup_win-1
+	*  Initialization of on-line components of all full sub-algos
+	*
+	* FULL ALGO Phase :  i >= warmup_win
+	*  Available history now sufficient
+	*    history window:  initialize and begin on-line history forgetting `algo`
+   *    Use full sub-algos with stricter checking and performance enhancements
+	* =========================================================================*/
 
-	collect_stats_state(state, stamp);
-	if (state->stamp_i < state->warmup_win) {
+	if (state->stamp_i == 0) {
+		init_algos(conf, state, stamp, rad_data, RTT, output);
+		ADD_STATUS(rad_data, STARAD_WARMUP);
+		ADD_STATUS(rad_data, STARAD_UNSYNC);
+	}
+	else if (state->stamp_i < state->warmup_win) {
 		process_RTT_warmup(state, RTT);
 		process_OWDAsym_warmup(state, stamp);
 		process_phat_warmup(state, RTT, warmup_winratio);
-		process_plocal_warmup(state);
-		process_thetahat_warmup(state, rad_data, phyparam, RTT, stamp, output);
+		state->plocal = state->phat;
+		process_thetahat_warmup(phyparam, state, stamp, rad_data, RTT, output);
+		// TODO: review UNSYNC un/re-setting in general, should be more quality based
+		if (state->stamp_i >= NTP_BURST)
+			DEL_STATUS(rad_data, STARAD_UNSYNC);
+
+		/* End of warmup: full algo initialization */
+		if (state->stamp_i == state->warmup_win - 1) {
+			state->history_end = state->h_win - 1;  // 1st history is [0, history_end]
+			init_RTTOWDAsym_full(state, stamp);
+			init_phat_full(state, stamp);
+			init_plocal_full(state, stamp, plocal_winratio);
+			init_thetahat_full(state, stamp);
+			parameters_calibration(state);
+			DEL_STATUS(rad_data, STARAD_WARMUP);
+			verbose(VERB_CONTROL, "i=%lu: End of Warmup Phase. Stamp read check: "
+			    "%llu %22.10Lf %22.10Lf %llu",
+			    state->stamp_i, stamp->Ta, stamp->Tb, stamp->Te, stamp->Tf);
+		}
 	}
 	else {
+		manage_historywin(state, stamp, RTT);    // performs next_pstamp init
 		process_RTT_full(state, rad_data, RTT);
 		process_OWDAsym_full(state, stamp);
-		record_packet_j(state, RTT, stamp);
-		phat_sanity_raised = process_phat_full(state, rad_data, phyparam, RTT,
-				stamp, qual_warning);
-
-		// XXX TODO stamp is passed only for quality warning, but plocal
-		// windows exclude the current stamp!! should take into account the
-		// quality warnings of the stamps actually picked up, no?
-		// Check with, Darryl
-		process_plocal_full(state, rad_data, plocal_winratio, stamp,
-				phat_sanity_raised, qual_warning);
-
-		process_thetahat_full(state, rad_data, phyparam, RTT, stamp, qual_warning, output);
+		update_next_pstamp(state, stamp, RTT);
+		p_insane = process_phat_full(phyparam, state, stamp, rad_data, RTT, qual_warning);
+		process_plocal_full(state, rad_data, plocal_winratio, p_insane, qual_warning, output);
+		process_thetahat_full(phyparam, state, stamp, rad_data, RTT, qual_warning, output);
 	}
 
+	/* Processing complete */
+	copystamp(stamp, &state->stamp);    // complete update with the current stamp
 
-
-/* =============================================================================
- * END OF WARMUP INITIALISATION
- * =============================================================================
- */
-
-	if (state->stamp_i == state->warmup_win - 1) {
-		end_warmup_RTTOWDAsym(state, stamp);
-		end_warmup_phat(state, stamp);
-		end_warmup_plocal(state, stamp, plocal_winratio);
-		end_warmup_thetahat(state, stamp);
-		parameters_calibration(state);
-
-		/* Set bounds on top window */
-// TODO why is it done in here ??
-		state->top_win_half = state->top_win - 1;
-
-		verbose(VERB_CONTROL, "i=%lu: End of Warmup Phase. Stamp read check: "
-				"%llu %22.10Lf %22.10Lf %llu",
-				state->stamp_i, stamp->Ta,stamp->Tb,stamp->Te,stamp->Tf);
-
-		/* Remove STARAD_WARMUP from the clock's status */
-		DEL_STATUS(rad_data, STARAD_WARMUP);
-	}
-
-
-
-/* =============================================================================
- * RECORD LASTSTAMP
- * =============================================================================
- */
-	copystamp(stamp, &state->stamp);
-
+	collect_stats_state(state, stamp);
 	print_stats_state(state);
-
-	/*
-	 * Prepare for next stamp.
-	 * XXX Not great for printing things out of the algo (need to
-	 * subtract 1)
-	 */
-	state->stamp_i++;
-
 
 
 /* =============================================================================
  * OUTPUT 
- * =============================================================================
- */
-
-output_results:
+ * ===========================================================================*/
 
 	/* We lock the global data to to ensure data consistency. Do not want shared
 	 * memory segment be half updated and 3rd party processes get bad data.
 	 * Also we lock the matlab output data at the same time
 	 * to ensure consistency for live captures.
 	 */
-// TODO FIXME : locking should go away. Should update state data, then lock and
-// copy to radclock_handle outside of here
+
+	/* Required to ensure output data not used/printed during an update */
 	pthread_mutex_lock(&handle->globaldata_mutex);
 	
 	/* The next_expected field has to take into account the fact that ntpd sends
@@ -2512,18 +2363,26 @@ output_results:
 	//		 * varying poll period when in piggy back mode
 	//		 * rad_data->next_expected	= stamp->Tf + ((state->poll_period - 1.5) / state->phat);
 
+	/* TODO: Old comment from top of fn:  to be integrated here
+	 * Error bound reporting. Error bound correspond to the last effective update of
+	 * thetahat (i.e. it may not be the value computed with the current stamp).
+	 * avg and std are tracked based on the size of the top window
+	 * No need for a "_last", it is maintained outside the algo (as well as the
+	 * current number)
+	*/
+
 	/* Clock error estimates.
 	 * Applies an ageing from thetastamp to the current state, similar to gap recovery.
 	 * Doesn't update estimates from their initialized value of zero on first stamp,
 	 * since algo parameters can be 3 orders of magnitude out.
-	 * As stamp_i already incremented here, it counts stamps as 1 2 3 TODO: revisit this
-	 * nerror counts number of times stats collected, is  stamp_i-1 .
+	 * So nerror counts number of times stats collected, = value of stamp_i .
 	 */
-	if (state->stamp_i > 1) {
-		//rad_data->ca_err			= state->minET;	// initialize to this stamp
+	double error_bound;
+	if (state->stamp_i > 0) {
+		//rad_data->ca_err = state->minET;    // initialize to this stamp
 		error_bound = ALGO_ERROR(state)->Ebound_min_last +
 			state->phat * (double)(stamp->Tf - state->thetastamp.Tf) * phyparam->RateErrBOUND;
-		
+
 		/* Update _hwin members of  state->algo_err  */
 		ALGO_ERROR(state)->cumsum_hwin += error_bound;
 		ALGO_ERROR(state)->sq_cumsum_hwin += error_bound * error_bound;
@@ -2537,43 +2396,40 @@ output_results:
 	}
 
 
-	/* Fill the output structure, used mainly to fill the matlab file
-	 * TODO: there is a bit of redundancy in here
+	/* Fill the output structure, used mainly to write to the .mat output file
+	 * Members not sourced from state are sub-algo internal variables of use in
+	 * algo diagnostics.
 	 */
-	output->RTT				= RTT;
-	output->phat			= state->phat;
-	output->perr			= state->perr;
-	output->plocal			= state->plocal;
-	output->plocalerr		= state->plocalerr;
-	output->K				= state->K;
-	output->thetahat		= state->thetahat;
-	output->RTThat			= state->RTThat;
-	output->RTThat_new	= state->next_RTThat;
-	output->RTThat_shift	= state->RTThat_shift;
-	/* Values already set in process_thetahat_* */
-	//	output->th_naive		= th_naive;
-	//	output->minET			= minET;
-	//	output->errTa			= errTa;
-	//	output->errTf			= errTf;
-	//	output->wsum			= wsum;
-	//	stamp_tmp = history_find(&state->stamp_hist, jbest);
-	//	output->best_Tf		= stamp_tmp->Tf;
-	output->minET_last	= state->minET;			// but is already updated in state??
-	output->status			= rad_data->status;
+	output->n_stamps     = 1 + state->stamp_i;  // # stamps seen by algo, is ≥1
+	output->RTT          = RTT;           // value for This stamp
+	output->RTThat       = state->RTThat;
+	output->RTThat_new   = state->next_RTThat;
+	output->RTThat_shift = state->RTThat_shift;
+	output->phat         = state->phat;
+	output->perr         = state->perr;
+	output->plocal       = state->plocal;
+	output->K            = state->K;
+	output->thetahat     = state->thetahat;
+	output->minET_last   = state->minET;  // value the last time updated/accepted
+	/* Internal variables saved directly within process_plocal_full */
+	//	 output->plocalerr = plocalerr;     // value for This stamp
+	/* Internal variables saved directly within process_thetahat_{warmup,full} */
+	//  output->th_naive  = th_naive;
+	//  output->minET     = minET;         // value for This stamp
+	//  output->pDf       = pDf;
+	//  output->pDb       = pDb;
+	//  output->wsum      = wsum;
+	//  stamp_tmp = history_find(&state->stamp_hist, jbest);
+	//  output->best_Tf   = stamp_tmp->Tf;
+	output->status       = rad_data->status;
 
-/* Need to rethink purpose of output structure.
- * Many field duplicate those in state, can we have pointers instead?
- * It is mainly for ascii file outputting, can we construct within the print fn
- * only just-in-time?  using values in state and rad_data?  and replace
- * exceptions with references to state and rad_data instead?
+
+/* Best if output doesn't own anything, just copies
  * Ownerships unclear:
- *  [ I think best if output doesn't own anything, just copies for output ]
  *   status:  as above, rad_data seems to own (updated in situ from multiple places
- *          including here, but output just has an (incomplete?) copy made here
+ *            including here, but output just has an (incomplete?) copy made here
  *   leapsecond_*   output seems to own, rad_data gets a copy in process_stamp
- *					best to reverse this?  it is true that leapsec cant live in state.
- *   output->n_stamps  and  state->stamp_i  seem to be the same, no??
- * Does the output need mutex protection?  if not, remove it.
+ *            best to reverse this?  it is true that leapsec cant live in state.
  */
 
 	/* Unlock Global Data */
@@ -2581,4 +2437,3 @@ output_results:
 
 	return (0);
 }
-

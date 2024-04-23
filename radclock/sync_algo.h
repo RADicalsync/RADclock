@@ -30,7 +30,7 @@
 /*
  * Standard client-server NTP packet exchange.
  *
- *                Tb     Te            real times:  ta < tb < te < tf
+ *                Tb     Te        true event times:  ta < tb < te < tf
  *                 |      |           available TS's: Ta < Tf  [counter units]
  *  Server  ------tb------te-------                   Tb < Te  [sec]
  *               /          \
@@ -51,29 +51,29 @@
  * Machine characteristics (interrupt latency and CPU oscillator stability)
  */
 // [sec] natural TSing limitation: `maximum' interrupt latency
-#define TS_LIMIT_EXCEL			0.000015
-#define TS_LIMIT_GOOD			0.000015
-#define TS_LIMIT_POOR			0.000015
+#define TS_LIMIT_EXCEL        0.000015
+#define TS_LIMIT_GOOD         0.000015
+#define TS_LIMIT_POOR         0.000015
 // [sec] maximum timescale of validity of the Simple Skew Model (SKM)
-#define SKM_SCALE_EXCEL			1024.0
-#define SKM_SCALE_GOOD			1024.0
-#define SKM_SCALE_POOR			512.0
+#define SKM_SCALE_EXCEL       1024.0
+#define SKM_SCALE_GOOD        1024.0
+#define SKM_SCALE_POOR        512.0
 // bound on rate error regardless of time scale
-#define RATE_ERR_BOUND_EXCEL	0.0000001
-#define RATE_ERR_BOUND_GOOD	0.0000005
-#define RATE_ERR_BOUND_POOR	0.000001
+#define RATE_ERR_BOUND_EXCEL  0.0000001
+#define RATE_ERR_BOUND_GOOD   0.0000005
+#define RATE_ERR_BOUND_POOR   0.000001
 // limit of meaningful accuracy of SKM rate
-#define BEST_SKM_RATE_EXCEL	0.00000005
-#define BEST_SKM_RATE_GOOD		0.0000002
-#define BEST_SKM_RATE_POOR		0.000001
+#define BEST_SKM_RATE_EXCEL   0.00000005
+#define BEST_SKM_RATE_GOOD    0.0000002
+#define BEST_SKM_RATE_POOR    0.000001
 // Ratio defining offset based on TSLIMIT
-#define OFFSET_RATIO_EXCEL		6
-#define OFFSET_RATIO_GOOD		10
-#define OFFSET_RATIO_POOR		10
+#define OFFSET_RATIO_EXCEL    6
+#define OFFSET_RATIO_GOOD     10
+#define OFFSET_RATIO_POOR     10
 // plocal quality
-#define PLOCAL_QUALITY_EXCEL	0.0000008
-#define PLOCAL_QUALITY_GOOD	0.0000008
-#define PLOCAL_QUALITY_POOR	0.000002
+#define PLOCAL_QUALITY_EXCEL  0.0000008
+#define PLOCAL_QUALITY_GOOD   0.0000008
+#define PLOCAL_QUALITY_POOR   0.000002
 
 
 /*
@@ -96,7 +96,7 @@ struct radclock_phyparam {
 typedef enum {
 	STAMP_UNKNOWN,
 	STAMP_SPY,
-	STAMP_NTP,		/* Handed by libpcap */
+	STAMP_NTP,    /* Handed by libpcap */
 	STAMP_PPS,
 } stamp_type_t;
 
@@ -108,10 +108,10 @@ struct unidir_stamp {
 
 
 struct bidir_stamp {
-	vcounter_t	Ta;		// vcount timestamp [counter value] of pkt leaving client
-	long double	Tb;		// timestamp [sec] of arrival at server
-	long double	Te;		// timestamp [sec] of departure from server
-	vcounter_t	Tf;		// vcount timestamp [counter value] of pkt returning to client
+	vcounter_t	Ta;    // vcount timestamp [counter value] of pkt leaving client
+	long double	Tb;    // timestamp [sec] of arrival at server
+	long double	Te;    // timestamp [sec] of departure from server
+	vcounter_t	Tf;    // vcount timestamp [counter value] of pkt returning to client
 };
 
 
@@ -122,7 +122,7 @@ struct stamp_t {
 	char server_ipaddr[INET6_ADDRSTRLEN];
 	int ttl;
 	int stratum;
-	int LI;		// value of LI bits in response header, in {0,1,2,3}
+	int LI;    // value of LI bits in response header, in {0,1,2,3}
 	uint32_t refid;
 	double rootdelay;
 	double rootdispersion;
@@ -147,33 +147,33 @@ struct stamp_t {
 struct bidir_algooutput {
 
 	/** Clock variables outside algo **/
-	long int n_stamps;
+	long int n_stamps;  // # of stamps with valid sID, and sane, received by process_stamp, fed to algo
 
 	/* Leap second variables */
-	int leapsec_total;				// sum of leap seconds seen since clock start
-	int leapsec_next;					// value of the expected next leap second {-1 0 1}
-	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none
+	int leapsec_total;    // sum of leap seconds seen since clock start
+	int leapsec_next;     // value of the expected next leap second {-1 0 1}
+	vcounter_t leapsec_expected;    // estimated vcount of next leap, or 0 if none
 	
 	/** Internal algo variables visible outside **/
 	/* Per-stamp output */
-	vcounter_t 	RTT;			// Not in state [is RTT of last stamp]
-	double		phat;
-	double		perr;
-	double 		plocal;
-	double 		plocalerr;
+	vcounter_t  RTT;       // Not in state [is RTT of last stamp]
+	double      phat;
+	double      perr;
+	double      plocal;
+	double      plocalerr;
 	long double K;
-	double 		thetahat;
-	vcounter_t 	RTThat;
-	vcounter_t 	RTThat_new;
-	vcounter_t 	RTThat_shift;
-	double 		th_naive;
-	double 		minET;
-	double 		minET_last;		// Not in state
-	double 		errTa;
-	double 		errTf;
-	double 		wsum;
-	vcounter_t 	best_Tf;
-	unsigned int status;			// Not in state
+	double      thetahat;
+	vcounter_t  RTThat;
+	vcounter_t  RTThat_new;
+	vcounter_t  RTThat_shift;
+	double      th_naive;
+	double      minET;      // Not in state
+	double      minET_last;
+	double      pDf;  // previously errTa, but sign now reversed!
+	double      pDb;  // previously errTf
+	double      wsum;
+	vcounter_t  best_Tf;
+	unsigned int status;    // Not in state
 };
 
 
@@ -181,8 +181,8 @@ struct bidir_algooutput {
  * reworking the bidir_algostate structure
  */
 struct algo_error {
-	double Ebound_min_last;		// value at last true update
-	double error_bound;			// value for last stamp
+	double Ebound_min_last;  // value at last true update
+	double error_bound;      // value for last stamp
 	long nerror;
 	double cumsum;
 	double sq_cumsum;
@@ -199,13 +199,13 @@ struct bidir_algostate {
 	 */
 	index_t stamp_i;
 
-	struct bidir_stamp stamp;	// previous input bidir stamp (hence leap-free)
+	struct bidir_stamp stamp;  // previous input bidir stamp (hence leap-free)
 
-	/* Histories */
+	/* Time Series Histories */
 	history stamp_hist;
 	history Df_hist;
 	history Db_hist;
-	//history Asym_hist;      // currently Asymhat not based on filtering a raw asym
+	//history Asym_hist;       // currently Asymhat not based on filtering a raw asym
 	history Dfhat_hist;
 	history Dbhat_hist;
 	history Asymhat_hist;
@@ -214,98 +214,98 @@ struct bidir_algostate {
 	history thnaive_hist;
 
 	/* OWD */
-	double Dfhat;					// Estimate of minimal Df
- 	double next_Dfhat;			// Df estimate to be in the next half top window
-	double Dfhat_shift;			// sliding window estimate for upward level shift detection
-	double Dfhat_shift_thres;	// threshold in [s] for triggering upward shift detection
-	double Dbhat;					// Estimate of minimal Db
- 	double next_Dbhat;			// Db estimate to be in the next half top window
-	double Dbhat_shift;			// sliding window estimate for upward level shift detection
-	double Dbhat_shift_thres;	// threshold in [s] for triggering upward shift detection
+	double Dfhat;              // Estimate of minimal Df
+ 	double next_Dfhat;         // Df estimate to be in the next half top window
+	double Dfhat_shift;        // sliding window estimate for upward level shift detection
+	double Dfhat_shift_thres;  // threshold in [s] for triggering upward shift detection
+	double Dbhat;              // Estimate of minimal Db
+ 	double next_Dbhat;         // Db estimate to be in the next half top window
+	double Dbhat_shift;        // sliding window estimate for upward level shift detection
+	double Dbhat_shift_thres;  // threshold in [s] for triggering upward shift detection
 
 	/* Path Asymmetry */
-	double Asymhat;				// Estimate of underlying asymmetry
+	double Asymhat;            // Estimate of underlying asymmetry
 
 	/* Window sizes, measured in [pkt index] These control algorithm, independent of implementation */
-	index_t warmup_win;			// warmup window, RTT estimation (indep of time and CPU, need samples)
-	index_t top_win;				// top level window, must forget past
-	index_t top_win_half;		// future stamp when top level window half is updated 
-	index_t shift_win;			// shift detection window size
-	index_t shift_end;			// shift detection record of oldest pkt in shift window for RTT
-	index_t shift_end_OWD;		// shift detection record of oldest pkt in shift window for OWD
-	index_t plocal_win;			// local period estimation window based on SKM scale
-	index_t plocal_end;			// oldest pkt in local period estimation window
-	index_t offset_win;			// offset estimation, based on SKM scale (don't allow too small)
-	index_t jsearch_win;			// window width for choosing pkt j for phat estimation
+	index_t h_win;             // top level window of held memory/history: must forget past
+	index_t history_end;       // future stamp when top level history window half is advanced
+	index_t warmup_win;        // warmup window, RTT estimation (indep of time and CPU, need samples)
+	index_t shift_win;         // shift detection window size
+	index_t shift_end;         // shift detection record of oldest pkt in shift window for RTT
+	index_t shift_end_OWD;     // shift detection record of oldest pkt in shift window for OWD
+	index_t plocal_win;        // local period estimation window based on SKM scale
+	index_t plocal_end;        // oldest pkt in local period estimation window
+	index_t offset_win;        // offset estimation, based on SKM scale (don't allow too small)
+	index_t jsearch_win;       // window width for choosing pkt j for phat estimation
 
-	int poll_period;				// Current polling period for the peer
-	index_t poll_transition_th;	// Number of future stamps remaining to complete new polling period transition (thetahat business)
-	double poll_ratio;			// Ratio between new and old polling period after it changed
-	index_t poll_changed_i;		// First stamp after change in polling period
+	int poll_period;            // Current polling period for the peer
+	index_t poll_transition_th; // Number of future stamps remaining to complete new polling period transition (thetahat business)
+	double poll_ratio;          // Ratio between new and old polling period after it changed
+	index_t poll_changed_i;     // First stamp after change, hence index of last change
 
 	/* Error thresholds, measured in [sec], or unitless */
-	double Eshift;				// threshold for detection of upward level shifts (should adapt to variability)
-	double Ep;					// point error threshold for phat
-	double Ep_qual;				// [unitless] quality threshold for phat (value after 1st window) 
-	double Ep_sanity;			// [unitless] sanity check threshold for phat
-	double Eplocal_qual;		// [unitless] quality      threshold for plocal 
-	double Eplocal_sanity;		// [unitless] sanity check threshold for plocal
-	double Eoffset;				// quality band in weighted theta estimate
-	double Eoffset_qual;		// weighted quality threshold for offset, choose with Gaussian decay in mind!! small multiple of Eoffset
-	double Eoffset_sanity_min;	// was absolute sanity check threshold for offset (should adapt to data)
-	double Eoffset_sanity_rate;	// [unitless] sanity check threshold per unit time [sec] for offset
+	double Eshift;              // threshold for detection of upward level shifts (should adapt to variability)
+	double Ep;                  // point error threshold for phat
+	double Ep_qual;             // [unitless] quality threshold for phat (value after 1st window)
+	double Ep_sanity;           // [unitless] sanity check threshold for phat
+	double Eplocal_qual;        // [unitless] quality      threshold for plocal
+	double Eplocal_sanity;      // [unitless] sanity check threshold for plocal
+	double Eoffset;             // quality band in weighted theta estimate
+	double Eoffset_qual;        // weighted quality threshold for offset,
+	                            // choose with Gaussian decay in mind!! small multiple of Eoffset
+	double Eoffset_sanity_min;  // was absolute sanity check threshold for offset (should adapt to data)
+	double Eoffset_sanity_rate; // [unitless] sanity check threshold per unit time [sec] for offset
 
 	/* Warmup phase */
-	index_t wwidth;			// warmup width of end windows in pkt units (also used for plocal)
-	index_t near_i;			// index of minimal RTT within near windows
-	index_t far_i;				// index of minimal RTT within far windows
+	index_t wwidth;             // warmup width of end windows in pkt units (also used for plocal)
+	index_t near_i;             // index of minimal RTT within near windows (larger i)
+	index_t far_i;              // index of minimal RTT within far windows (smaller i)
  
 	/* RTT (in vcounter units to avoid pb if phat bad)
-	 * Records related to top window, and level shift
-	 */
-	vcounter_t RTThat;				// Estimate of minimal RTT 
- 	vcounter_t next_RTThat;			// RTT estimate to be in the next half top window
-	vcounter_t RTThat_shift;		// sliding window RTT estimate for upward level shift detection
-	vcounter_t RTThat_shift_thres;	// threshold in [vcount] units for triggering upward shift detection
+	 * Records related to top window, and level shift */
+	vcounter_t RTThat;             // Estimate of minimal RTT
+ 	vcounter_t next_RTThat;        // RTT estimate to be in the next half top window
+	vcounter_t RTThat_shift;       // sliding window RTT estimate for upward level shift detection
+	vcounter_t RTThat_shift_thres; // threshold in [vcount] units for triggering upward shift detection
 
 	/* Oscillator period estimation */
-	double phat;					// period estimate
-	double perr;					// estimate of total error of phat [unitless]
-	index_t jcount;					// counter for pkt index in jsearch window
-	int phat_sanity_count;			// counters of error conditions
+	double phat;                   // period estimate
+	double perr;                   // estimate of total error of phat [unitless]
+	index_t jcount;                // counter for pkt index in jsearch window
+	int phat_sanity_count;         // counters of error conditions
 
 	/* Record of past stamps for oscillator period estimation */
-	struct bidir_stamp pstamp;		// left hand stamp used to compute phat in full algo (1st half win)
-	struct bidir_stamp next_pstamp;	// the one to be in the next half top window
-	index_t pstamp_i;				// index of phat stamp 
-	index_t next_pstamp_i;			// index of next phat stamp to be used
-	double pstamp_perr;				// point error of phat stamp
-	double next_pstamp_perr;		// point error of next phat stamp 
-	vcounter_t pstamp_RTThat;		// RTThat estimate recorded with phat stamp 
-	vcounter_t next_pstamp_RTThat;	// RTThat estimate recorded for next phat stamp
+	struct bidir_stamp pstamp;     // left hand stamp used to compute phat in full algo (1st half win)
+	struct bidir_stamp next_pstamp;// the one to be in the next half top window
+	index_t pstamp_i;              // index of phat stamp
+	index_t next_pstamp_i;         // index of next phat stamp to be used
+	double pstamp_perr;            // point error of phat stamp
+	double next_pstamp_perr;       // point error of next phat stamp
+	vcounter_t pstamp_RTThat;      // RTThat estimate recorded with phat stamp
+	vcounter_t next_pstamp_RTThat; // RTThat estimate recorded for next phat stamp
 
 	/* Plocal estimation */
-	double plocal;					// local period estimate
-	double plocalerr;				// estimate of total error of plocal [unitless]
-	int plocal_sanity_count;		// plocal sanity count
-	int plocal_problem;				// something wrong with plocal windows
+	double plocal;                 // local period estimate
+	double plocalerr;              // estimate of total error of plocal [unitless]
+	int plocal_sanity_count;       // plocal sanity count
+	int plocal_problem;            // something wrong with plocal windows
 
 	/* Offset estimation */
-	long double K;		// Uncorrected clock origin alignment constant
-						// must hold [sec] since timescale origin, and at least 1mus precision
-	double thetahat;	// Drift correction for uncorrected clock
-	double minET;		// Estimate of thetahat error
-	struct bidir_stamp thetastamp;	// Stamp corresponding to last update of thetahat
-	int offset_quality_count;		// Offset quality events counter
-	int offset_sanity_count;		// Offset sanity events counter
+	long double K;                 // Uncorrected clock origin alignment constant
+	                               // must hold [s] since timescale origin, and at least 1mus precision
+	double thetahat;               // Drift correction for uncorrected clock
+	double minET;                  // Estimate of thetahat error
+	struct bidir_stamp thetastamp; // Stamp corresponding to last update of thetahat
+	int offset_quality_count;      // Offset quality events counter
+	int offset_sanity_count;       // Offset sanity events counter
 
 	/* Statistics to track error in the Absolute clock */
 	struct algo_error algo_err;
 
 	/* Statistics */
-	int stats_sd[3];			// Stats on server delay (good, avg, bad)
+	int stats_sd[3];          // Stats on server delay (good, avg, bad)
 // TODO should this be in source structure or peer structure?
-//	struct timeref_stats stats;		// FIXME: this is a mess
+//	struct timeref_stats stats;    // FIXME: this is a mess
 
 };
 
@@ -337,9 +337,9 @@ struct bidir_algodata {
  * Functions declarations
  */
 int RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
-		struct bidir_stamp *input_stamp, int qual_warning,
-		struct radclock_data *rad_data, struct radclock_error *rad_error,
-		struct bidir_algooutput *output);
+    struct bidir_stamp *input_stamp, int qual_warning,
+    struct radclock_data *rad_data, struct radclock_error *rad_error,
+    struct bidir_algooutput *output);
 
 void init_stamp_queue(struct bidir_algodata *algodata);
 void destroy_stamp_queue(struct bidir_algodata *algodata);

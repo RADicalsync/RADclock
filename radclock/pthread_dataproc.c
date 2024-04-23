@@ -702,10 +702,10 @@ preferred_RADclock(struct radclock_handle *handle)
 
 	for (s=0; s < handle->nservers; s++) {
 		state = &((struct bidir_algodata *)handle->algodata)->state[s];
-		if (state->stamp_i == 0) continue;		// no stamp for this server yet
+		if (state->stamp_i == -1) continue;    // no stamp for this server yet
 
 		/* Find minimum RTT */
-		if (s_mRTThat<0) {	// initialize to first server with a stamp
+		if (s_mRTThat<0) {  // initialize to first server with a stamp
 			mRTThat = state->RTThat;
 			s_mRTThat = s;
 		} else
@@ -760,17 +760,17 @@ preferred_RADclock(struct radclock_handle *handle)
  * This function is the core of the RADclock daemon.
  * It checks to see if any of the maintained RADclocks (one per server) is being
  * starved of data.  It then looks for a new stamp. If one is available, it:
- * 	assesses it
- *		determines the server it came from (which RADclock it will feed)
- *			- manages the leapsecond issues
- *			- feeds a vetted and leapsecond-safe RAD-stamp to the algo
- *			- updates the central handle->rad_data containing this clock's params and state
- *		Once the new stamp is processed, the preferred clock decision is updated
- *		If running live:
- *			- the parameters of the preferred clock are sent to the relevant
- *			  IPC consumers (FF and/or FB kernel clocks, SMS)
- *			- keeps summaries of the new stamp and server state
- *			- if the daemon is an NTC OCN node, outputs a critical summary into a telemetry feed
+ *    ssesses it
+ *    determines the server it came from (which RADclock it will feed)
+ *       - manages the leapsecond issues
+ *       - feeds a vetted and leapsecond-safe RAD-stamp to the algo
+ *       - updates the central handle->rad_data containing this clock's params and state
+ *    Once the new stamp is processed, the preferred clock decision is updated
+ *    If running live:
+ *       - the parameters of the preferred clock are sent to the relevant
+ *         IPC consumers (FF and/or FB kernel clocks, SMS)
+ *       - keeps summaries of the new stamp and server state
+ *       - if the daemon is an NTC OCN node, outputs a critical summary into a telemetry feed
  */
 int
 process_stamp(struct radclock_handle *handle)
@@ -784,20 +784,20 @@ process_stamp(struct radclock_handle *handle)
 	struct bidir_stamp bdstamp_noleap;
 
 	/* Multiple server management */
-	int sID; 							// server ID of new stamp popped here
+	int sID;    // server ID of new stamp popped here
 	int s;
 	struct radclock_data *rad_data;
 	struct radclock_error *rad_error;
 	struct bidir_algodata *algodata;
-	struct stamp_t *laststamp;		// access last stamp (with original Te,Tf)
+	struct stamp_t *laststamp;    // access last stamp (with original Te,Tf)
 	struct bidir_algooutput *output;
 	struct bidir_algostate *state;
 	int pref_updated;
 	int pref_sID_new;
 
 	/* Error control logging */
-	long double currtime 	= 0;
-	double timediff 			= 0;
+	long double currtime = 0;
+	double timediff = 0;
 	int err, err_read;
 	
 	/* Check hardware counter has not changed */
@@ -830,7 +830,7 @@ process_stamp(struct radclock_handle *handle)
 		err_read = radclock_get_vcounter(handle->clock, &now);
 		if (err_read < 0)
 			return (-1);
-	
+
 		for (s=0; s < handle->nservers; s++) {
 			rad_data = &handle->rad_data[s];
 			state = &algodata->state[s];
@@ -838,7 +838,9 @@ process_stamp(struct radclock_handle *handle)
 				if (!HAS_STATUS(rad_data, STARAD_STARVING)) {
 					verbose(LOG_WARNING, "Clock %d is starving. Gap has exceeded 10 stamps", s);
 					ADD_STATUS(rad_data, STARAD_STARVING);
+				// TODO: alter minRTT metric here: add in appropriate initial ∆drift for 10stamps (make a param)
 				}
+				// TODO: alter minRTT metric here: add in appropriate ∆drift
 			}
 		}
 
@@ -859,7 +861,7 @@ process_stamp(struct radclock_handle *handle)
 					state = &algodata->state[handle->pref_sID];
 					if ( VERB_LEVEL>2 ) {
 						verbose(LOG_WARNING, "RADclock noticed a FFdata reset after stamp %d, "
-												"may require a restart I'm afraid", state->stamp_i);
+						    "may require a restart I'm afraid", state->stamp_i);
 						printout_FFdata(&cdat);
 					}
 					//return -1;
@@ -881,11 +883,11 @@ process_stamp(struct radclock_handle *handle)
 		return (1);
 	}
 	verbose(VERB_DEBUG, "Popped a stamp from server %d: %llu %.6Lf %.6Lf %llu %llu", sID,
-			(long long unsigned) BST(&stamp)->Ta, BST(&stamp)->Tb, BST(&stamp)->Te,
-			(long long unsigned) BST(&stamp)->Tf, (long long unsigned) stamp.id);
-	
+	    (long long unsigned) BST(&stamp)->Ta, BST(&stamp)->Tb, BST(&stamp)->Te,
+	    (long long unsigned) BST(&stamp)->Tf, (long long unsigned) stamp.id);
+
 	/* Set pointers to data for this server */
-	rad_data  = &handle->rad_data[sID];		// = SRAD_DATA(handle,sID);
+	rad_data  = &handle->rad_data[sID];    // = SRAD_DATA(handle,sID);
 	rad_error = &handle->rad_error[sID];
 	laststamp = &algodata->laststamp[sID];
 	output = &algodata->output[sID];
@@ -911,7 +913,7 @@ process_stamp(struct radclock_handle *handle)
 	}
 
 	/* Valid stamp obtained: record and flag it, then continue to the algo */
-	output->n_stamps++;
+	//	output->n_stamps++;  // now set in RADalgo_bidir
 	memcpy(laststamp, &stamp, sizeof(struct stamp_t));
 	if (HAS_STATUS(rad_data, STARAD_STARVING)) {
 		verbose(LOG_NOTICE, "Clock %d no longer starving", sID);
@@ -930,17 +932,17 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Update radclock parameters using leap-free stamp */
 	bdstamp_noleap = stamp.st.bstamp;
-	bdstamp_noleap.Tb += output->leapsec_total;	// adding means removing
+	bdstamp_noleap.Tb += output->leapsec_total;    // adding means removing
 	bdstamp_noleap.Te += output->leapsec_total;
-	//get_kernel_ffclock(handle->clock, &cdat);				// check for RTC reset
+	//get_kernel_ffclock(handle->clock, &cdat);    // check for RTC reset
 	// TODO: need to make  RTCreset = secs_to_nextupdate==0 && not yet pushed to kernel
 	//  easy and definitive way to to record a stamp_firstpush = stamp_i  in peer
 	RADalgo_bidir(handle, state, &bdstamp_noleap, qual_warning, rad_data, rad_error, output);
-//						cdat.secs_to_nextupdate == 0 && stamp_i > stamp_firstpush);
+//    cdat.secs_to_nextupdate == 0 && stamp_i > stamp_firstpush);
 
 	/* Update RADclock data with new algo outputs, and leap second update
-	 * the rad_data->status bits are jointly owned by the algo, and this function,
-	 * and are so no in algo state.  They are updated individually in-situ.
+	 * The rad_data->status bits are jointly owned by the algo, and this function,
+	 * and are so not in algo state.  They are updated individually in-situ.
 	 */
 	pthread_mutex_lock(&handle->globaldata_mutex);	// ensure consistent reads
 	rad_data->phat					= state->phat;
@@ -951,7 +953,7 @@ process_stamp(struct radclock_handle *handle)
 	rad_data->ca_err				= state->algo_err.error_bound;
 	rad_data->last_changed		= stamp.st.bstamp.Tf;
 	rad_data->next_expected		= stamp.st.bstamp.Tf +
-								(vcounter_t) ((double)state->poll_period / state->phat);
+	    (vcounter_t) ((double)state->poll_period / state->phat);
 	rad_data->leapsec_total		= output->leapsec_total;
 	rad_data->leapsec_next		= output->leapsec_next;
 	rad_data->leapsec_expected = output->leapsec_expected;
@@ -961,8 +963,8 @@ process_stamp(struct radclock_handle *handle)
 		rad_error->error_bound_avg = state->algo_err.cumsum / state->algo_err.nerror;
 		if (state->algo_err.nerror > 1) {
 			rad_error->error_bound_std = sqrt((state->algo_err.sq_cumsum -
-			(state->algo_err.cumsum * state->algo_err.cumsum / state->algo_err.nerror))
-				 / (state->algo_err.nerror - 1) );
+			  (state->algo_err.cumsum * state->algo_err.cumsum / state->algo_err.nerror))
+			  / (state->algo_err.nerror - 1) );
 		}
 	}
 	rad_error->min_RTT = state->RTThat * state->phat;
@@ -975,9 +977,9 @@ process_stamp(struct radclock_handle *handle)
 		handle->ntp_server[sID].rootdelay      = stamp.rootdelay;
 		handle->ntp_server[sID].rootdispersion = stamp.rootdispersion;
 		verbose(VERB_DEBUG, "Received pkt stratum= %u, rootdelay= %.9f, rootdispersion= %.9f",
-				stamp.stratum, stamp.rootdelay, stamp.rootdispersion);
+		    stamp.stratum, stamp.rootdelay, stamp.rootdispersion);
 	}
-	handle->ntp_server[sID].refid  = stamp.refid;	// typical not defined, get each time
+	handle->ntp_server[sID].refid  = stamp.refid;  // typical not defined, get each time
 	handle->ntp_server[sID].minRTT = rad_error->min_RTT;
 
 
@@ -1017,7 +1019,7 @@ process_stamp(struct radclock_handle *handle)
 	 *
 	 * The preferred clock only is used here, and only if an update for it noted.
 	 */
-  	if (handle->run_mode == RADCLOCK_SYNC_LIVE && pref_updated) {
+	if (handle->run_mode == RADCLOCK_SYNC_LIVE && pref_updated) {
 
 		/* Update IPC shared memory segment for used by libprocesses */
 		if (handle->conf->server_ipc == BOOL_ON) {
@@ -1031,7 +1033,7 @@ process_stamp(struct radclock_handle *handle)
 				update_kernel_fixed(handle);
 				verbose(VERB_DEBUG, "Sync pthread updated kernel fixed pt data.");
 			} else {
-				// TODO: great many things to do here to performm a clean shutdown or reset...
+				// TODO: great many things to do here to perform a clean shutdown or reset...
 				if ( get_currentcounter(handle->clock) == 1 ) {
 					verbose(LOG_NOTICE, "Hardware counter has changed, shutting down RADclock");
 					return (-1);
@@ -1075,7 +1077,7 @@ process_stamp(struct radclock_handle *handle)
 					read_RADabs_UTC(&inverted_raddata, &inverted_raddata.last_changed, &CaFF, 0);
 					Ca_compare -= CaFF;
 					verbose(LOG_NOTICE, " orig - inverted:   ca: %5.2Lf [ns],  Ca: %5.4Lf [ns]",
-							ca_compare*1e9, Ca_compare*1e9 );
+					    ca_compare*1e9, Ca_compare*1e9 );
 				}
 
 			}
@@ -1086,7 +1088,7 @@ process_stamp(struct radclock_handle *handle)
 				verbose(VERB_DEBUG, "Kernel FBclock has been set.");
 			}
 
-		}	// if !STARAD_UNSYNC
+		}  // if !STARAD_UNSYNC
 
 		/* Update any virtual machine store if configured */
 		if (VM_MASTER(handle)) {
@@ -1105,13 +1107,11 @@ process_stamp(struct radclock_handle *handle)
 
 	/* View updated RADclock data and compare with NTP server stamps in nice
 	 * format. The first 10 then every 6 hours (poll_period can change, but
-	 * should be fine with a long term average, do not have to be very precise
-	 * anyway).
-	 * Note: ->n_stamps has been incremented by the algo to prepare for next
-	 * stamp. TODO: check this statement, is done here only I think
+	 * should be fine with a long term average, do not have to be very precise anyway).
+	 * Note: output->n_stamps  and state->stamp_i are the same TODO: check this, make n_stamps a copy?
 	 */
 	if (VERB_LEVEL && (output->n_stamps < 10) ||
-			!(output->n_stamps % ((int)(3600*6/state->poll_period))) )
+	    !(output->n_stamps % ((int)(3600*6/state->poll_period))) )
 	{
 		read_RADabs_UTC(rad_data, &(rad_data->last_changed), &currtime, PLOCAL_ACTIVE);
 		timediff = (double) (currtime - (long double) BST(&stamp)->Te);

@@ -513,14 +513,14 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	int s;
 	struct bidir_algodata *algodata;
 
-	handle->nservers = ns;	// just in case, should already be true
+	handle->nservers = ns;    // just in case, should already be true
 	
 	/* RADclock data. Initialize all to zero then override some members */
 	handle->rad_data = calloc(ns,sizeof(struct radclock_data));
 	for (s=0; s<ns; s++) {
-		handle->rad_data[s].phat 			= 1e-9;
-		handle->rad_data[s].phat_local 	= 1e-9;
-		handle->rad_data[s].status 		= STARAD_UNSYNC | STARAD_WARMUP;
+		handle->rad_data[s].phat       = 1e-9;
+		handle->rad_data[s].phat_local = 1e-9;
+		handle->rad_data[s].status     = STARAD_UNSYNC | STARAD_WARMUP;
 	}
 
 	/* Clock error bound. All members initialized to zero */
@@ -532,7 +532,7 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	/* NTP server data */
 	handle->ntp_server = calloc(ns,sizeof(struct radclock_ntp_server));
 	for (s=0; s<ns; s++) {
-		SNTP_SERVER(handle,s)->burst = NTP_BURST;	// burst at startup, like ntpd
+		SNTP_SERVER(handle,s)->burst = NTP_BURST;  // burst at startup, like ntpd
 		SNTP_SERVER(handle,s)->stratum = STRATUM_UNSPEC;
 	}
 
@@ -541,6 +541,8 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	algodata->laststamp = calloc(ns,sizeof(struct stamp_t));
 	algodata->output = calloc(ns,sizeof(struct bidir_algooutput));
 	algodata->state = calloc(ns,sizeof(struct bidir_algostate));
+	for (s=0; s<ns; s++)
+		algodata->state[s].stamp_i = -1;  // signal no stamps processed yet
 
 	return;
 }
@@ -1352,9 +1354,23 @@ main(int argc, char *argv[])
 	pthread_mutex_destroy(&(handle->ieee1588eq_queue->rdb_mutex));
 	free(handle->pcap_queue);
 	free(handle->ieee1588eq_queue);
-	free(((struct bidir_algodata*)handle->algodata)->laststamp);
-	free(((struct bidir_algodata*)handle->algodata)->output);
-	free(((struct bidir_algodata*)handle->algodata)->state);
+
+	struct bidir_algodata *algodata = handle->algodata;
+	free(algodata->laststamp);
+	free(algodata->output);
+	for (int s=0; s<handle->nservers; s++) {
+		struct bidir_algostate *state = &algodata->state[s];
+		history_free(&state->stamp_hist);
+		history_free(&state->Df_hist);
+		history_free(&state->Db_hist);
+		history_free(&state->Dfhat_hist);
+		history_free(&state->Dbhat_hist);
+		history_free(&state->Asymhat_hist);
+		history_free(&state->RTT_hist);
+		history_free(&state->RTThat_hist);
+		history_free(&state->thnaive_hist);
+	}
+	free(algodata->state);
 	destroy_stamp_queue((struct bidir_algodata*)handle->algodata);
 
 	free(handle);
