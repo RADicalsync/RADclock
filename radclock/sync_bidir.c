@@ -29,7 +29,7 @@
 
 #include <math.h>
 #include <pcap.h>
-#include <pthread.h>	// TODO remove once globaldata locking is fixed
+#include <pthread.h>  // TODO remove once globaldata locking is fixed
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -70,29 +70,29 @@ inline void copystamp(struct bidir_stamp *orig, struct bidir_stamp *copy)
 
 /* Set algo error thresholds based on the parameters of the counter model */
 static void
-set_err_thresholds( struct radclock_phyparam *phyparam, struct bidir_algostate *state)
+set_err_thresholds(struct bidir_metaparam *metaparam, struct bidir_algostate *state)
 {
 	/* XXX Tuning history:
 	 * original: 10*TSLIMIT = 150 mus
-	 *    state->Eshift =  35*phyparam->TSLIMIT;  // 525 mus for Shouf Shouf?
+	 *    state->Eshift =  35*metaparam->TSLIMIT;  // 525 mus for Shouf Shouf?
 	 */
-	state->Eshift    = 10*phyparam->TSLIMIT;
-	state->Ep        = 3*phyparam->TSLIMIT;
-	state->Ep_qual   = phyparam->RateErrBOUND/5;
-	state->Ep_sanity = 3*phyparam->RateErrBOUND;
+	state->Eshift    = 10*metaparam->TSLIMIT;
+	state->Ep        =  3*metaparam->TSLIMIT;
+	state->Ep_qual   =    metaparam->RateErrBOUND/5;
+	state->Ep_sanity =  3*metaparam->RateErrBOUND;
 
 	/* XXX Tuning history:
-	 *    state->Eplocal_qual = 4*phyparam->BestSKMrate;  // Original
+	 *    state->Eplocal_qual = 4*metaparam->BestSKMrate;  // Original
 	 *    state->Eplocal_qual = 4*2e-7;   // Big Hack during TON paper
 	 *    state->Eplocal_qual = 40*1e-7;  // Tuning for Shouf Shouf tests ??
 	 * but finally introduced a new parameter in the config file */
-	state->Eplocal_qual   = phyparam->plocal_quality;
-	state->Eplocal_sanity = 3*phyparam->RateErrBOUND;
+	state->Eplocal_qual   =   metaparam->plocal_quality;
+	state->Eplocal_sanity = 3*metaparam->RateErrBOUND;
 
 	/* XXX Tuning history:
-	 *    *Eoffset = 6*phyparam->TSLIMIT;  // Original
+	 *    *Eoffset = 6*metaparam->TSLIMIT;  // Original
 	 * but finally introduced a new parameter in the config file */
-	state->Eoffset = phyparam->offset_ratio * phyparam->TSLIMIT;
+	state->Eoffset = metaparam->offset_ratio * metaparam->TSLIMIT;
 
 	/* XXX Tuning history:
 	 * We should decouple Eoffset and Eoffset_qual ... conclusion of shouf shouf
@@ -100,8 +100,8 @@ set_err_thresholds( struct radclock_phyparam *phyparam, struct bidir_algostate *
 	 * [UPDATE] - reverted ... see below
 	 */
 	state->Eoffset_qual        = 3*(state->Eoffset);
-	state->Eoffset_sanity_min  = 100*phyparam->TSLIMIT;
-	state->Eoffset_sanity_rate	= 20*phyparam->RateErrBOUND;
+	state->Eoffset_sanity_min  = 100*metaparam->TSLIMIT;
+	state->Eoffset_sanity_rate	= 20*metaparam->RateErrBOUND;
 }
 
 
@@ -117,17 +117,19 @@ set_err_thresholds( struct radclock_phyparam *phyparam, struct bidir_algostate *
  *        take into account unforseen circumstances, and ultimately oscillator ageing
  */
 static void
-set_algo_windows(struct radclock_phyparam *phyparam, struct bidir_algostate *p )
+set_algo_windows(struct bidir_metaparam *metaparam, struct bidir_algostate *p )
 {
 	index_t history_scale = 3600 * 24 * 7;  // time-scale [s] of h_win
 	p->h_win = (index_t) ( history_scale / p->poll_period );
 
 	/* shift detection. Ensure min of 100 samples (reference poll=16).
-	 * TODO: right function? */
-	p->shift_win = MAX( (index_t) ceil( (10*phyparam->TSLIMIT/1e-7)/p->poll_period ), 100 );
+	 * Initially based on upjump thres sh_thres = (ceil(Eshift/phat) modelling time for drift to
+	 * build to 150ms = 10*TSLIMIT=10*15mus for consistency, but now reset in parameters_calibration
+	 * TODO: needs deep rethink */
+	p->shift_win = MAX( (index_t) ceil( (10*metaparam->TSLIMIT/1e-7)/p->poll_period ), 100 );
 
 	/* offset estimation, based on SKM scale (don't allow too small) */
-	p->offset_win = (index_t) MAX( (phyparam->SKM_SCALE/p->poll_period), 2 );
+	p->offset_win = (index_t) MAX( (metaparam->SKM_SCALE/p->poll_period), 2 );
 
 	/* local period, not the right function! should be # samples and time based */
 	p->plocal_win = (index_t) MAX( ceil(p->offset_win*5), 4);
@@ -185,17 +187,18 @@ adjust_warmup_win(index_t i, struct bidir_algostate *p, unsigned int plocal_winr
 
 /* Print parameter summary: physical, network, windows, thresholds, sanity */
 static void
-print_algo_parameters(struct radclock_phyparam *phyparam, struct bidir_algostate *state)
+print_algo_parameters(struct bidir_metaparam *metaparam, struct bidir_algostate *state)
 {
 	verbose(VERB_CONTROL, "Machine Parameters:  TSLIMIT: %g, SKM_SCALE: %d, RateErrBOUND: %g, BestSKMrate: %g",
-	    phyparam->TSLIMIT, (int)phyparam->SKM_SCALE, phyparam->RateErrBOUND, phyparam->BestSKMrate);
+	    metaparam->TSLIMIT, (int)metaparam->SKM_SCALE, metaparam->RateErrBOUND, metaparam->BestSKMrate);
 
+	// TODO: why is h_win a network param?  if anything h_scale is a machine+network param
 	verbose(VERB_CONTROL, "Network Parameters:  poll_period: %u, h_win: %d ", state->poll_period, state->h_win);
 
 	verbose(VERB_CONTROL, "Windows (in pkts):   warmup: %lu, history: %lu, shift: %lu "
 	    "(thres = %4.0lf [mus]), plocal: %lu, offset: %lu (SKM scale is %u)",
 	    state->warmup_win, state->h_win, state->shift_win, state->Eshift*1000000, state->plocal_win, state->offset_win,
-	    (int) (phyparam->SKM_SCALE/state->poll_period) );
+	    (int) (metaparam->SKM_SCALE/state->poll_period) );
 
 	verbose(VERB_CONTROL, "Error thresholds :   phat:  Ep %3.2lg [ms], Ep_qual %3.2lg [PPM], "
 	    "plocal:  Eplocal_qual %3.2lg [PPM]", 1000*state->Ep, 1.e6*state->Ep_qual, 1.e6*state->Eplocal_qual);
@@ -211,7 +214,7 @@ print_algo_parameters(struct radclock_phyparam *phyparam, struct bidir_algostate
 
 
 static void
-update_state(struct radclock_phyparam *phyparam, struct bidir_algostate *state,
+update_state(struct bidir_metaparam *metaparam, struct bidir_algostate *state,
     unsigned int plocal_winratio, int poll_period)
 {
 	index_t si = state->stamp_i;  // convenience
@@ -226,7 +229,7 @@ update_state(struct radclock_phyparam *phyparam, struct bidir_algostate *state,
 	verbose(VERB_CONTROL, "** update_state triggered on stamp %lu **", si);
 
 	/* Initialize the error thresholds */
-	set_err_thresholds(phyparam, state);
+	set_err_thresholds(metaparam, state);
 
 	/* Record change of poll period.
 	 * Set poll_transition_th, poll_ratio and poll_changed_i for thetahat
@@ -241,10 +244,10 @@ update_state(struct radclock_phyparam *phyparam, struct bidir_algostate *state,
 	}
 
 	/* Set pkt-index algo windows.
-	 * With possibly new phyparam and/or polling period
+	 * With possibly new metaparam and/or polling period
 	 * These control the algo, independent of implementation.
 	 */
-	set_algo_windows(phyparam, state);
+	set_algo_windows(metaparam, state);
 
 	/* Ensure warmup_win consistent with algo windows for easy
 	 * initialisation of main algo after warmup 
@@ -368,7 +371,7 @@ update_state(struct radclock_phyparam *phyparam, struct bidir_algostate *state,
 	history_resize(&state->Dbhat_hist,   RTT_sz);
 	history_resize(&state->Asymhat_hist, RTT_sz);
 
-	print_algo_parameters(phyparam, state);
+	print_algo_parameters(metaparam, state);
 
 }
 
@@ -548,6 +551,8 @@ init_algos(struct radclock_config *conf, struct bidir_algostate *state,
 	copystamp(stamp, &state->thetastamp); // this is ok, but thetastamp setting needs detailed revision
 	output->best_Tf = stamp->Tf;  // other local output fields are zero/unavailable
 
+	/* pathpenalty measurement */
+	output->pathpenalty = RTT * state->phat;
 }
 
 
@@ -596,11 +601,17 @@ void init_RTTOWDAsym_full(struct bidir_algostate *state, struct bidir_stamp *sta
 	state->RTThat_shift = *RTT_tmp;
 
 	/* RTThat history
-	 * Needed for thetahat_full, not RTT algos themselves, but maintained within them.
-	 * Was ignored in warmup. Now initialize for full by filling with current
-	 * RTThat: not a true history, but sensible for thetahat_full  */
+	 * Not needed for RTT algos themselves, but maintained within them */
+
+	/* RTThat_hist [Needed in thetahat_full]
+	 *   was ignored in warmup. Now initialize for full by filling with current
+	 *   RTThat: not a true history, but sensible for thetahat_full  */
 	for (index_t j=0; j<=si; j++)
 		history_add(&state->RTThat_hist, j, &state->RTThat);
+
+	/* RTThat pre-jump history [Needed for update_pathpenalty_full] */
+	state->prevRTThat = state->RTThat;
+
 
 // // Alternative brute force instead of via history_add API
 //	unsigned int RTThat_sz = state->RTThat_hist.buffer_sz;
@@ -743,7 +754,7 @@ void init_thetahat_full(struct bidir_algostate *state, struct bidir_stamp *stamp
 
 /* Adjust parameters based on nearby/far away server.
  * Is adhoc, and ugly in that can overwrite values which should have been set
- * correctly already, in particular those based off phyparams. In a way an
+ * correctly already, in particular those based off metaparams. In a way an
  * attempt to define, again, excel/good/poor idea, but for path, not the host.
  * But some things do depend on server behaviour and path characteristics,
  * makes sense to recalibrate what we can after warmup, eg if path sucks,
@@ -1142,10 +1153,10 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 	index_t j;               // loop index, signed to avoid problem when j hits zero
 	index_t jmin = 0;        // index that hits low end of loop
 	vcounter_t* RTThat_ptr;  // points to a given RTThat in RTThat_hist
-	vcounter_t next_RTT, last_RTT;
+	vcounter_t next_RTT;
 
 	/* Update on-line RTT minima:  RTThat and next_RTThat */
-	last_RTT = state->RTThat;
+	state->prevRTThat = state->RTThat;  // immune to Upshift overwritting
 	state->RTThat = MIN(state->RTThat, RTT);
 	history_add(&state->RTThat_hist, si, &state->RTThat);
 	state->next_RTThat = MIN(state->next_RTThat, RTT);
@@ -1206,7 +1217,13 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 
 		/* Recalc of RTThist necessary for offset
 		 * Correct RTThat history back as far as necessary or possible
-		 * (typically shift_win >> offset_win, so lastshift won't bite) */
+		 * (typically shift_win >> offset_win, so lastshift won't bite)
+		 *  FIXME: not true in OCN context, and need big re-think anyway.
+		 *   ** offset_win straddling an Upshift ==> mixing different asym values! need
+		 *  to restrict index or enforce offset_win <= shift_win, but that is
+		 *  inflexible wrt future improvement in upshift detection methods
+		 *  TODO:  check if zero test necessary, in full algo jmin=0 shouldn't be possible
+		 */
 		if ( si > (state->offset_win-1) ) jmin = si - (state->offset_win-1); else jmin = 0;
 		jmin = MAX(lastshift, jmin);
 
@@ -1226,9 +1243,9 @@ process_RTT_full(struct bidir_algostate *state, struct radclock_data *rad_data, 
 	 * Shift location is simply the current stamp.
 	 * TODO: establish a dedicated downward threshold parameter and setting code
 	 */
-	if ( last_RTT > (state->RTThat + (state->RTThat_shift_thres)/4) ) {
+	if ( state->prevRTThat > (state->RTThat + (state->RTThat_shift_thres)/4) ) {
 		verbose(VERB_SYNC, "i=%lu: Downward RTT shift of %5.1lf [mus], RTT now %4.1lf [ms]",
-		    si, (last_RTT - state->RTThat)*state->phat * 1.e6, RTT * state->phat*1.e3);
+		    si, (state->prevRTThat - state->RTThat)*state->phat * 1.e6, RTT * state->phat*1.e3);
 	}
 }
 
@@ -1410,7 +1427,7 @@ void update_next_pstamp(struct bidir_algostate* state, struct bidir_stamp* stamp
  * The return value `ret' allows a signal to be sent to plocal algo that phat
  * sanity triggered on This stamp.
  */
-int process_phat_full(struct radclock_phyparam *phyparam, struct bidir_algostate* state,
+int process_phat_full(struct bidir_metaparam *metaparam, struct bidir_algostate* state,
     struct bidir_stamp* stamp, struct radclock_data *rad_data, vcounter_t RTT,
     int qual_warning)
 {
@@ -1459,7 +1476,7 @@ int process_phat_full(struct radclock_phyparam *phyparam, struct bidir_algostate
 
 	/* Candidate accepted based on quality, flag the change if large */
 	phat = compute_phat(state, &state->pstamp, stamp);
-	if ( fabs((phat - state->phat)/phat) > phyparam->RateErrBOUND/3 ) {
+	if ( fabs((phat - state->phat)/phat) > metaparam->RateErrBOUND/3 ) {
 		verbose(VERB_SYNC, "i=%lu: Jump in phat update, phat stats: (j,i)=(%lu,%lu), "
 		    "rel diff = %.10g, perr = %.3g, baseerr = %.10g, DelTb = %5.3Lg [hrs]",
 		    si, state->pstamp_i, si, (phat - state->phat)/phat,
@@ -1630,13 +1647,12 @@ process_plocal_full(struct bidir_algostate* state, struct radclock_data *rad_dat
 
 
 
-
 /* =============================================================================
  * THETAHAT ALGO
  * ===========================================================================*/
 
 void
-process_thetahat_warmup(struct radclock_phyparam *phyparam, struct bidir_algostate* state,
+process_thetahat_warmup(struct bidir_metaparam *metaparam, struct bidir_algostate* state,
     struct bidir_stamp* stamp, struct radclock_data *rad_data, vcounter_t RTT,
     struct bidir_algooutput *output)
 {
@@ -1715,7 +1731,7 @@ process_thetahat_warmup(struct radclock_phyparam *phyparam, struct bidir_algosta
 		RTT_tmp   = history_find(&state->RTT_hist, j);
 		stamp_tmp = history_find(&state->stamp_hist, j);
 		ET  = state->phat * ((double)(*RTT_tmp) - state->RTThat );
-		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
+		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * metaparam->BestSKMrate;
 
 		/* Per point bound error is simply ET in here */
 		//Ebound  = ET;
@@ -1749,7 +1765,7 @@ process_thetahat_warmup(struct radclock_phyparam *phyparam, struct bidir_algosta
 		RTT_tmp   = history_find(&state->RTT_hist, j);
 		stamp_tmp = history_find(&state->stamp_hist, j);
 		ET  = state->phat * ((double)(*RTT_tmp) - state->RTThat );
-		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
+		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * metaparam->BestSKMrate;
 
 		/* Record best in window excluding jbest */
 		if ( j == si || (jbest == 1) && (j == si - 1) )
@@ -1875,7 +1891,7 @@ process_thetahat_warmup(struct radclock_phyparam *phyparam, struct bidir_algosta
 
 
 
-void process_thetahat_full(struct radclock_phyparam *phyparam, struct bidir_algostate* state,
+void process_thetahat_full(struct bidir_metaparam *metaparam, struct bidir_algostate* state,
     struct bidir_stamp* stamp, struct radclock_data *rad_data, vcounter_t RTT,
     int qual_warning,  struct bidir_algooutput *output)
 {
@@ -1935,7 +1951,7 @@ void process_thetahat_full(struct radclock_phyparam *phyparam, struct bidir_algo
 		    "stamps or %5.3lg [sec]", si,
 		    gapsize/state->poll_period, gapsize);
 		/* In `big gap' mode, mistrust plocal and trust local th more */
-		if (gapsize > (double) phyparam->SKM_SCALE) {
+		if (gapsize > (double) metaparam->SKM_SCALE) {
 			//gap = 1;
 			verbose(VERB_SYNC, "i=%lu: End of big gap found width = %5.3lg [day] "
 			    "or %5.2lg [hr]", si, gapsize/(3600*24), gapsize/3600);
@@ -1995,7 +2011,7 @@ void process_thetahat_full(struct radclock_phyparam *phyparam, struct bidir_algo
 		RTThat_tmp = history_find(&state->RTThat_hist, j);
 		stamp_tmp  = history_find(&state->stamp_hist, j);
 		ET  = state->phat * ((double)(*RTT_tmp) - *RTThat_tmp);
-		ET += state->phat * (double) ( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
+		ET += state->phat * (double) ( stamp->Tf - stamp_tmp->Tf ) * metaparam->BestSKMrate;
 
 		/* Per point bound error is ET without the SD penalty */
 		//Ebound  = ET;
@@ -2036,7 +2052,7 @@ void process_thetahat_full(struct radclock_phyparam *phyparam, struct bidir_algo
 		RTT_tmp   = history_find(&state->RTT_hist, j);
 		stamp_tmp = history_find(&state->stamp_hist, j);
 		ET  = state->phat * ((double)(*RTT_tmp) - state->RTThat );
-		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * phyparam->BestSKMrate;
+		ET += state->phat * (double)( stamp->Tf - stamp_tmp->Tf ) * metaparam->BestSKMrate;
 
 		/* Record best in window excluding jbest */
 		if ( j == si || (jbest == 1) && (j == si - 1) )
@@ -2143,6 +2159,154 @@ void process_thetahat_full(struct radclock_phyparam *phyparam, struct bidir_algo
 
 
 /* =============================================================================
+ * PATHPENALTY METRIC
+ * ===========================================================================*/
+
+/* Goal: to track a robust measure of path quality over a "path_scale" timescale
+ * relevant for the prediction of typical rAdclock quality over that path
+ * over that timescale. The metric is used by preferred_RADclock as the
+ * main basis of preferred server selection.
+ *
+ * The penalty comprises three components measured in [s]
+ *    Pbase       impact of the value of the RTT BaseLine
+ *    Pchange     impact of the changes in RTT BL (asym implications of level shifts)
+ *    Pquality    impact of stamp absence, congestion quality, or insanity
+ * and is defined as
+ *    pathpenalty = Pbase + Pchange + Pquality
+ *
+ * The three components are designed to be approximately decoupled, focussed
+ * on different types of impacts :
+ *  Pbase:    average overall environment  (insensitive to BL shifts and quality]
+ *  Pchange:  quantifying a bound on the asymmetry-error impact of BL shifts
+ *  Pquality: dynamic performance of rAdclock, given the base and irrespective of
+ *            asymmetry, incorporating path congestion and stamp availability
+ *
+ * Pathpenalty is a heuristic that does not correspond directly to clock
+ * error or a clock error bound, which are hard to estimate and therefore would
+ * not be a robust choice for the important task of preferred server selection.
+ * However in some circumstances pathpenalty's components do correspond to
+ * an estimated clock error bound. For example Pbase is an average bound on worse case
+ * path asymmetry error. Under persistent starvation Pquality bounds worst case
+ * drift that will dominate pathpenalty, and then be understood as a bound on
+ * the clock error. Pathpenalty can be thought of as an "error risk" metric
+ * that reflects risks from all the main sources of clock error.
+ *
+ * Notes on stampgap definition and treatment
+ *  - a stampgap processed internally here once a new stamp finally arrives
+ *    corresponds to the state->rawstampgap tracked externally in preferred_RADclock
+ *    Before it arrives, but is handled differently. Externally it is added in
+ *    directly (linear increase in pathpenalty), here it is subject to EWMA smoothing,
+ *    which will decrease its impact. This is appropriate when seeking to measure the
+ *    average impact of gaps of different durations over the path. Externally,
+ *    the main goal is to detect persistent starvation (unavailable server) rapidly
+ *    (unconstrained by path_scale), for timely transition to a suitable backup.
+ *
+ * Notes on timescale for path evaluation
+ * Considerations:
+ *  - should use same timescale for each server for fair comparison
+ *  - make sense to use the same scale for each of Pchange, Pquality, churn_scale
+ *  - should be smaller than history_scale for consistency (but no need to enforce)
+ *  - should be larger than shift window, but this varies with server, too complicated
+ *  - should be large enough to see typical results, away from algo reaction
+ *    to changing path conditions, and to avoid jitter from most source
+ *  - but small enough so no long wait to move to clearly better alternative
+ *  - complicated to automate: going with expert setting around 5hrs
+ * Context: time to drift 1ms ~ 3hrs;
+ *   (small,classic,typical,max) shiftwin: 100samples @ pp=1,16,64,1024) ~ (1.7m,27m,1.8h,28h)
+ */
+static void
+update_pathpenalty_full(struct bidir_metaparam *metaparam, struct bidir_algostate* state,
+    struct bidir_stamp *stamp, struct bidir_algooutput *output)
+{
+
+	/* EWMA  (with timescale path_scale) */
+	double alpha = 1 - exp(- state->poll_period / metaparam->path_scale);  // EWMA param
+	double TV, Err;        // time series variables to be depreciated or smoothed
+	double driftpersample; // drift bound over poll-period (=EWMA sample)
+	double stampgap;       // gap between stamps [s] for drift assessment
+	int nsamples;          // number of EWMA samples over stampgap
+
+	/* Pbase
+	 * An EWMA smooth of RTThat, initialized to Pbase = RTThat at the end of warmup.
+	 *  sRh = (1-al)sRh + al*RTThat  [ state variable is sRh = state->Pbase ]
+	 * Purely a fn of RTThat timeseries (except for phat conversion) */
+	state->Pbase *= 1 - alpha;
+	state->Pbase += alpha * state->RTThat * state->phat;
+
+
+	/* Pchange
+	 * The Total Variation (TV) of the RTT BL over a sliding window, implemented
+	 * softly via exponential depreciation. Initialized to dTV = 0.
+	 *  dTV = (1-al)dTV + TV/2   [ state variable is dTV = state->Pchange ]
+	 * Purely a fn of RTThat timeseries (except for phat conversion)
+	 *
+	 * As TV is a bound on asym jitter, we use TV/2 as a bound on clock impact.
+	 * During loss, shift detail is not observed and depreciation steps are missed.
+	 * Using the aggregate shift movement measured on the first stamp after loss
+	 * is reasonable as shifts are rare.
+	 * If shifts cease Pchange is guaranteed to converge to 0.
+	 */
+	/* Calculate the TV increase for this stamp */
+	if (state->RTThat != state->prevRTThat) {  // common case is no change
+		if (state->RTThat > state->prevRTThat)  // use unsigned-safe |RTThat - prevRTThat|
+			TV = (state->RTThat - state->prevRTThat) * state->phat / 2;
+		else
+			TV = (state->prevRTThat - state->RTThat) * state->phat / 2;
+	} else
+		TV = 0;
+
+	/* Update the depreciated state. Do so at double the path_scale so
+	 * BL jitter amplitudes not overly discounted. */
+	state->Pchange *= pow(1 - alpha,0.5);
+	state->Pchange += TV;
+
+
+	/* Stamp gap calculation [s]
+	 * This internal calculation is independent of external gap tracking, ensuring
+	 * it works in all cases, even if running dead, and/or only a single server. */
+	stampgap = state->phat * (stamp->Tf - state->stamp.Tf);
+
+	/* Pquality
+	 * An EWMA smooth of a metric Err capturing stamp quality related error.
+	 * Initialized to sErr = 0 .
+	 *  sErr = (1-al)sErr + al*Err  [ state variable is sErr = state->Pquality ]
+	 * Is a fn of RTThat (via minET) and thetahat algo (update indices, minET).
+	 *
+	 * Here Err is the error just Before this stamp is processed, accounting for
+	 * conditions in vogue over the gap (hence independent of current stamp quality).
+	 * The current stamp is used only to reinitialize Err for next time.
+	 * The bound on drift accumulates as long as loss/mistrust, poor quality
+	 * (including due to UpJump before detection), or sanity prevails,
+	 * resetting only when a valid stamp leads to a true thetahat update.
+	 *
+	 * During gaps EMWA samples are missed, ignoring these would dramatically under-
+	 * estimate accumulating drift: provide the EWMA update for missing samples
+	 * by iterating to consume stampgap in pp chunks, assuming linear drift growth.
+	 */
+	Err = state->Pquality_err;  // initialize with error after last stamp
+	driftpersample = state->poll_period * metaparam->RateErrBOUND;
+	nsamples = (int) MAX(1,round(stampgap / state->poll_period));
+	for (int i=1; i<=nsamples; i++) {
+		Err += driftpersample;
+		state->Pquality *= 1 - alpha;
+		state->Pquality += alpha * Err;
+	}
+
+	/* Reset initial error at this stamp, for use next time */
+	if ( !memcmp(&state->thetastamp, stamp, sizeof(*stamp)) )  // if thetahat update accepted
+		state->Pquality_err = state->minET;  // reset with point error estimate
+	else
+		state->Pquality_err = Err;           // drift bound accumulation continues
+
+
+	/* Update path penalty */
+	output->pathpenalty = state->Pbase + state->Pchange + state->Pquality;
+
+}
+
+
+
+/* =============================================================================
  * CLOCK SYNCHRONISATION ALGORITHM
  * ===========================================================================*/
 
@@ -2174,14 +2338,13 @@ void process_thetahat_full(struct radclock_phyparam *phyparam, struct bidir_algo
  *   rejected due to quality or sanity-checking reasons.
  *
  * RADclock is structured hierarchically for robustness. The sub-algos
- *    {window management, RTT, phat, plocal,  thetahat}
- *    {                              OWDasym,         }
+ *    {window management, RTT, phat, plocal,  thetahat, pathpenalty}
+ *    {                              OWDasym,                      }
  * address progressively more difficult problems and depend only on the
  * sub-algos on its left in this list, but there is no dependency to the right.
  * An exception is when RTT (measured natively in raw counter units) needs
- * to be expressed in seconds for some purposes very early on, requiring an
- * estimate of phat to do so. However this estimate need not be highly accurate.
- *
+ * to be expressed in seconds for some purposes, requiring an estimate of phat
+ * to do so. However for these purposes this estimate need not be highly accurate.
  */
 int
 RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
@@ -2189,7 +2352,7 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
     struct radclock_data *rad_data, struct radclock_error *rad_error,
     struct bidir_algooutput *output)
 {
-	struct radclock_phyparam *phyparam;
+	struct bidir_metaparam *metaparam;
 	struct radclock_config *conf;
 	unsigned int warmup_winratio;
 	unsigned int plocal_winratio;
@@ -2199,7 +2362,7 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 	JDEBUG
 
 	conf = handle->conf;
-	phyparam = &(conf->phyparam);
+	metaparam = &(conf->metaparam);
 
 	/* Search window meta parameters  (not in algo state)
 	 * Gives fraction of Delta(t) sacrificed to near and far search windows. */
@@ -2214,12 +2377,12 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 		verbose(VERB_SYNC, "Initialising RADclock synchronization");
 
 		/* Set algo error thresholds based on counter model parameters */
-		set_err_thresholds(phyparam, state);
+		set_err_thresholds(metaparam, state);
 
 		/* Derive algo windows measured in stamp-index from timescales [s] */
 		state->poll_period = conf->poll_period;
 		state->poll_ratio = 1;
-		set_algo_windows(phyparam, state);
+		set_algo_windows(metaparam, state);
 
 		/* Ensure warmup duration (warmup_win) long enough wrt algo windows */
 		state->warmup_win = 100;
@@ -2237,7 +2400,7 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 		history_init(&state->thnaive_hist, (unsigned int) state->warmup_win, sizeof(double) );
 
 		/* Parameter summary: physical, network, windows, thresholds, sanity */
-		print_algo_parameters(phyparam, state);
+		print_algo_parameters(metaparam, state);
 	}
 
 	/* React to on-the-fly configuration updates: if the poll period or
@@ -2250,7 +2413,7 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 
 	if (HAS_UPDATE(conf->mask, UPDMASK_POLLPERIOD) ||
 	    HAS_UPDATE(conf->mask, UPDMASK_TEMPQUALITY)) {
-		update_state(phyparam, state, plocal_winratio, conf->poll_period);
+		update_state(metaparam, state, plocal_winratio, conf->poll_period);
 	}
 
 
@@ -2275,13 +2438,14 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 	* WARMUP Phase :  0<i<warmup_win
 	*  Here pt errors are unreliable, need more robust algo forms
 	*    history window:  no overlap by design, so no need to map stamp indices
-	*    RTT:      obvious on-line
-	*              upward shift detection:  disabled
-	*    phat:     use plocal-type algo
-	*              no sanity checking (can't trust inference)
-	*    plocal:   just copies phat
-	*    thetahat: simple on-line weighted average with aging
-	*              no sanity checking
+	*    RTT:          obvious on-line
+	*                  upward shift detection:  disabled
+	*    phat:         use plocal-type algo
+	*                  no sanity checking (can't trust inference)
+	*    plocal:       just copies phat
+	*    thetahat:     simple on-line weighted average with aging
+	*                  no sanity checking
+	*    pathpenality: just copies the current minRTT
 	*
 	* FULL ALGO Initialization :  i=warmup_win-1
 	*  Initialization of on-line components of all full sub-algos
@@ -2302,7 +2466,8 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 		process_OWDAsym_warmup(state, stamp);
 		process_phat_warmup(state, RTT, warmup_winratio);
 		state->plocal = state->phat;
-		process_thetahat_warmup(phyparam, state, stamp, rad_data, RTT, output);
+		process_thetahat_warmup(metaparam, state, stamp, rad_data, RTT, output);
+		output->pathpenalty = state->RTThat * state->phat;
 		// TODO: review UNSYNC un/re-setting in general, should be more quality based
 		if (state->stamp_i >= NTP_BURST)
 			DEL_STATUS(rad_data, STARAD_UNSYNC);
@@ -2314,6 +2479,7 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 			init_phat_full(state, stamp);
 			init_plocal_full(state, stamp, plocal_winratio);
 			init_thetahat_full(state, stamp);
+			state->Pbase = output->pathpenalty;
 			parameters_calibration(state);
 			DEL_STATUS(rad_data, STARAD_WARMUP);
 			verbose(VERB_CONTROL, "i=%lu: End of Warmup Phase. Stamp read check: "
@@ -2326,9 +2492,10 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 		process_RTT_full(state, rad_data, RTT);
 		process_OWDAsym_full(state, stamp);
 		update_next_pstamp(state, stamp, RTT);
-		p_insane = process_phat_full(phyparam, state, stamp, rad_data, RTT, qual_warning);
+		p_insane = process_phat_full(metaparam, state, stamp, rad_data, RTT, qual_warning);
 		process_plocal_full(state, rad_data, plocal_winratio, p_insane, qual_warning, output);
-		process_thetahat_full(phyparam, state, stamp, rad_data, RTT, qual_warning, output);
+		process_thetahat_full(metaparam, state, stamp, rad_data, RTT, qual_warning, output);
+		update_pathpenalty_full(metaparam, state, stamp, output);
 	}
 
 	/* Processing complete */
@@ -2339,66 +2506,46 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 
 
 /* =============================================================================
- * OUTPUT 
+ * OUTPUTS
  * ===========================================================================*/
 
-	/* We lock the global data to to ensure data consistency. Do not want shared
-	 * memory segment be half updated and 3rd party processes get bad data.
-	 * Also we lock the matlab output data at the same time
-	 * to ensure consistency for live captures.
-	 */
-
-	/* Required to ensure output data not used/printed during an update */
+	/* Lock to ensure data consistency for data consumers, in particular the SMS */
 	pthread_mutex_lock(&handle->globaldata_mutex);
-	
-	/* The next_expected field has to take into account the fact that ntpd sends
-	 * packets with true period intervals [poll-1,poll+2] (see an histogram of 
-	 * capture if you are not convinced). Also an extra half a second to be safe.
-	 * Also, for very slow counters (e.g. ACPI), the first phat estimate can 
-	 * send this value far in the future. Wait for i > 1
-	 * TODO:  incorporate this into setting which is now in process_stamp
-	 */
-	//	if (state->stamp_i > 1)
-	//		/* TODO: XXX Previously valid till was offset by 1.5s to allow for NTP's
-	//		 * varying poll period when in piggy back mode
-	//		 * rad_data->next_expected	= stamp->Tf + ((state->poll_period - 1.5) / state->phat);
-
-	/* TODO: Old comment from top of fn:  to be integrated here
-	 * Error bound reporting. Error bound correspond to the last effective update of
-	 * thetahat (i.e. it may not be the value computed with the current stamp).
-	 * avg and std are tracked based on the size of the top window
-	 * No need for a "_last", it is maintained outside the algo (as well as the
-	 * current number)
-	*/
 
 	/* Clock error estimates.
 	 * Applies an ageing from thetastamp to the current state, similar to gap recovery.
-	 * Doesn't update estimates from their initialized value of zero on first stamp,
-	 * since algo parameters can be 3 orders of magnitude out.
-	 * So nerror counts number of times stats collected, = value of stamp_i .
+	 * Don't update the null-initialization on first stamp, as algo parameters v-poor.
+	 * Thus nerror counts number of times stats collected, = value of stamp_i .
 	 */
 	double error_bound;
 	if (state->stamp_i > 0) {
 		//rad_data->ca_err = state->minET;    // initialize to this stamp
 		error_bound = ALGO_ERROR(state)->Ebound_min_last +
-			state->phat * (double)(stamp->Tf - state->thetastamp.Tf) * phyparam->RateErrBOUND;
+			state->phat * (double)(stamp->Tf - state->thetastamp.Tf) * metaparam->RateErrBOUND;
 
 		/* Update _hwin members of  state->algo_err  */
-		ALGO_ERROR(state)->cumsum_hwin += error_bound;
+		ALGO_ERROR(state)->cumsum_hwin    += error_bound;
 		ALGO_ERROR(state)->sq_cumsum_hwin += error_bound * error_bound;
-		ALGO_ERROR(state)->nerror_hwin += 1;
+		ALGO_ERROR(state)->nerror_hwin    += 1;
 
 		/* Update remaining members of  state->algo_err  */
 		ALGO_ERROR(state)->error_bound = error_bound;
-		ALGO_ERROR(state)->cumsum += error_bound;
-		ALGO_ERROR(state)->sq_cumsum += error_bound * error_bound;
-		ALGO_ERROR(state)->nerror += 1;
+		ALGO_ERROR(state)->cumsum     += error_bound;
+		ALGO_ERROR(state)->sq_cumsum  += error_bound * error_bound;
+		ALGO_ERROR(state)->nerror     += 1;
 	}
+
+	pthread_mutex_unlock(&handle->globaldata_mutex);  // unlock
 
 
 	/* Fill the output structure, used mainly to write to the .mat output file
 	 * Members not sourced from state are sub-algo internal variables of use in
 	 * algo diagnostics.
+	 * Ownership notes:
+	 *   status:  jointly owned by RADalgo_bidir and process_stamp. Update made here is
+	 *     complete wrt both, with exception of STARAD_SYSCLOCK set in update_FBclock and VM code.
+	 *   leapsecond_*   output owns, rad_data gets a copy in process_stamp
+	 *            best to reverse this? is true that leapsec cant live in state.
 	 */
 	output->n_stamps     = 1 + state->stamp_i;  // # stamps seen by algo, is ≥1
 	output->RTT          = RTT;           // value for This stamp
@@ -2410,7 +2557,8 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 	output->plocal       = state->plocal;
 	output->K            = state->K;
 	output->thetahat     = state->thetahat;
-	output->minET_last   = state->minET;  // value the last time updated/accepted
+	output->minET_last   = state->minET;  // value at last thetastamp update
+
 	/* Internal variables saved directly within process_plocal_full */
 	//	 output->plocalerr = plocalerr;     // value for This stamp
 	/* Internal variables saved directly within process_thetahat_{warmup,full} */
@@ -2421,19 +2569,14 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 	//  output->wsum      = wsum;
 	//  stamp_tmp = history_find(&state->stamp_hist, jbest);
 	//  output->best_Tf   = stamp_tmp->Tf;
+
 	output->status       = rad_data->status;
 
+	/* Pathpenalty saved directly within update_pathpenalty_full */
+	//  output->pathpenalty
+	output->Pchange      = state->Pchange;
+	output->Pquality     = state->Pquality;
 
-/* Best if output doesn't own anything, just copies
- * Ownerships unclear:
- *   status:  as above, rad_data seems to own (updated in situ from multiple places
- *            including here, but output just has an (incomplete?) copy made here
- *   leapsecond_*   output seems to own, rad_data gets a copy in process_stamp
- *            best to reverse this?  it is true that leapsec cant live in state.
- */
-
-	/* Unlock Global Data */
-	pthread_mutex_unlock(&handle->globaldata_mutex);
 
 	return (0);
 }

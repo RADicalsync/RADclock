@@ -31,8 +31,8 @@
  * Standard client-server NTP packet exchange.
  *
  *                Tb     Te        true event times:  ta < tb < te < tf
- *                 |      |           available TS's: Ta < Tf  [counter units]
- *  Server  ------tb------te-------                   Tb < Te  [sec]
+ *                 |      |           available TS's: Ta < Tf  [raw counter units]
+ *  Server  ------tb------te-------                   Tb < Te  [s]
  *               /          \
  *              /            \
  *  Client  ---ta-------------tf---
@@ -76,16 +76,20 @@
 #define PLOCAL_QUALITY_POOR   0.000002
 
 
-/*
- * Data structure storing physical parameters
+/* Algo meta-parameters: common to all clocks
+ * These are initialised (and/or reset) in the conf system.
  */
-struct radclock_phyparam {
+struct bidir_metaparam {
+	/* base accuracy unit  TODO: rethink this */
 	double TSLIMIT;
+	/* counter model - values depend on temperature enviroment */
 	double SKM_SCALE;
 	double RateErrBOUND;
 	double BestSKMrate;
-	int offset_ratio;
-	double plocal_quality;
+	/* algo meta-parameters */
+	int offset_ratio;       // used in setting of state->Eoffset
+	double plocal_quality;  // used in setting of state->Eplocal_qual
+	double path_scale;      // [s] comparison scale used in preferred server code
 };
 
 
@@ -156,24 +160,29 @@ struct bidir_algooutput {
 	
 	/** Internal algo variables visible outside **/
 	/* Per-stamp output */
-	vcounter_t  RTT;       // Not in state [is RTT of last stamp]
+	vcounter_t  RTT;       // value for last stamp (Not in state)
 	double      phat;
 	double      perr;
 	double      plocal;
-	double      plocalerr;
+	double      plocalerr; // value for last stamp (Not in state)
 	long double K;
 	double      thetahat;
 	vcounter_t  RTThat;
 	vcounter_t  RTThat_new;
 	vcounter_t  RTThat_shift;
 	double      th_naive;
-	double      minET;      // Not in state
+	double      minET;     // value for last stamp (Not in state)
 	double      minET_last;
-	double      pDf;  // previously errTa, but sign now reversed!
-	double      pDb;  // previously errTf
+	double      pDf;
+	double      pDb;
 	double      wsum;
 	vcounter_t  best_Tf;
 	unsigned int status;    // Not in state
+	// path penalty metrics
+	double      pathpenalty;  // latest algo evaluation of path metric
+	double      Pchange;      // windowed RTT BL change metric
+	double      Pquality;     // EWMA-smoothed generalized quality impact metric
+
 };
 
 
@@ -194,12 +203,10 @@ struct algo_error {
 
 struct bidir_algostate {
 
-	/* Unique stamp index (C notation [ 0 1 2 ...])
-	 * 136 yrs @ 1 stamp/[sec] if 32bit
-	 */
+	/* Unique stamp index (C notation [ 0 1 2 ..]) 136 yrs @ 1 stamp/[s] if 32bit */
 	index_t stamp_i;
 
-	struct bidir_stamp stamp;  // previous input bidir stamp (hence leap-free)
+	struct bidir_stamp stamp;  // input bidir stamp (hence leap-free)
 
 	/* Time Series Histories */
 	history stamp_hist;
@@ -238,10 +245,10 @@ struct bidir_algostate {
 	index_t offset_win;        // offset estimation, based on SKM scale (don't allow too small)
 	index_t jsearch_win;       // window width for choosing pkt j for phat estimation
 
-	int poll_period;            // Current polling period for the peer
+	int poll_period;            // Current polling period
 	index_t poll_transition_th; // Number of future stamps remaining to complete new polling period transition (thetahat business)
 	double poll_ratio;          // Ratio between new and old polling period after it changed
-	index_t poll_changed_i;     // First stamp after change, hence index of last change
+	index_t poll_changed_i;     // First stamp after change = index of last detected change
 
 	/* Error thresholds, measured in [sec], or unitless */
 	double Eshift;              // threshold for detection of upward level shifts (should adapt to variability)
@@ -264,7 +271,8 @@ struct bidir_algostate {
 	/* RTT (in vcounter units to avoid pb if phat bad)
 	 * Records related to top window, and level shift */
 	vcounter_t RTThat;             // Estimate of minimal RTT
- 	vcounter_t next_RTThat;        // RTT estimate to be in the next half top window
+	vcounter_t prevRTThat;         // previous estimate (immune to UpJump overwritting)
+	vcounter_t next_RTThat;        // RTT estimate to be in the next half top window
 	vcounter_t RTThat_shift;       // sliding window RTT estimate for upward level shift detection
 	vcounter_t RTThat_shift_thres; // threshold in [vcount] units for triggering upward shift detection
 
@@ -298,6 +306,13 @@ struct bidir_algostate {
 	struct bidir_stamp thetastamp; // Stamp corresponding to last update of thetahat
 	int offset_quality_count;      // Offset quality events counter
 	int offset_sanity_count;       // Offset sanity events counter
+
+	/* Path Penalty [additional state required beyond RTThat] */
+	vcounter_t rawstampgap; // accum'd gap between valid stamps (used outside algo)
+	double Pbase;         	// EWMA-smoothed RTT BL
+	double Pchange;         // exponentially depreciated TV of the RTT BL
+	double Pquality_err;    // thetahat-aware "drift" error at last stamp
+	double Pquality;        // EWMA-smoothed generalized quality impact metric
 
 	/* Statistics to track error in the Absolute clock */
 	struct algo_error algo_err;

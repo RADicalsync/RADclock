@@ -64,14 +64,14 @@ open_output_stamp(struct radclock_handle *handle)
 		sprintf(backup, "%s.old", handle->conf->sync_out_ascii);
 		if (rename(handle->conf->sync_out_ascii, backup) < 0) {
 			verbose(LOG_ERR, "Cannot rename existing output file: %s",
-					handle->conf->sync_out_ascii);
+			    handle->conf->sync_out_ascii);
 
 			JDEBUG_MEMORY(JDBG_FREE, backup);
 			free(backup);
 			exit(EXIT_FAILURE);
 		}
 		verbose(LOG_NOTICE, "Backed up existing output file: %s",
-				handle->conf->sync_out_ascii);
+		    handle->conf->sync_out_ascii);
 		JDEBUG_MEMORY(JDBG_FREE, backup);
 		free(backup);
 		handle->stampout_fd = NULL;
@@ -81,15 +81,14 @@ open_output_stamp(struct radclock_handle *handle)
 	handle->stampout_fd = fopen(handle->conf->sync_out_ascii,"w");
 	if (handle->stampout_fd == NULL) {
 		verbose(LOG_ERR, "Open failed on stamp output file- %s",
-				handle->conf->sync_out_ascii);
+		    handle->conf->sync_out_ascii);
 		exit(EXIT_FAILURE);
-	/* write out comment header describing data saved */
-	} else {
+	} else {  // write out comment header describing data
 		/* TODO: turn off buffering? */
 		setvbuf(handle->stampout_fd, (char *)NULL, _IONBF, 0);
 		fprintf(handle->stampout_fd, "%% BEGIN_HEADER\n");
 		fprintf(handle->stampout_fd, "%% description: radclock local vcounter "
-				"and NTP server stamps\n");
+		    "and NTP server stamps\n");
 		fprintf(handle->stampout_fd, "%% type: NTP_rad\n");
 		fprintf(handle->stampout_fd, "%% version: 4\n");
 		fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf nonce [sID]\n");
@@ -129,13 +128,13 @@ open_output_matlab(struct radclock_handle *handle)
 		sprintf(backup, "%s.old", handle->conf->clock_out_ascii);
 		if (rename(handle->conf->clock_out_ascii, backup) < 0) {
 			verbose(LOG_ERR, "Cannot rename existing output file: %s",
-					handle->conf->clock_out_ascii);
+			    handle->conf->clock_out_ascii);
 			JDEBUG_MEMORY(JDBG_FREE, backup);
 			free(backup);
 			exit(EXIT_FAILURE);
 		}
 		verbose(LOG_NOTICE, "Backed up existing output file: %s",
-				handle->conf->clock_out_ascii);
+		    handle->conf->clock_out_ascii);
 		JDEBUG_MEMORY(JDBG_FREE, backup);
 		free(backup);
 		handle->matout_fd = NULL;
@@ -148,7 +147,7 @@ open_output_matlab(struct radclock_handle *handle)
 	handle->matout_fd = fopen(handle->conf->clock_out_ascii,"w");
 	if (handle->matout_fd == NULL) {
 		verbose(LOG_ERR, "Open failed on Matlab output file- %s",
-				handle->conf->clock_out_ascii);
+		    handle->conf->clock_out_ascii);
 		exit(EXIT_FAILURE);
 	} else
 		/* TODO turn off buffering ? */
@@ -163,12 +162,11 @@ open_output_matlab(struct radclock_handle *handle)
 	fprintf(handle->matout_fd, "%% column 5 - plocal\n");
 	fprintf(handle->matout_fd, "%% column 6 - K\n");
 	fprintf(handle->matout_fd, "%% column 7 - thetahat\n");
-	fprintf(handle->matout_fd, "%% columns 8--10 - RTThat, RTThat_new,"
-			"RTThat_sh\n");
+	fprintf(handle->matout_fd, "%% columns 8--10 - RTThat, RTThat_new, RTThat_sh\n");
 	fprintf(handle->matout_fd, "%% columns 11--17 - th_naive, minET, minET_last,"
-			" RADclockout, RADclockin, errTa, errTf\n");
+	    " RADclockout, RADclockin, pDf, pDb\n");
 	fprintf(handle->matout_fd, "%% columns 18--22 - perr, plocalerr, wsum, "
-			"best_Tf, clock status\n");
+	    "best_Tf, clock status\n");
 	fprintf(handle->matout_fd, "%%\n");
 
 	return (0);
@@ -196,13 +194,8 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
 	struct bidir_algooutput *output, int sID)
 {
 	int err;
-	// XXX What is the reason for me to do it that way? Cannot remember.
-	/* A single buffer to have a single disk access, it has to be big enough */
-	char *buf;
 
-	/* long double since must hold [sec] since timescale origin, and at least
-	 * 1mus precision
-	 */
+	/* ld since must hold [s] since timescale origin, and at least 1mus precision */
 	long double currtime_out, currtime_in;
 
 	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_SPY))
@@ -215,32 +208,34 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
 	if (handle->stampout_fd != NULL) {
 		if (handle->nservers == 1)	// omit last column with serverID
 			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu\n",
-					(long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-					(long long unsigned)BST(stamp)->Tf,
-					(long long unsigned)stamp->id);
+			  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+			  (long long unsigned)BST(stamp)->Tf,
+			  (long long unsigned)stamp->id);
 		else	// include serverID in last column
 			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu %d\n",
-					(long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
-					(long long unsigned)BST(stamp)->Tf,
-					(long long unsigned)stamp->id,
-					sID);
-				
+			  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+			  (long long unsigned)BST(stamp)->Tf,
+			  (long long unsigned)stamp->id,
+			  sID);
+
 		if (err < 0)
 			verbose(LOG_ERR, "Failed to write ascii data to timestamp file");
 	}
-	
-	
+
+
 	/* Deal with internal algo output */
 	if (handle->matout_fd == NULL)
 		return;
 
-	buf = (char *) malloc(500 * sizeof(char));
+	char *buf;
+	buf = (char *) malloc(500 * sizeof(char));  // must be big enuf for single disk access
 	JDEBUG_MEMORY(JDBG_MALLOC, buf);
 
 	sprintf(buf,
 		"%.9Lf %"VC_FMT" %"VC_FMT" %.10lg %.10lg %.11Lf %.10lf "
 		"%"VC_FMT" %"VC_FMT" %"VC_FMT" %.9lg %.9lg %.9lg %.11Lf "
-		"%.11Lf %.10lf %.10lf %.6lg %.6lg %.6lg %"VC_FMT" %u",
+		"%.11Lf %.10lf %.10lf %.6lg %.6lg %.6lg %"VC_FMT" %u "
+		"%.9lg %.9lg %.9lg",    // pathpenalty metrics
 		BST(stamp)->Tb,
 		(unsigned long long)BST(stamp)->Tf,
 		(unsigned long long)output->RTT,
@@ -262,9 +257,13 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
 		output->plocalerr,
 		output->wsum,
 		output->best_Tf,
-		output->status);
+		output->status,
+		// pathpenalty metrics
+		output->pathpenalty,
+		output->Pchange,
+		output->Pquality);
 		
-	if (handle->nservers > 1)	// add last column with serverID
+	if (handle->nservers > 1)  // add last column with serverID
 		sprintf(buf,"%s %d", buf, sID);
 
 	err = fprintf(handle->matout_fd, "%s\n", buf);

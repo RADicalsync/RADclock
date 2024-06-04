@@ -460,6 +460,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Multiple server management */
 	handle->nservers = 0;
 	handle->pref_sID = 0;
+	handle->pref_date = 0;
 
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
 	strcpy(handle->hostIP, "");
@@ -1207,6 +1208,8 @@ main(int argc, char *argv[])
 	if (!config_parse(handle->conf, &param_mask, is_daemon, &handle->nservers))
 		return (0);
 
+	/* Set additional parameters not actually set by conf system */
+
 	/* Knowing the number of servers, create space for corresponding RADclocks */
 	init_mRADclocks(handle, handle->nservers);
 
@@ -1287,13 +1290,13 @@ main(int argc, char *argv[])
 				break;
 		}
 	}
-	/*s
+	/*
 	 * We loop in here in case we are rehashed. Threads are (re-)created every
-	 * time we loop in
+	 * time we loop in.
 	 */
 	else {
 		while (err == 0) {
-			err = start_live(handle);	// SIG{HUP,TERM} map to err={0,1}
+			err = start_live(handle);    // SIG{HUP,TERM} map to err={0,1}
 			if (err == 0) {
 				if (rehash_daemon(handle, param_mask))
 					verbose(LOG_ERR, "SIGHUP - Failed to rehash daemon !!.");
@@ -1305,13 +1308,14 @@ main(int argc, char *argv[])
 	 * TODO: look into making the stats a separate structure. Could be much
 	 *       easier to manage
 	 */
-	long int n_stamp;
+	int stamp_total = 0;
+	for (int s=0; s < handle->nservers; s++)
+		stamp_total += SOUTPUT(handle, s, n_stamps);
 	unsigned int ref_count;
-	n_stamp = OUTPUT(handle, n_stamps);
 	ref_count = ((struct stampsource*)(handle->stamp_source))->ntp_stats.ref_count;
 	verbose(LOG_NOTICE, "%u NTP packets captured", ref_count);
-	verbose(LOG_NOTICE,"%ld missed NTP packets", ref_count - 2 * n_stamp);
-	verbose(LOG_NOTICE, "%ld valid timestamp tuples extracted", n_stamp);
+	verbose(LOG_NOTICE, "%ld missed NTP packets", ref_count - 2 * stamp_total);
+	verbose(LOG_NOTICE, "%ld valid timestamp tuples extracted over all servers", stamp_total);
 
 
 	/* Close output files */
