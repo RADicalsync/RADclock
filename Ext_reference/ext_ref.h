@@ -24,35 +24,21 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef NTP_AUTH
-#define NTP_AUTH
+#ifndef EXT_REF
+#define EXT_REF
 
-
-#define PUBLIC_KEY_FILE_PATH  "/etc/radclock_public.keys"
-#define PRIVATE_KEY_FILE_PATH "/etc/radclock_private.keys"
-#define MAX_NTP_KEYS  128
-#define PRIVATE_CN_NTP_KEYS  MAX_NTP_KEYS / 2
-
-
-#define IS_PRIVATE_KEY(x) ((x)>=PRIVATE_CN_NTP_KEYS)
-#define IS_PUBLIC_KEY(x)  ((x)< PRIVATE_CN_NTP_KEYS)
-
-/*
- * Convert char string into byte array
-*/
-char *
-cstr_2_bytes(char *key_str);
-
-/*
- * Adds authentication key
-*/
-void
-add_auth_key(char **key_data, char *buff, int is_private_key);
-
-/*
- * Read authentication keys to validate requests
+/* Definitions forming an API between the external DAGstamp generator running
+ * on the DAGhost, and the SHM thread running in the TrustNode.
  */
-char** 
-read_keys();
 
-#endif // #ifndef NTP_AUTH
+#define DAG_PORT 5671       // used for DAGhost --> TrustNode passing of DAGstamps
+
+/* dagstamp data structure passed to the TrustNode for perfstamp matching. */
+struct dag_cap {
+	long double Tout;       // DAG timestamp of          outgoing NTP request
+	long double Tin;        // DAG timestamp of matching incoming NTP response
+	l_fp stampid;           // stamp matching id, in original l_fp format
+	struct in_addr ip;      // IP that the targeted server used when responding
+};
+
+#endif // EXT_REF

@@ -57,8 +57,7 @@
 #include "misc.h"
 #include "jdebug.h"
 #include "config_mgr.h"
-
-#define DAG_PORT 5671
+#include "Ext_reference/ext_ref.h"    // API to dag code
 
 /* From create_stamp.c, include in create_stamp.h ? */
 int          insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode);
@@ -111,8 +110,8 @@ thread_shm(void *c_handle)
 	}
 	memset((char *) &server, 0, sizeof(struct sockaddr_in));
 	server.sin_family = AF_INET;
-	server.sin_addr.s_addr = htonl(INADDR_ANY);
 	server.sin_port = htons(DAG_PORT);
+	server.sin_addr.s_addr = htonl(INADDR_ANY);  // avoids needing to know DAGhost IP
 
 	/* Eliminates "ERROR on binding: Address already in use" error */
 	//	int optval = 1;
@@ -187,7 +186,7 @@ thread_shm(void *c_handle)
 		 * be checked for, and to give the OS an opportunity to suspend the thread
 		 */
 		num_bytes = recvfrom(socket_desc, &dag_msg, sizeof(struct dag_cap),
-		    0, (struct sockaddr*)&client, &socklen);
+		    0, (struct sockaddr*)&client, &socklen);    // client is a sockaddr_in
 
 		if ( num_bytes == (sizeof(struct dag_cap)) ) {
 			got_dag_msg = 1;
@@ -218,8 +217,8 @@ thread_shm(void *c_handle)
 
 			/* Construct fake DAG message to match RADstamp */
 			/* id field uint64_t --> l_fp conversion */
-			dag_msg.server_reply_org.l_int = htonl(RADstamp.id >> 32);
-			dag_msg.server_reply_org.l_fra = htonl((RADstamp.id << 32) >> 32);
+			dag_msg.stampid.l_int = htonl(RADstamp.id >> 32);
+			dag_msg.stampid.l_fra = htonl((RADstamp.id << 32) >> 32);
 			inet_aton(RADstamp.server_ipaddr, &dag_msg.ip);
 			dag_msg.Tout = RADstamp.st.bstamp.Tb - rad_error->min_RTT/2 + 0.3e-3;
 			dag_msg.Tin  = RADstamp.st.bstamp.Te + rad_error->min_RTT/2 - 0.3e-3;
@@ -233,8 +232,8 @@ thread_shm(void *c_handle)
 			memset(&DAGstamp, 0, sizeof(struct stamp_t));
 			DAGstamp.type = STAMP_NTP_PERF;
 			/* id field l_fp --> uint64_t conversion */
-			DAGstamp.id = ((uint64_t) ntohl(dag_msg.server_reply_org.l_int)) << 32;
-			DAGstamp.id |= (uint64_t) ntohl(dag_msg.server_reply_org.l_fra);
+			DAGstamp.id = ((uint64_t) ntohl(dag_msg.stampid.l_int)) << 32;
+			DAGstamp.id |= (uint64_t) ntohl(dag_msg.stampid.l_fra);
 			strcpy(DAGstamp.server_ipaddr, inet_ntoa(dag_msg.ip));
 			DAGstamp.st.bstamp_p.Tout = dag_msg.Tout;
 			DAGstamp.st.bstamp_p.Tin  = dag_msg.Tin;

@@ -39,18 +39,18 @@
 
 /*
  * Convert char string into byte array
-*/
+ */
 char *
-cstr_2_bytes(char * key_str)
+cstr_2_bytes(char *key_str)
 {
 	int num_bytes = strlen(key_str) / 2;
-	
-	char * new_crypt_data = malloc(sizeof(char)*num_bytes);
-	char * pos = key_str;
+
+	char *new_crypt_data = malloc(sizeof(char)*num_bytes);
+	char *pos = key_str;
 	for (size_t count = 0; count < num_bytes; count++) {
-        	sscanf(pos, "%2hhx", &new_crypt_data[count]);
-        	pos += 2;
-    	}
+		sscanf(pos, "%2hhx", &new_crypt_data[count]);
+		pos += 2;
+	}
 	return new_crypt_data;
 }
 
@@ -64,19 +64,18 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 	char crypt_type[16];
 	char crypt_key[64];
 	int key_id = -1;
-	int min_key_id = 0;			// seems to be actual min index in C notation
-	int max_key_id = PRIVATE_CN_NTP_KEYS - 1;   // seems to be total number, not C notation
+	int min_key_id = 0;    // DV: seems to be actual min index in C notation
+	int max_key_id = PRIVATE_CN_NTP_KEYS - 1;   // DV: seems to be total number, not C notation
 
 	if (is_private_key) {
 		min_key_id = PRIVATE_CN_NTP_KEYS;
 		max_key_id = MAX_NTP_KEYS;
 	}
 
-	if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key ) == 3)
-	{
+	if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key) == 3) {
 		// Set the private key ids to start from index PRIVATE_CN_NTP_KEYS
 		if (is_private_key)
-			key_id += PRIVATE_CN_NTP_KEYS;
+			key_id += PRIVATE_CN_NTP_KEYS; // want to do if fail test below?
 
 		// Sanity check that private keys start at PRIVATE_CN_NTP_KEYS
 		if (is_private_key && key_id < PRIVATE_CN_NTP_KEYS) {
@@ -90,17 +89,16 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 			return;
 		}
 
-		if (min_key_id <= key_id && key_id < max_key_id)
-		{
-			// Data for this key has already been inserted. Warn user
+		if (min_key_id <= key_id && key_id < max_key_id) {
+			// Data for this key has already been inserted, warn user
 			if (key_data[key_id])
 				verbose(LOG_WARNING, "Auth file read: Key id %d already allocated", key_id);
 
 			if (strcmp("SHA1", crypt_type) == 0)
 				key_data[key_id] = cstr_2_bytes(crypt_key);
 			else
-				verbose(LOG_WARNING, "Auth file read: Invalid key type. Only SHA1 currently supported, got %s",
-				    crypt_type);
+				verbose(LOG_WARNING, "Auth file read: Invalid key type. "
+				    "Only SHA1 currently supported, got %s", crypt_type);
 		} else
 			verbose(LOG_WARNING, "Auth file read: key ids must be in range 1-127");  // but min_key_id = 0  ..
 	}
@@ -109,13 +107,12 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 /*
  * Read authentication keys from a single file
  */
-void read_key_file(char ** key_data, char * file_path, int is_private_key)
+void read_key_file(char **key_data, char *file_path, int is_private_key)
 {
-	FILE * fp = fopen(file_path, "r");
-	if (fp == 0)
-	{
+	FILE *fp = fopen(file_path, "r");
+	if (fp == 0) {
 		verbose(LOG_WARNING, "No authentication keys present within %s", file_path);
-		return ;
+		return;
 	}
 	
 	char buff[128];
@@ -124,20 +121,17 @@ void read_key_file(char ** key_data, char * file_path, int is_private_key)
 
 	buff[0] = 0;
 	char c;
-	while (! feof(fp) )
-	{
+	while ( !feof(fp) ) {
 		fread(&c, 1, 1, fp);
 		if (c == '#')
 			ignore_content = 1;
 
-		if (! ignore_content && buff_size < 126)
-		{
+		if (! ignore_content && buff_size < 126) {
 			buff[buff_size] = c;
 			buff_size ++;
 		}
 
-		if (c == '\n')
-		{
+		if (c == '\n') {
 			buff[buff_size] = 0;
 			add_auth_key(key_data, buff, is_private_key);
 			buff_size = 0;
@@ -147,18 +141,19 @@ void read_key_file(char ** key_data, char * file_path, int is_private_key)
 
 	// Check if the last line with no '\n' had data. The add_auth_key checks that the contents of the line
 	buff[buff_size] = 0;
-    add_auth_key(key_data, buff, is_private_key);
-	
+	add_auth_key(key_data, buff, is_private_key);
+
 	fclose(fp);
 }
 
 /*
  * Read authentication keys to validate requests
+ * TODO: Could make MAX_NTP_KEYS dynamic in future
  */
-char** read_keys()
+char **
+read_keys()
 {
-	// Currently allow for up to 128 keys. We could make this more dynamic in future
-	char ** key_data = malloc(sizeof(char *)*MAX_NTP_KEYS);
+	char **key_data = malloc(sizeof(char *)*MAX_NTP_KEYS);
 	memset(key_data, 0, sizeof(char *)*MAX_NTP_KEYS);
 
 	read_key_file(key_data, PUBLIC_KEY_FILE_PATH, 0);

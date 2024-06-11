@@ -96,8 +96,8 @@ struct radclock_phyparam {
 typedef enum {
 	STAMP_UNKNOWN,
 	STAMP_SPY,
-	STAMP_NTP,		/* Handed by libpcap */
-	STAMP_NTP_PERF,		// bidir_stamp augmented with authoritative timestamps
+	STAMP_NTP,         /* Handed by libpcap */
+	STAMP_NTP_PERF,    // bidir_stamp augmented with authoritative timestamps
 	STAMP_PPS,
 } stamp_type_t;
 
@@ -108,10 +108,10 @@ struct unidir_stamp {
 };
 
 struct bidir_stamp {
-	vcounter_t	Ta;		// vcount timestamp [counter value] of pkt leaving client
-	long double	Tb;		// timestamp [sec] of arrival at server
-	long double	Te;		// timestamp [sec] of departure from server
-	vcounter_t	Tf;		// vcount timestamp [counter value] of pkt returning to client
+	vcounter_t  Ta;    // vcount timestamp [counter value] of pkt leaving client
+	long double Tb;    // timestamp [sec] of arrival at server
+	long double Te;    // timestamp [sec] of departure from server
+	vcounter_t  Tf;    // vcount timestamp [counter value] of pkt returning to client
 };
 
 /* This structure augments bidir_stamp with additional authoritative timestamps
@@ -122,8 +122,8 @@ struct bidir_stamp_perf
 {
 	struct bidir_stamp	bstamp;
 	/* Authoritative client-side timestamps */
-	long double	Tout;		// [sec] outgoing packet (corresponding to Ta)
-	long double	Tin;		// [sec] incoming packet (corresponding to Tf)
+	long double Tout;  // [sec] outgoing packet (corresponding to Ta)
+	long double Tin;   // [sec] incoming packet (corresponding to Tf)
 };
 
 
@@ -139,11 +139,11 @@ struct stamp_t {
 	char server_ipaddr[INET6_ADDRSTRLEN];
 	int ttl;
 	int stratum;
-	int LI;		// value of LI bits in response header, in {0,1,2,3}
+	int LI;               // value of LI bits in response header, in {0,1,2,3}
 	uint32_t refid;
 	double rootdelay;
 	double rootdispersion;
-	int auth_key_id;		// -1 for non auth NTP, otherwise valid key id
+	int auth_key_id;      // -1 for non auth NTP, otherwise valid key id
 	union stamp_u {
 		struct unidir_stamp ustamp;
 		struct bidir_stamp  bstamp;
@@ -160,15 +160,8 @@ struct stamp_t {
  *  MODE_RAD : RAD stamps                [ `client' side in matching ]
  *  MODE_DAG : authoritative timestamps  [ `server' side in matching ]
  */
-#define	MODE_RAD	(MODE_PRIVATE+1)	// ensures is above standard NTP modes
-#define	MODE_DAG (MODE_PRIVATE+2)
-
-struct dag_cap {
-	long double Tout;
-	long double Tin;
-	l_fp server_reply_org;
-	struct in_addr ip;
-};
+#define MODE_RAD (MODE_PRIVATE+1)    // ensures is above standard NTP modes
+#define MODE_DAG (MODE_PRIVATE+2)
 
 
 /* Holds all RADclock clock variables needed to be visible outside the algo.
@@ -184,30 +177,30 @@ struct bidir_algooutput {
 	long int n_stamps;
 
 	/* Leap second variables */
-	int leapsec_total;				// sum of leap seconds seen since clock start
-	int leapsec_next;					// value of the expected next leap second {-1 0 1}
-	vcounter_t leapsec_expected;	// estimated vcount of next leap, or 0 if none
+	int leapsec_total;              // sum of leap seconds seen since clock start
+	int leapsec_next;               // value of the expected next leap second {-1 0 1}
+	vcounter_t leapsec_expected;    // estimated vcount of next leap, or 0 if none
 	
 	/** Internal algo variables visible outside **/
 	/* Per-stamp output */
-	vcounter_t 	RTT;			// Not in state [is RTT of last stamp]
-	double		phat;
-	double		perr;
-	double 		plocal;
-	double 		plocalerr;
+	vcounter_t  RTT;                // Not in state [is RTT of last stamp]
+	double      phat;
+	double      perr;
+	double      plocal;
+	double      plocalerr;
 	long double K;
-	double 		thetahat;
-	vcounter_t 	RTThat;
-	vcounter_t 	RTThat_new;
-	vcounter_t 	RTThat_shift;
-	double 		th_naive;
-	double 		minET;
-	double 		minET_last;		// Not in state
-	double 		errTa;
-	double 		errTf;
-	double 		wsum;
-	vcounter_t 	best_Tf;
-	unsigned int status;			// Not in state
+	double      thetahat;
+	vcounter_t  RTThat;
+	vcounter_t  RTThat_new;
+	vcounter_t  RTThat_shift;
+	double      th_naive;
+	double      minET;
+	double      minET_last;         // Not in state
+	double      errTa;
+	double      errTf;
+	double      wsum;
+	vcounter_t  best_Tf;
+	unsigned int status;            // Not in state
 };
 
 
@@ -442,9 +435,9 @@ struct bidir_perfdata {
  * Functions declarations
  */
 int RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
-		struct bidir_stamp *input_stamp, int qual_warning,
-		struct radclock_data *rad_data, struct radclock_error *rad_error,
-		struct bidir_algooutput *output);
+    struct bidir_stamp *input_stamp, int qual_warning,
+    struct radclock_data *rad_data, struct radclock_error *rad_error,
+    struct bidir_algooutput *output);
 
 void init_stamp_queue(struct bidir_algodata *algodata);
 void destroy_stamp_queue(struct bidir_algodata *algodata);
