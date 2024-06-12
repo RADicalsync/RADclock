@@ -1,0 +1,293 @@
+#!/usr/bin/env bash
+# #!/bin/bash
+
+#####
+# Supports testing of the current WD (in FFport) together with the latest main.
+#
+# Context: advancing the base Ni (of port {Ni+,MNi+}), has big consequences:
+#  it implies that the full testing that occurred before that port was committed
+#  (also enjoyed by subsequent VM-FFport-tested FF developments on master)
+#  would become obsolete. Thus even if the FFfiles were trivially affected, and
+#  the rebase performed conflict-free, the result still requires time-consuming
+#  testing (including a worldbuild) and then the committing of a new port.
+#
+#  Thus this script's role is primarily about testing the waters for a tracking
+#  of base without actually doing it, both to
+#    - get a head's up to see if a rebase can continue to be avoided (desirable)
+#    - if one is indicated, to help see and fix complexities in a safe environment
+#      before proceeding with a true base update / new port, and to help seed it.
+#
+# Defining features
+#   - does not touch RADrepo (only use is to compare with Repo WD during initial tests)
+#   - does not change the FFport/CURRENT base
+#   - alters FFport the minimum needed, offers options as to how, including exit
+#   - pulls main always unless abort explicitly
+#   - attempts rebase in Tbranch unless abort explicitly
+#     - exits there ready for testing with  quick_FF_build -n
+#
+#  Non-use cases:
+#    i) FF-only changed in CURRENT on master, tested with VM workflow on FFport
+#       on existing base, with success.  [ no change in base indicated or needed ]
+#   ii) conflicts are bad, too much effort to fix in VM, so give up.
+#       Transferring conflicted NP files to RADrepo for editing is a job
+#       for seedCURRport.
+#
+#  Use cases:
+#    i)  testing your latest FFfiles against the latest main, to get a feel for
+#        if a new tracking port is needed
+#        [ advances main for you, see how FFfiles changes, if a rebase worth it / would be hard ]
+#        [ if get lucky and no conflicts, could also do a compile test, for deeper heads-up ]
+#   ii)  when trying to complete a port that has strange problems, can use to see
+#        if issues resolved in latest main
+#        [ v-unlikely any FFfile changes, since the naive port has absorbed these v-recently ]
+#        [ v-unlikely any conflicts also, so should get a WD ready for testing ]
+#        [ if fixes issues, implies a obligatory change of base in mid-port, so
+#          the Ni committed on CURRENT (if following the {Ni,Ni+}* model)
+#          would need to be wiped out, and FFport cleaned.  Best done manually.]
+#  iii)  to prepare the ground work for initiating a new port
+#        [ all initial steps already done ]
+#        [ can use Tbranch to reseed FFport and base ]
+#
+# Actions
+#    - provides info on the current state of the repos, with option to exit
+#    - commits the current WD on FFport if needed
+#      [ if occurs, issues reminder to reverse this later to avoid issues
+#        with next use of seedCURRport ]
+#    - updates to the latest main, provides info on FFfile changes, gives exit option
+#    - creates a safe Tbranch testing branch off FFport, and rebases it onto main
+#      If conflicts make it stop before completion, gives option to exit/forge-ahead.
+#
+## Notes:
+#  - to repeat use currently must clean up manually:
+#        git checkout FFPort
+#        git branch -D reBaseTest
+#
+OS=`uname -s`
+if [ $OS != FreeBSD ]; then
+	echo "This script currently supports a FreeBSD workflow only! you are on $OS"
+	exit
+fi
+
+# Input parameters
+OS='freebsd'
+Tbranch='reBaseTest'  # Target branch in CURRrepo to rebase (will be created)
+
+# VM --> Icaro dir params
+BaseDir="$HOME/FFkernel_Work"
+FFtarget="$BaseDir/FFclock_working"         # local copy to fuel tree insertion
+MountPoint="$BaseDir/V4_mountedfrom_Icaro"
+Repo="$MountPoint/RADclock_mycurrent"
+
+# Select Repo FF dir
+ND="FreeBSD-CURRENT"
+FFsource="kernel/$OS/$ND/CurrentSource/"
+
+
+# Test inputs
+echo -e "${BLU}======================= Testing State =======================${CLE}"
+abort="False"
+
+
+echo
+echo "==== Examining CURRrepo, expect uncommited local changes on FFport branch ===="
+cd /usr/src
+pwd
+echo
+FFportClean="True"
+
+
+## Confirm branching between FFport and main
+MNi=`git merge-base FFport main |head -c 12`  # commit where FFport branched off main
+git checkout --quiet FFport            # need to start here to confirm is clean
+FFportHEAD=`git show -s --oneline FFport |cut -d' ' -f1`
+MAINHEAD=`  git show -s --oneline main   |cut -d' ' -f1`
+AgeFFport=`git logo $MNi..$FFportHEAD    |wc -l |tr -d ' '`
+AgeMain=`  git logo $MNi..$MAINHEAD      |wc -l |tr -d ' '`
+
+git status -uno
+git logo $MNi^..$FFportHEAD            # Look at the FFport branch
+echo
+echo -n "FFport branched off main at $MNi    "
+echo    "( [$AgeFFport, $AgeMain] commits back from [FFport, main] HEAD )"
+
+## CURRrepo checks
+git status |grep clean > /dev/null
+if [ $? -eq 1 ]; then
+	echo "WD not clean!"
+	FFportClean="False"
+fi
+
+
+
+echo
+echo "==== Comparing FFport and RADRepo CURRENT, expect FFiles to match ===="
+echo
+
+mkdir -p $BaseDir/WD_FFport
+cp -p $BaseDir/CurrentSource/*  $BaseDir/WD_FFport
+diff $BaseDir/WD_FFport $Repo/$FFsource > /dev/null
+if [ $? -ne 0 ]; then
+	echo "**** FAIL! forget to test latest changes? moved _into_srctree when on wrong branch?  First few lines :"
+	diff $BaseDir/WD_FFport $Repo/$FFsource |head
+	echo "**** Run update_workingFFsource; move_into_srctree to see changes and avoid chaos ****"
+else
+	echo "They match!"
+fi
+\rm -r $BaseDir/WD_FFport
+
+
+git branch -v
+git branch |grep '$Tbranch' > /dev/null
+if [ $? -eq 0 ]; then
+	echo
+	echo "** Warning: $Tbranch already exists! not good."
+fi
+echo
+
+## Final checks before continuing
+if [ $abort == "True" ]; then
+	echo "*** Something wrong with inputs or state, aborting ***"
+	exit
+fi
+
+echo
+read -p "--- Good to go [yN] ? " ans
+[[ "$ans" != "y" ]] && exit
+
+echo "========================== Testing Done =========================="
+echo
+
+
+
+
+
+
+
+
+echo
+echo "==== FFport: make WD clean  ===="
+echo
+git logo -3
+
+if [ "$FFportClean" == "True" ]; then
+	echo "** WD is clean, FFport will not be changed"
+else
+	read -p "** WD not clean, hard reset back to last commit [Ny] ? " ans
+	if [[ "$ans" == "y" ]]; then
+		git reset --hard
+	else
+		git add .                 # all changed included, will capture any new FFfile
+		SM="Committing local changes to allow rebase testing to proceed"
+		read -p "Happy to commit with a standard message? [Ny] ? " ans
+		if [[ "$ans" == "y" ]]; then
+			git commit  -m"$SM"
+		else
+			git commit -e -m"$SM"		# edit this draft
+		fi
+		echo  "** Undo this commit (reset --soft HEAD^) later to avoid polluting retrack"
+	fi
+	echo
+	git logo -3
+fi
+
+
+
+echo
+echo "==== Update main, test for changes in FFfiles since $MNi, decide if proceed to rebase ===="
+echo
+NoFFchange='False'
+
+## Record the FF source of FFport's current base!
+git checkout --quiet $MNi
+mkdir -p $BaseDir/FFsource_old
+cp -p $BaseDir/CurrentSource/*  $BaseDir/FFsource_old  2> /dev/null # FFCLOCK probably present
+rm -f $BaseDir/FFsource_old/FFCLOCK                        # get rid of it silently if present
+
+## Update main
+git checkout --quiet main
+git pull --ff-only      # failure ==> inconsistent state, must fix manually!
+echo "Here is the latest main: "
+git logo -2
+newbase=`git logo -1 |cut -d' ' -f1`	# get candidate MN(i+1) hash
+
+## Record the FF source of the latest main
+mkdir -p $BaseDir/FFsource_new
+cp -p $BaseDir/CurrentSource/*  $BaseDir/FFsource_new  2> /dev/null # FFCLOCK will be absent
+diff $BaseDir/FFsource_new  $BaseDir/FFsource_old  > /dev/null
+if [ $? -eq 0 ]; then
+	NoFFchange='True'
+	echo
+	echo "**** No change in FFfiles after update"
+fi
+git checkout --quiet FFport
+
+
+# There is change, but may be trivial. Examine, and provide option to exit.
+if [ "$NoFFchange" == "False" ]; then
+	rm FFfile_changes.txt
+	diff $BaseDir/FFsource_new  $BaseDir/FFsource_old > FFfile_changes.txt
+	echo "Changes entail `diff $BaseDir/FFsource_new  $BaseDir/FFsource_old |wc -l` FFfile lines"
+	echo "Changes stored in FFfile_changes.txt, take a look."
+	read -p " Continue to rebase test? [Yn] ?" ans
+	if [ "$ans" == "n" ]; then
+		echo
+		echo "Ok stopping. Main remains advanced, but base is unchanged"
+		echo
+		\rm -r $BaseDir/FFsource_new  $BaseDir/FFsource_old
+		exit
+	else
+		echo "Fine, proceeding to rebase"
+	fi
+fi
+\rm -r $BaseDir/FFsource_new  $BaseDir/FFsource_old
+
+
+
+
+echo
+echo "==== Create $Tbranch, rebase it ===="
+echo
+
+# Create test branch
+git branch |grep $Tbranch > /dev/null
+if [ $? -eq 0 ]; then
+	echo
+	echo "** $Tbranch already exists, aborting."
+	exit
+fi
+git checkout --quiet -b $Tbranch
+
+# Rebase it onto the latest main
+git rebase main
+echo
+git logo -2
+
+git status | grep Changes > /dev/null
+if [ $? -eq 1 ]; then
+	echo "** WD is clean, indicating no conflicts"
+else
+	read -p "** Rebase failed, force completion now [Yn] ?" ans
+	if [ "$ans" == "n" ]; then
+		echo "Ok, pushing through, rebased commit(s) will be corrupted"
+		git add .
+		git rebase --continue
+	else
+		echo "** Stopping: complete rebase manually"
+	fi
+fi
+echo
+
+
+
+echo
+echo "----------------------------------- Summary ---------------------------------------"
+echo " *** CURRrepo ***"
+cd /usr/src
+git branch -v
+
+echo
+git logo -3
+
+echo "Test version available on $Tbranch (once conflicts resolved).  To test, use  quick_FF_build -n "
+echo "-----------------------------------------------------------------------------------"
+

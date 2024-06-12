@@ -25,21 +25,13 @@ PAGER="less"
 
 
 ## ANSI escape code Colour definitions
-# must use -e option to echo to enable bashslash chars
+# use  echo -e  to enable bashslash chars, or printf  if -e not available
 # \e = \033
 CLE='\e[0m'			# must use to return to normal
 BOLD='\e[1m'
 ## attribute control codes  (number after the "[")
-#0	normal
-#1  bold
-#2  dim
-#3  italic
-#4  underline
-#5,6  flashing
-#7  invert text and background?
-#8  invisible ?
-#9  strike through
-#21 double underline
+# (0,1,2,3,4) = (normal,bold,dim,italic,underline,5/6)
+# (7,8,9, 21) = (invert text and background,invisible?,strike through, double underline)
 # chars
 RED='\e[0;31m' ;   lRED='\e[1;31m'
 GRE='\e[0;32m' ;   lGRE='\e[1;32m'		# green

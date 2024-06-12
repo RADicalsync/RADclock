@@ -40,7 +40,7 @@
 
 
 
-// TODO : should provide methods for modify this? 
+// TODO : should provide methods for modify this?
 typedef enum {
 	RADCLOCK_SYNC_NOTSET,
 	RADCLOCK_SYNC_DEAD,
@@ -59,9 +59,7 @@ struct radclock_handle;
 
 // TODO: This network protocol code could be factored?
 
-/*
- * NTP Protocol related stuff
- */
+/* NTP Protocol related stuff */
 struct radclock_ntp_client {
 	int socket;
 	struct sockaddr_in s_to;
@@ -72,15 +70,14 @@ struct radclock_ntp_server {
 	int burst;
 	uint32_t refid;
 	unsigned int stratum;
-	double minRTT; 			/* RTThat to the server we sync to */
-	double rootdelay;			/* Cumulative RTThat from top of stratum hierarchy */
-	double rootdispersion;	/* Cumulative clock error from top of stratum hierarchy */
+	double minRTT;          // RTThat to the server we sync to
+	double rootdelay;       // Cumulative RTThat from top of stratum hierarchy
+	double rootdispersion;  // Cumulative clock error from top of stratum hierarchy
 };
 
 
 
-/*
- * Virtual machine environment data
+/* Virtual machine environment data
  * Mode run in, push and pull struct radclock_data
  */
 struct radclock_vm
@@ -93,9 +90,9 @@ struct radclock_vm
 	struct sockaddr_in server_addr;
 };
 
-#define VM_MAGIC_NUMBER		31051978
-#define VM_REQ_RAD_DATA		1
-#define VM_REQ_RAD_ERROR	2
+#define VM_MAGIC_NUMBER    31051978
+#define VM_REQ_RAD_DATA    1
+#define VM_REQ_RAD_ERROR   2
 
 struct vm_request {
 	unsigned int magic_number;
@@ -117,9 +114,6 @@ struct vm_reply {
 
 struct radclock_handle {
 
-	/* Number of different servers */
-	int nservers;
-
 	/* Library radclock structure */
 	struct radclock *clock;
 
@@ -132,9 +126,9 @@ struct radclock_handle {
 	struct radclock_vm rad_vm;
 
 	/* Protocol related state on the daemon client side (NTP case) */
-	struct radclock_ntp_client		*ntp_client;
+	struct radclock_ntp_client *ntp_client;
 	/* Protocol related state on the daemon's server side (NTP case) */
-	struct radclock_ntp_server		*ntp_server;
+	struct radclock_ntp_server *ntp_server;
 	
 	/* Raw data capture buffer for libpcap */
 	struct raw_data_queue *pcap_queue;
@@ -149,20 +143,20 @@ struct radclock_handle {
 
 	/* Common data for the daemon */
 	int is_daemon;
-	radclock_runmode_t 		run_mode;
-	char hostIP[16];		// IP address of the host
+	radclock_runmode_t run_mode;
+	char hostIP[16];    // IP address of the host
 
 	/* UNIX signals */
-	unsigned int unix_signal;		// for recording of HUP and TERM
-	struct FIFO *alarm_buffer;		// buffer for sIDs of packet SIGALRMs
+	unsigned int unix_signal;    // for recording of HUP and TERM
+	struct FIFO *alarm_buffer;   // buffer for sIDs of packet SIGALRMs
 	
 	/* Output file descriptors */
 	FILE* stampout_fd;
 	FILE* matout_fd;
 
 	/* Threads */
-	pthread_t threads[10];		/* TODO: quite ugly implementation ... */
-	int	pthread_flag_stop;
+	pthread_t threads[10];
+	int pthread_flag_stop;
 	pthread_mutex_t globaldata_mutex;
 
 	/* Configuration */
@@ -170,10 +164,10 @@ struct radclock_handle {
 
 	/* Algo output */
 	radclock_syncalgo_mode_t syncalgo_mode;
-	//void *algo_output; 	/* Defined as void* since not part of the library */
+	//void *algo_output;   // Defined as void* since not part of the library
 
 	/* Stamp source */
-	void *stamp_source; /* Defined as void* since not part of the library */
+	void *stamp_source;    // Defined as void* since not part of the library
 
 	/* Points to an array of Synchronisation algodata, one per server */
 	void *algodata;
@@ -181,9 +175,11 @@ struct radclock_handle {
 	/* Points to an array of Synchronisation perfdata, one per server */
 	void *perfdata;
 
-	/* ID (array index) of preferred RADclock */  // perhaps call sI = server Index
-	int pref_sID;
-	int last_sID;	// hack to give fake dag msg creation knowledge of last RADstamp popped: togo soon
+	/* Multiple server management */
+	int nservers;         // number of servers
+	int pref_sID;         // ID ("array" index) of preferred RADclock
+	int last_sID;         // hack to give fake dag msg creation knowledge of last RADstamp popped: togo soon
+	vcounter_t pref_date; // raw time of last pref change
 
 	/* Server trust status word: 1 bit per server, denoting
 	 *   0: server is trusted
@@ -210,20 +206,12 @@ struct radclock_handle {
 #define NTP_CLIENT(h) (SNTP_CLIENT(h,h->pref_sID))
 #define NTP_SERVER(h) (SNTP_SERVER(h,h->pref_sID))
 
-#define SRAD_DATA(h,s)  (&(h->rad_data[s]))		// ptr to data of server s
+#define SRAD_DATA(h,s)  (&(h->rad_data[s]))      // ptr to data of server s
 #define SRAD_ERROR(h,s) (&(h->rad_error[s]))
-#define RAD_DATA(h)  (SRAD_DATA(h,h->pref_sID))	// ptr to data of preferred s
+#define RAD_DATA(h)  (SRAD_DATA(h,h->pref_sID))  // ptr to data of preferred s
 #define RAD_ERROR(h) (SRAD_ERROR(h,h->pref_sID))
 
 #define RAD_VM(h) (&(h->rad_vm))
-
-/* Old: based on h being a pointer to handle, awkward when also need to know s */
-//#define SADD_STATUS(h,s,y) (SRAD_DATA(h,s)->status = SRAD_DATA(h,s)->status | y )
-//#define SDEL_STATUS(h,s,y) (SRAD_DATA(h,s)->status = SRAD_DATA(h,s)->status & ~y )
-//#define SHAS_STATUS(h,s,y) ((SRAD_DATA(h,s)->status & y ) == y )
-//#define ADD_STATUS(h,y) (SADD_STATUS(h,h->pref_sID,y))
-//#define DEL_STATUS(h,y) (SDEL_STATUS(h,h->pref_sID,y))
-//#define HAS_STATUS(h,y) (SHAS_STATUS(h,h->pref_sID,y))
 
 /* New: based on r pointing to the desired rad_data */
 #define ADD_STATUS(r,y) ((r)->status = (r)->status | y )
@@ -233,16 +221,12 @@ struct radclock_handle {
 /* Function to map from IP address to server index */
 int serverIPtoID(struct radclock_handle *handle, char *server_ipaddr);
 
-
-
-/*
- * Functions which handle the push and pull of virtual machine data
- */
+/* Functions that handle the push and pull of virtual machine data */
 int init_vm(struct radclock_handle *handle);
 int push_data_vm(struct radclock_handle *handle);
 int receive_loop_vm(struct radclock_handle *handle);
 int update_ipc_shared_memory(struct radclock_handle *handle);
 void read_clocks(struct radclock_handle *handle, struct timeval *sys_tv,
-	struct timeval *rad_tv, vcounter_t *counter);
+    struct timeval *rad_tv, vcounter_t *counter);
 
 #endif

@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2011 The University of Melbourne
  * All rights reserved.
@@ -31,8 +31,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ffclock.h"
 
 #include <sys/param.h>
@@ -53,7 +51,7 @@ __FBSDID("$FreeBSD$");
 
 FEATURE(ffclock, "Feedforward clock support");
 
-extern struct ffclock_estimate ffclock_estimate;
+extern struct ffclock_data ffclock_data;
 extern int8_t ffclock_updated;
 extern struct mtx ffclock_mtx;
 
@@ -73,7 +71,7 @@ void
 ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
     struct bintime *error_bound, uint32_t flags)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	ffcounter ffc;
 	ffcounter update_ffcount;
 	ffcounter ffdelta_error;
@@ -86,29 +84,29 @@ ffclock_abstime(ffcounter *ffcount, struct bintime *bt,
 		ffclock_convert_abs(ffc, bt, flags);
 	}
 
-	/* Current ffclock estimate, use update_ffcount as generation number. */
+	/* Current ffclock data, use update_ffcount as generation number. */
 	do {
-		update_ffcount = ffclock_estimate.update_ffcount;
-		memcpy(&cest, &ffclock_estimate,sizeof(struct ffclock_estimate));
-	} while (update_ffcount != ffclock_estimate.update_ffcount);
+		update_ffcount = ffclock_data.update_ffcount;
+		memcpy(&cdat, &ffclock_data, sizeof(struct ffclock_data));
+	} while (update_ffcount != ffclock_data.update_ffcount);
 
 	/*
 	 * Leap second adjustment. Total as seen by the FFclock daemon since it
-	 * started. cest.leapsec_expected is the ffcounter prediction of when
+	 * started. cdat.leapsec_expected is the ffcounter prediction of when
 	 * the next leapsecond occurs.
 	 */
 	if ((flags & FFCLOCK_LEAPSEC) == FFCLOCK_LEAPSEC) {
-		bt->sec -= cest.leapsec_total;  // subtracting = including leaps
-		if (cest.leapsec_expected != 0 && ffc > cest.leapsec_expected)
-			bt->sec -= cest.leapsec_next;
+		bt->sec -= cdat.leapsec_total;  // subtracting = including leaps
+		if (cdat.leapsec_expected != 0 && ffc > cdat.leapsec_expected)
+			bt->sec -= cdat.leapsec_next;
 	}
 
 	/* Compute error bound if a valid pointer has been passed. */
 	if (error_bound) {
-		ffdelta_error = ffc - cest.update_ffcount;
+		ffdelta_error = ffc - cdat.update_ffcount;
 		ffclock_convert_diff(ffdelta_error, error_bound);
-		bintime_mul(error_bound, cest.errb_rate * PS_AS_BINFRAC);
-		bintime_addx(error_bound, cest.errb_abs * NS_AS_BINFRAC);
+		bintime_mul(error_bound, cdat.errb_rate * PS_AS_BINFRAC);
+		bintime_addx(error_bound, cdat.errb_abs * NS_AS_BINFRAC);
 	}
 
 	if (ffcount)
@@ -132,9 +130,9 @@ ffclock_difftime(ffcounter ffdelta, struct bintime *bt,
 
 	if (error_bound) {
 		do {
-			update_ffcount = ffclock_estimate.update_ffcount;
-			err_rate = ffclock_estimate.errb_rate;
-		} while (update_ffcount != ffclock_estimate.update_ffcount);
+			update_ffcount = ffclock_data.update_ffcount;
+			err_rate = ffclock_data.errb_rate;
+		} while (update_ffcount != ffclock_data.update_ffcount);
 
 		ffclock_convert_diff(ffdelta, error_bound);
 		bintime_mul(error_bound, err_rate * PS_AS_BINFRAC);
@@ -397,34 +395,33 @@ sys_ffclock_getcounter(struct thread *td, struct ffclock_getcounter_args *uap)
 
 /*
  * System call allowing the synchronisation daemon to push new feedforward
- * clock estimates to the kernel. Acquire ffclock_mtx to prevent concurrent
+ * clock data to the kernel. Acquire ffclock_mtx to prevent concurrent
  * updates and ensure data consistency.
- * NOTE: ffclock_updated signals the fftimehands that new estimates are
- * available. The updated estimates are picked up by the fftimehands on next
- * tick, which could take as long as 1/hz seconds (if ticks are not missed).
+ * NOTE: ffclock_updated signals the fftimehands that new data is available.
+ * The updated data is picked up by the fftimehands on next tick, which could
+ * take as long as 1/hz seconds (if ticks are not missed).
  */
 #ifndef _SYS_SYSPROTO_H_
-struct ffclock_setestimate_args {
-	struct ffclock_estimate *cest;
+struct ffclock_setdata_args {
+	struct ffclock_data *cdat;
 };
 #endif
 /* ARGSUSED */
 int
-sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
+sys_ffclock_setdata(struct thread *td, struct ffclock_setdata_args *uap)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	int error;
 
 	/* Reuse of PRIV_CLOCK_SETTIME. */
 	if ((error = priv_check(td, PRIV_CLOCK_SETTIME)) != 0)
 		return (error);
 
-	if ((error = copyin(uap->cest, &cest, sizeof(struct ffclock_estimate)))
-	    != 0)
+	if ((error = copyin(uap->cdat, &cdat,sizeof(struct ffclock_data))) != 0)
 		return (error);
 
 	mtx_lock_spin(&ffclock_mtx);
-	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
+	memcpy(&ffclock_data, &cdat, sizeof(struct ffclock_data));
 	ffclock_updated++;
 	mtx_unlock_spin(&ffclock_mtx);
 	
@@ -432,26 +429,26 @@ sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
 }
 
 /*
- * System call allowing userland applications to retrieve the clock estimates
+ * System call allowing userland applications to retrieve the clock data
  * stored within the kernel. It is useful to kickstart the synchronisation
  * daemon with the kernel's knowledge of hardware timecounter.
  */
 #ifndef _SYS_SYSPROTO_H_
-struct ffclock_getestimate_args {
-	struct ffclock_estimate *cest;
+struct ffclock_getdata_args {
+	struct ffclock_data *cdat;
 };
 #endif
 /* ARGSUSED */
 int
-sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
+sys_ffclock_getdata(struct thread *td, struct ffclock_getdata_args *uap)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	int error;
 
 	mtx_lock_spin(&ffclock_mtx);
-	memcpy(&cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
+	memcpy(&cdat, &ffclock_data, sizeof(struct ffclock_data));
 	mtx_unlock_spin(&ffclock_mtx);
-	error = copyout(&cest, uap->cest, sizeof(struct ffclock_estimate));
+	error = copyout(&cdat, uap->cdat, sizeof(struct ffclock_data));
 	return (error);
 }
 
@@ -465,14 +462,14 @@ sys_ffclock_getcounter(struct thread *td, struct ffclock_getcounter_args *uap)
 }
 
 int
-sys_ffclock_setestimate(struct thread *td, struct ffclock_setestimate_args *uap)
+sys_ffclock_setdata(struct thread *td, struct ffclock_setdata_args *uap)
 {
 
 	return (ENOSYS);
 }
 
 int
-sys_ffclock_getestimate(struct thread *td, struct ffclock_getestimate_args *uap)
+sys_ffclock_getdata(struct thread *td, struct ffclock_getdata_args *uap)
 {
 
 	return (ENOSYS);

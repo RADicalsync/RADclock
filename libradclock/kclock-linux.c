@@ -73,7 +73,7 @@ enum {
 
 static struct nla_policy radclock_attr_policy[RADCLOCK_ATTR_MAX+1] = {
 	[RADCLOCK_ATTR_DUMMY]      = { .type = NLA_U16 },
-	[RADCLOCK_ATTR_DATA]       = { .minlen = sizeof(struct ffclock_estimate) },
+	[RADCLOCK_ATTR_DATA]       = { .minlen = sizeof(struct ffclock_data) },
 	[RADCLOCK_ATTR_FIXEDPOINT] = { .minlen = sizeof(struct radclock_fixedpoint) },
 };
 
@@ -105,7 +105,7 @@ init_kernel_clock(struct radclock *clock)
 //	logger(RADLOG_NOTICE, "RADCLOCK_ATTR_DATA (%d) set to size %d (actual is %d)",
 //									RADCLOCK_ATTR_DATA,
 //									radclock_attr_policy[RADCLOCK_ATTR_DATA].minlen,
-//									sizeof(struct ffclock_estimate));
+//									sizeof(struct ffclock_data));
 	PRIV_DATA(clock)->radclock_gnl_id = id;
 
 	return (0);
@@ -162,7 +162,7 @@ radclock_gnl_receive(int id, struct nlmsghdr *h, int attrib_id, void *into)
 		void *attr_payload = nla_data(attrs[RADCLOCK_ATTR_DATA]);
 		if (attr_payload) {
 			//logger(RADLOG_NOTICE, "found desired raddata attribute");
-			memcpy(into, attr_payload, sizeof(struct ffclock_estimate));
+			memcpy(into, attr_payload, sizeof(struct ffclock_data));
 			//nl_data_free(attr_payload);  // entire buf gets freed in radclock_gnl_get_attr
 			return (0);
 		} else
@@ -306,7 +306,7 @@ radclock_gnl_set_attr(int radclock_gnl_id, int attrib_id, void *data)
 
 	/* Append desired attribute payload in message */
 	if (attrib_id == RADCLOCK_ATTR_DATA) {
-		if (nla_put(msg, RADCLOCK_ATTR_DATA, sizeof(struct ffclock_estimate), data)) {
+		if (nla_put(msg, RADCLOCK_ATTR_DATA, sizeof(struct ffclock_data), data)) {
 			logger(RADLOG_ERR, "Couldn't set attr");
 			goto close_errout;
 		}
@@ -343,7 +343,7 @@ errout:
 
 /* Get the current FFdata from the kernel via netlink */
 int
-get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+get_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat)
 {
 	int err;
 
@@ -352,7 +352,7 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 		return (1);
 	}
 
-	err = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, cest);
+	err = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, cdat);
 	if (err < 0) {
 		logger(RADLOG_ERR, "Failed to recover FFdata from kernel");
 		return (-1);
@@ -364,7 +364,7 @@ get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 
 /* Send the passed value of FFdata to the kernel via netlink */
 int
-set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
+set_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat)
 {
 	int err;
 
@@ -373,7 +373,7 @@ set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest)
 	case 1:
 		return (0);		// do nothing, fixedpt thread does this job
 	case 2:
-		err = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, cest);
+		err = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, cdat);
 		break;
 	default:
 		logger(RADLOG_ERR, "Unknown kernel version");
@@ -400,9 +400,9 @@ set_kernel_fixedpoint(struct radclock *clock, struct radclock_fixedpoint *fpdata
 	struct radclock_fixedpoint kernfpdata;
 
 //	struct radclock_data kernraddata;
-//struct ffclock_estimate cest, kernraddata;
-//cest.status = 2;
-//cest.period = 123456789;
+//struct ffclock_data cdat, kernraddata;
+//cdat.status = 2;
+//cdat.period = 123456789;
 
 ////	struct radclock_data *raddata = &(clock_clock->rad_data[0]);
 //	struct radclock_data rd;
@@ -419,11 +419,11 @@ set_kernel_fixedpoint(struct radclock *clock, struct radclock_fixedpoint *fpdata
 		if ( memcmp(fpdata,  &kernfpdata,sizeof(struct radclock_fixedpoint)) != 0 )
 			logger(RADLOG_ERR, "netlink inversion test for fp data failed, err_get = %d", err_get);
 
-//		err     = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &cest);
+//		err     = radclock_gnl_set_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &cdat);
 //		err_get = radclock_gnl_get_attr(PRIV_DATA(clock)->radclock_gnl_id, RADCLOCK_ATTR_DATA, &kernraddata);
-//		if ( memcmp(&cest,&kernraddata,sizeof(struct ffclock_estimate)) != 0 ) {
+//		if ( memcmp(&cdat,&kernraddata,sizeof(struct ffclock_data)) != 0 ) {
 //			logger(RADLOG_ERR, "netlink inversion test for raddata failed, err_get = %d", err_get);
-//			logger(RADLOG_NOTICE, "rd:      status = %d,  period = %llu", cest.status, cest.period);
+//			logger(RADLOG_NOTICE, "rd:      status = %d,  period = %llu", cdat.status, cdat.period);
 //			logger(RADLOG_NOTICE, "kernrd:  status = %d,  period = %llu", kernraddata.status, kernraddata.period);
 //		}
 

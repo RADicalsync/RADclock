@@ -462,7 +462,7 @@ each identical.
 # ffclock.h
 Similarities :
 
-struct ffclock_estimate
+struct ffclock_data
 extern uint8_t ffcounter_bypass;
 extern int ffclock_tsmode;		// needed in sock.c
 void ffclock_read_counter(ffcounter *ffcount);
@@ -482,7 +482,7 @@ functions and their support, or the snapshot code used in bpf based timestamping
 # ffclock.c
 Similarities :
 
-extern struct ffclock_estimate ffclock_estimate;
+extern struct ffclock_data ffclock_data;
 extern struct bintime ffclock_boottime;
 extern int8_t ffclock_updated;
 extern struct rw_semaphore ffclock_mtx;		// is a mtx in FreeBSD
@@ -502,11 +502,11 @@ callbacks for sysclock and counter reading syscalls.
 # timekeeping.c
 Similarities :
 
-struct ffclock_estimate ffclock_estimate;
+struct ffclock_data ffclock_data;
 struct bintime ffclock_boottime;	/* Feed-forward boot time estimate. */
 uint32_t ffclock_status;		/* Feed-forward clock status. */
 int8_t ffclock_updated;			/* New estimates are available. */
-DECLARE_RWSEM(ffclock_mtx);	/* semaphore on ffclock_estimate: declare&init */
+DECLARE_RWSEM(ffclock_mtx);	/* semaphore on ffclock_data: declare&init */
 
 struct fftimehands
 static struct fftimehands ffth[10];

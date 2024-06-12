@@ -17,7 +17,7 @@ fi
 
 
 ## Process options
-if [[ "$1" == "-n" || "$1" == "-nf" ]]; then
+if [[ "$1" == "-n" || "$1" == "-nf" || "$1" == "-nc" ]]; then
 	source="current"
 fi
 if [[ "$1" == "-f" || "$1" == "-nf" ]]; then
@@ -39,7 +39,7 @@ esac
 # Determine if will patch this kernel or not
 Based="$HOME/FFkernel_Work"
 if [[ "$source" == "current" ]]; then
-	echo "=== Will build and install the current kernel $SourceDir for $OS ==="
+	echo "=== Will build and install the existing source $SourceDir for $OS ==="
 else	
 	echo "=== Will update FF source, copy it to source tree at $SourceDir for $OS, then build and install ==="
 	update_workingFFsource  # pass explicit argument here as a hack if not finding desired version
@@ -80,7 +80,7 @@ if [ $OS == "Linux" ]; then
 		$cmd >> $Based/build.log 2>&1
 	fi
 
-	
+
 	if [ $? -eq 0 ]; then
 		echo "Build successful, now installing generated deb packages"
 		echo 
@@ -93,7 +93,7 @@ if [ $OS == "Linux" ]; then
 			echo -e "  - signing_key not found in $ConfigFile, ${lRED}re-inserting${CLE}"
 			scripts/config --set-str MODULE_SIG_KEY certs/signing_key.pem
 		fi
-	
+
 		ConfigFile="/boot/config-$OSv.$CurrSUBLEVEL"
 		echo "Check in boot   config file $ConfigFile"
 		grep signing_key $ConfigFile >> /dev/null
@@ -103,16 +103,20 @@ if [ $OS == "Linux" ]; then
 
 		# Installation
 		tail -3 $Based/build.log
+		OSfullv="$OSv.$CurrSUBLEVEL"
 		echo
-		InstallPkg="dpkg -i `ls -t ../linux-image-$OSv*.deb |head -1`"
+		InstallPkg="dpkg -i `ls -t ../linux-image-${OSfullv}_${OSfullv}*.deb |head -1`"  # avoid -dbg versions
 		echo -e "** Installing image with: ${YEL}$InstallPkg${CLE}"
 		$InstallPkg
+		# these steps usually automatic, but may fail after Major upgrade
+#		update-initramfs -c -k $OSfullv
+#		update-grub
 		echo
-		InstallPkg="dpkg -i `ls -t ../linux-headers-$OSv*.deb |head -1`"
+		InstallPkg="dpkg -i `ls -t ../linux-headers-$OSfullv*.deb |head -1`"
 		echo -e "** Installing headers with: ${YEL}$InstallPkg${CLE}"
 		$InstallPkg
 		echo
-		InstallPkg="dpkg -i `ls -t ../linux-libc-dev_$OSv*.deb |head -1`"
+		InstallPkg="dpkg -i `ls -t ../linux-libc-dev_$OSfullv*.deb |head -1`"
 		echo -e "** Installing libc-dev with: ${YEL}$InstallPkg${CLE}"
 		$InstallPkg
 
@@ -128,11 +132,16 @@ if [ $OS == "Linux" ]; then
 			scripts/config --set-str MODULE_SIG_KEY certs/signing_key.pem
 			#cat /root/FFkernel_Work/RPi_toolkit/sshaccessline >> /boot/firmware/sysconf.txt
 		fi
-	
-		ConfigFile="/boot/config-$OSv.$CurrSUBLEVEL"
-		echo "Diff between boot and source config:"
-		diff $SourceDir/.config $ConfigFile  |grep SIG_KEY
-		echo "===================================="
+
+		ConfigFile="/boot/config-$OSfullv"
+		if [[ ! -e $ConfigFile ]]; then
+			echo "  Expected $OSfullv config missing from boot!  fatal error \n"
+			exit
+		else
+			echo "Diff between boot and source config:"
+			diff $SourceDir/.config $ConfigFile  |grep SIG_KEY
+			echo "===================================="
+		fi
 
 		echo "Check in boot config file $ConfigFile"
 		grep signing_key $ConfigFile >> /dev/null
@@ -161,7 +170,7 @@ if [ "$1" == "-w" ]; then
 		echo " Executing 'make -j2 -DNO_CLEAN buildworld'"
 		make -j2  -DNO_CLEAN buildworld > $Based/buildworld.log
 	else
-		echo " Ok. executing 'make -j2  buildworld'"
+		echo " Ok slow it is: executing 'make -j2  buildworld'"
 		make -j2  buildworld > $Based/buildworld.log
 	fi
 else
@@ -175,8 +184,9 @@ if [ $? -eq 0 ]; then    # if previous command exits with success
 		echo
 	fi
 
-	if [[ "$1" == "-c" ]] || [[ "$1" == "-w" ]]; then
-		echo "Now trying to build clean, executing 'make -j2  buildkernel KERNCONF=FFCLOCK'"
+	if [[ "$1" == "-c" || "$1" == "-nc" || "$1" == "-w" ]]; then
+		echo "Now trying to build clean, executing 'make sysent' then 'make -j2  buildkernel KERNCONF=FFCLOCK'"
+		make sysent
 		make -j2  buildkernel KERNCONF=FFCLOCK > $Based/build.log
 	else
 		echo "Now trying to build fast, executing 'make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK'"

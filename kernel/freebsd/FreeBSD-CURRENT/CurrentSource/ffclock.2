@@ -25,15 +25,13 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.\" $FreeBSD$
-.\"
-.Dd May 3, 2023
+.Dd Nov 30, 2023
 .Dt FFCLOCK 2
 .Os
 .Sh NAME
 .Nm ffclock_getcounter ,
-.Nm ffclock_getestimate ,
-.Nm ffclock_setestimate
+.Nm ffclock_getdata ,
+.Nm ffclock_setdata
 .Nd Retrieve feedforward counter, get and set the parameters defining the
 native feedforward clock.
 .Sh LIBRARY
@@ -43,9 +41,9 @@ native feedforward clock.
 .Ft int
 .Fn ffclock_getcounter "ffcounter *ffcount"
 .Ft int
-.Fn ffclock_getestimate "struct ffclock_estimate *cest"
+.Fn ffclock_getdata "struct ffclock_data *cdat"
 .Ft int
-.Fn ffclock_setestimate "struct ffclock_estimate *cest"
+.Fn ffclock_setdata "struct ffclock_data *cdat"
 .Sh DESCRIPTION
 The FFclock is an alternative method to synchronize the system clock.
 It implements a feedforward paradigm that decouples low level timestamping
@@ -71,17 +69,17 @@ system call allows the calling process to retrieve the current value of a
 feedforward counter maintained by the kernel.
 .Pp
 The
-.Fn ffclock_getestimate
+.Fn ffclock_getdata
 and
-.Fn ffclock_setestimate
+.Fn ffclock_setdata
 system calls allow the caller to respectively get and set the kernel's
 native feedforward clock parameters.
 The
-.Fn ffclock_setestimate
+.Fn ffclock_setdata
 system call should be invoked by a single instance of a feedforward
 synchronization daemon.
 The
-.Fn ffclock_getestimate
+.Fn ffclock_getdata
 system call can be called by any process to retrieve the current value of the
 parameters.
 .Pp
@@ -91,12 +89,12 @@ Furthermore if bypass mode is active, system calls can also be avoided for the
 reading of the ffcounter itself.
 .Pp
 The native clock parameter data structure pointed to by
-.Fa cest
+.Fa cdat
 is defined in
 .In sys/timeffc.h
 as:
 .Bd -literal
-struct ffclock_estimate {
+struct ffclock_data {
   struct bintime  update_time;       /* FFclock time of last update */
   ffcounter       update_ffcount;    /* Counter value at last update */
   ffcounter       leapsec_expected;  /* Estimated counter value of next leap. */
@@ -121,7 +119,7 @@ The following error codes may be set in
 The
 .Fa ffcount
 or
-.Fa cest
+.Fa cdat
 pointer referenced invalid memory.
 .It Bq Er EPERM
 A user other than the super-user attempted to set the FFclock data.
@@ -174,7 +172,7 @@ externally, or obtained from the kernel via either bpf or
 .Nm ffclock_getcounter ,
 or directly in bypass mode.
 The clock parameters could be obtained via
-.Fn ffclock_getestimate ,
+.Fn ffclock_getdata ,
 or
 .Po
 preferred

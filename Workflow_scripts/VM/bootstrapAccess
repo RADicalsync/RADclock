@@ -19,6 +19,7 @@ fi
 #  Assume already have this for now: is true to all existing snapshots of all VMs, all OSes
 
 ## Allow root login  (regardless of current line, commented or not)
+echo -e "${RED} Enabling root login${CLE}"
 sed -i "" -E 's/^#?PermitRootLogin [n|y]+.*/PermitRootLogin yes/' /etc/ssh/sshd_config
 
 grep Root /etc/ssh/sshd_config  |grep -v setting

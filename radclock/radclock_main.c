@@ -556,6 +556,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Multiple server management */
 	handle->nservers = 0;
 	handle->pref_sID = 0;
+	handle->pref_date = 0;
 
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
 	strcpy(handle->hostIP, "");
@@ -635,14 +636,14 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	struct bidir_algodata *algodata;
 	struct bidir_perfdata *perfdata;
 
-	handle->nservers = ns;	// just in case, should already be true
+	handle->nservers = ns;    // just in case, should already be true
 	
 	/* RADclock data. Initialize all to zero then override some members */
 	handle->rad_data = calloc(ns,sizeof(struct radclock_data));
 	for (s=0; s<ns; s++) {
-		handle->rad_data[s].phat 			= 1e-9;
-		handle->rad_data[s].phat_local 	= 1e-9;
-		handle->rad_data[s].status 		= STARAD_UNSYNC | STARAD_WARMUP;
+		handle->rad_data[s].phat       = 1e-9;
+		handle->rad_data[s].phat_local = 1e-9;
+		handle->rad_data[s].status     = STARAD_UNSYNC | STARAD_WARMUP;
 	}
 	/* Clock error bound. All members initialized to zero */
 	handle->rad_error = calloc(ns,sizeof(struct radclock_error));
@@ -653,7 +654,7 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	/* NTP server data */
 	handle->ntp_server = calloc(ns,sizeof(struct radclock_ntp_server));
 	for (s=0; s<ns; s++) {
-		SNTP_SERVER(handle,s)->burst = NTP_BURST;	// burst at startup, like ntpd
+		SNTP_SERVER(handle,s)->burst = NTP_BURST;  // burst at startup, like ntpd
 		SNTP_SERVER(handle,s)->stratum = STRATUM_UNSPEC;
 	}
 
@@ -662,6 +663,8 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	algodata->laststamp = calloc(ns,sizeof(struct stamp_t));
 	algodata->output = calloc(ns,sizeof(struct bidir_algooutput));
 	algodata->state = calloc(ns,sizeof(struct bidir_algostate));
+	for (s=0; s<ns; s++)
+		algodata->state[s].stamp_i = -1;  // signal no stamps processed yet
 
 	/* If is_cn, create and initialize the perfdata handle, and all its internal
 	 * variables and structures. */
@@ -689,7 +692,7 @@ static int
 clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	struct radclock_error *rad_error)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	struct radclock_data rd;
 	struct radclock_error rde;
 	int err;
@@ -716,7 +719,7 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 	 * ** Currently suppressed due to RTC reset complications making such initialization
 	 *    dangerous.
 	 */
-	err = get_kernel_ffclock(clock, &cest);
+	err = get_kernel_ffclock(clock, &cdat);
 	if (err != 1) {		// if this kernel supports FFdata getting
 
 		if (err < 0) {
@@ -725,22 +728,22 @@ clock_init_live(struct radclock *clock, struct radclock_data *rad_data,
 		}
 		verbose(LOG_NOTICE, "Initial retrieve of FFclock data successful");
 		if ( VERB_LEVEL > 1 )
-			printout_FFdata(&cest);
+			printout_FFdata(&cdat);
 
 		/* Sanity check warnings when FFdata not fully set */
-		if ((cest.update_time.sec == 0) || (cest.period == 0)) {
+		if ((cdat.update_time.sec == 0) || (cdat.period == 0)) {
 			logger(RADLOG_WARNING, "kernel FFdata is uninitialized!");
-			printout_FFdata(&cest);
+			printout_FFdata(&cdat);
 		}
 
 		/* Debug code: check FFdata <--> rad_data mapping inverts as expected */
 		if ( VERB_LEVEL > 2 ) {
-			fill_radclock_data(&cest, &rd);
+			fill_radclock_data(&cdat, &rd);
 			verbose(LOG_NOTICE, "  Conversion to raddata :");
 			printout_raddata(&rd);
-			fill_ffclock_estimate(&rd, &rde, &cest);
+			fill_ffclock_data(&rd, &rde, &cdat);
 			verbose(LOG_NOTICE, "  Inversion back to FFdata :");
-			printout_FFdata(&cest);
+			printout_FFdata(&cdat);
 		}
 
 		/* Override default rad_data value with current kernel version */
@@ -1386,6 +1389,8 @@ main(int argc, char *argv[])
 	if (!config_parse(handle->conf, &param_mask, is_daemon, &handle->nservers))
 		return (0);
 
+	/* Set additional parameters not actually set by conf system */
+
 	/* Knowing the number of servers, create space for corresponding RADclocks */
 	init_mRADclocks(handle, handle->nservers);
 
@@ -1513,11 +1518,11 @@ main(int argc, char *argv[])
 	}
 	/*
 	 * We loop in here in case we are rehashed. Threads are (re-)created every
-	 * time we loop in
+	 * time we loop in.
 	 */
 	else {
 		while (err == 0) {
-			err = start_live(handle);	// SIG{HUP,TERM} map to err={0,1}
+			err = start_live(handle);    // SIG{HUP,TERM} map to err={0,1}
 			if (err == 0) {
 				if (rehash_daemon(handle, param_mask))
 					verbose(LOG_ERR, "SIGHUP - Failed to rehash daemon !!.");
@@ -1529,13 +1534,14 @@ main(int argc, char *argv[])
 	 * TODO: look into making the stats a separate structure. Could be much
 	 *       easier to manage
 	 */
-	long int n_stamp;
+	int stamp_total = 0;
+	for (int s=0; s < handle->nservers; s++)
+		stamp_total += SOUTPUT(handle, s, n_stamps);
 	unsigned int ref_count;
-	n_stamp = OUTPUT(handle, n_stamps);
 	ref_count = ((struct stampsource*)(handle->stamp_source))->ntp_stats.ref_count;
 	verbose(LOG_NOTICE, "%u NTP packets captured", ref_count);
-	verbose(LOG_NOTICE,"%ld missed NTP packets", ref_count - 2 * n_stamp);
-	verbose(LOG_NOTICE, "%ld valid timestamp tuples extracted", n_stamp);
+	verbose(LOG_NOTICE, "%ld missed NTP packets", ref_count - 2 * stamp_total);
+	verbose(LOG_NOTICE, "%ld valid timestamp tuples extracted over all servers", stamp_total);
 
 
 	/* Close output files */
@@ -1588,9 +1594,23 @@ main(int argc, char *argv[])
 	pthread_mutex_destroy(&(handle->ieee1588eq_queue->rdb_mutex));
 	free(handle->pcap_queue);
 	free(handle->ieee1588eq_queue);
-	free(((struct bidir_algodata*)handle->algodata)->laststamp);
-	free(((struct bidir_algodata*)handle->algodata)->output);
-	free(((struct bidir_algodata*)handle->algodata)->state);
+
+	struct bidir_algodata *algodata = handle->algodata;
+	free(algodata->laststamp);
+	free(algodata->output);
+	for (int s=0; s<handle->nservers; s++) {
+		struct bidir_algostate *state = &algodata->state[s];
+		history_free(&state->stamp_hist);
+		history_free(&state->Df_hist);
+		history_free(&state->Db_hist);
+		history_free(&state->Dfhat_hist);
+		history_free(&state->Dbhat_hist);
+		history_free(&state->Asymhat_hist);
+		history_free(&state->RTT_hist);
+		history_free(&state->RTThat_hist);
+		history_free(&state->thnaive_hist);
+	}
+	free(algodata->state);
 	destroy_stamp_queue((struct bidir_algodata*)handle->algodata);
 
 	free(handle);

@@ -116,10 +116,10 @@ static char* labels_sync[] = { "spy", "piggy", "ntp", "ieee1588", "pps",
  * Must be defined in the same sequence order as the CONFIG_QUALITY_*  values
  */
 static struct _key temp_quality[] = {
-	{ "poor", 				CONFIG_QUALITY_POOR},
-	{ "good",				CONFIG_QUALITY_GOOD},
-	{ "excellent",			CONFIG_QUALITY_EXCEL},
-	{ "",			 		CONFIG_QUALITY_UNKWN} // Must be the last one
+	{ "poor",      CONFIG_QUALITY_POOR},
+	{ "good",      CONFIG_QUALITY_GOOD},
+	{ "excellent", CONFIG_QUALITY_EXCEL},
+	{ "",          CONFIG_QUALITY_UNKWN}  // Must be the last one
 };
 
 
@@ -140,44 +140,44 @@ config_init(struct radclock_config *conf)
 	strcpy(conf->conffile, "");
 	strcpy(conf->logfile, "");
 	strcpy(conf->radclock_version, PACKAGE_VERSION);
-	conf->server_ipc			= DEFAULT_SERVER_IPC;
-	conf->server_telemetry		= DEFAULT_SERVER_TELEMETRY;
-	conf->synchro_type			= DEFAULT_SYNCHRO_TYPE;
-	conf->server_ntp			= DEFAULT_SERVER_NTP;
-	conf->adjust_FFclock		= DEFAULT_ADJUST_FFCLOCK;
-	conf->adjust_FBclock		= DEFAULT_ADJUST_FBCLOCK;
-	conf->server_shm			= DEFAULT_SERVER_SHM;
-	conf->public_ntp			= DEFAULT_PUBLIC_NTP;
+	conf->server_ipc        = DEFAULT_SERVER_IPC;
+	conf->server_telemetry  = DEFAULT_SERVER_TELEMETRY;
+	conf->synchro_type      = DEFAULT_SYNCHRO_TYPE;
+	conf->server_ntp        = DEFAULT_SERVER_NTP;
+	conf->adjust_FFclock    = DEFAULT_ADJUST_FFCLOCK;
+	conf->adjust_FBclock    = DEFAULT_ADJUST_FBCLOCK;
+	conf->server_shm        = DEFAULT_SERVER_SHM;
+	conf->public_ntp        = DEFAULT_PUBLIC_NTP;
 
 	strcpy(conf->shm_dag_client, "");
 
 	
 	
 	/* Virtual Machine */
-	conf->server_vm_udp			= DEFAULT_SERVER_VM_UDP;
-	conf->server_xen			= DEFAULT_SERVER_XEN;
-	conf->server_vmware			= DEFAULT_SERVER_VMWARE;
+	conf->server_vm_udp     = DEFAULT_SERVER_VM_UDP;
+	conf->server_xen        = DEFAULT_SERVER_XEN;
+	conf->server_vmware     = DEFAULT_SERVER_VMWARE;
 
 	/* Clock parameters */
-	conf->poll_period			= DEFAULT_NTP_POLL_PERIOD;
-	conf->phyparam.TSLIMIT		= TS_LIMIT_GOOD;
-	conf->phyparam.SKM_SCALE	= SKM_SCALE_GOOD;
-	conf->phyparam.RateErrBOUND	= RATE_ERR_BOUND_GOOD;
-	conf->phyparam.BestSKMrate	= BEST_SKM_RATE_GOOD;
-	conf->phyparam.offset_ratio	= OFFSET_RATIO_GOOD;
-	conf->phyparam.plocal_quality	= PLOCAL_QUALITY_GOOD;
-	conf->phat_init				= DEFAULT_PHAT_INIT;
-	conf->asym_host				= DEFAULT_ASYM_HOST;
-	conf->asym_net				= DEFAULT_ASYM_NET;
+	conf->poll_period              = DEFAULT_NTP_POLL_PERIOD;
+	conf->metaparam.TSLIMIT        = TS_LIMIT_GOOD;
+	conf->metaparam.SKM_SCALE      = SKM_SCALE_GOOD;
+	conf->metaparam.RateErrBOUND   = RATE_ERR_BOUND_GOOD;
+	conf->metaparam.BestSKMrate    = BEST_SKM_RATE_GOOD;
+	conf->metaparam.offset_ratio   = OFFSET_RATIO_GOOD;
+	conf->metaparam.plocal_quality = PLOCAL_QUALITY_GOOD;
+	conf->metaparam.path_scale     = DEFAULT_PATH_SCALE;  // in conf, but EXCluded from conf file
+	conf->phat_init                = DEFAULT_PHAT_INIT;
+	conf->asym_host                = DEFAULT_ASYM_HOST;
+	conf->asym_net                 = DEFAULT_ASYM_NET;
 
 	/* Network level */
 	strcpy(conf->hostname, "");
-	conf->time_server = calloc(1,MAXLINE);	// always need at least one string
-	conf->ntp_upstream_port	= DEFAULT_NTP_PORT;
+	conf->time_server = calloc(1,MAXLINE);  // always need at least one string
+	conf->ntp_upstream_port	  = DEFAULT_NTP_PORT;
 	conf->ntp_downstream_port = DEFAULT_NTP_PORT;
 
-	/*
-	 * Input/Output files and devices. Must set to empty string to not confuse
+	/* Input/Output files and devices. Must set to empty string to not confuse
 	 * anything. Only one option can be specified at a time (either from the
 	 * conf file or the command line.
 	 */
@@ -223,28 +223,28 @@ const char* find_key_label(struct _key *keys, int codekey)
 
 int get_temperature_config(struct radclock_config *conf)
 {
-	if ( (conf->phyparam.TSLIMIT == TS_LIMIT_POOR)
-	  && (conf->phyparam.RateErrBOUND == RATE_ERR_BOUND_POOR)
-	  && (conf->phyparam.SKM_SCALE == SKM_SCALE_POOR)
-	  && (conf->phyparam.BestSKMrate == BEST_SKM_RATE_POOR)
-	  && (conf->phyparam.offset_ratio == OFFSET_RATIO_POOR)
-	  && (conf->phyparam.plocal_quality == PLOCAL_QUALITY_POOR))
+	if ( (conf->metaparam.TSLIMIT == TS_LIMIT_POOR)
+	  && (conf->metaparam.RateErrBOUND == RATE_ERR_BOUND_POOR)
+	  && (conf->metaparam.SKM_SCALE == SKM_SCALE_POOR)
+	  && (conf->metaparam.BestSKMrate == BEST_SKM_RATE_POOR)
+	  && (conf->metaparam.offset_ratio == OFFSET_RATIO_POOR)
+	  && (conf->metaparam.plocal_quality == PLOCAL_QUALITY_POOR))
 			return CONFIG_QUALITY_POOR;
 
-	else if ( (conf->phyparam.TSLIMIT == TS_LIMIT_GOOD)
-	  && (conf->phyparam.RateErrBOUND == RATE_ERR_BOUND_GOOD)
-	  && (conf->phyparam.SKM_SCALE == SKM_SCALE_GOOD)
-	  && (conf->phyparam.BestSKMrate == BEST_SKM_RATE_GOOD)
-	  && (conf->phyparam.offset_ratio == OFFSET_RATIO_GOOD)
-	  && (conf->phyparam.plocal_quality == PLOCAL_QUALITY_GOOD))
+	else if ( (conf->metaparam.TSLIMIT == TS_LIMIT_GOOD)
+	  && (conf->metaparam.RateErrBOUND == RATE_ERR_BOUND_GOOD)
+	  && (conf->metaparam.SKM_SCALE == SKM_SCALE_GOOD)
+	  && (conf->metaparam.BestSKMrate == BEST_SKM_RATE_GOOD)
+	  && (conf->metaparam.offset_ratio == OFFSET_RATIO_GOOD)
+	  && (conf->metaparam.plocal_quality == PLOCAL_QUALITY_GOOD))
 			return CONFIG_QUALITY_GOOD;
 
-	else if ( (conf->phyparam.TSLIMIT == TS_LIMIT_EXCEL)
-	  && (conf->phyparam.RateErrBOUND == RATE_ERR_BOUND_EXCEL)
-	  && (conf->phyparam.SKM_SCALE == SKM_SCALE_EXCEL)
-	  && (conf->phyparam.BestSKMrate == BEST_SKM_RATE_EXCEL)
-	  && (conf->phyparam.offset_ratio == OFFSET_RATIO_EXCEL)
-	  && (conf->phyparam.plocal_quality == PLOCAL_QUALITY_EXCEL))
+	else if ( (conf->metaparam.TSLIMIT == TS_LIMIT_EXCEL)
+	  && (conf->metaparam.RateErrBOUND == RATE_ERR_BOUND_EXCEL)
+	  && (conf->metaparam.SKM_SCALE == SKM_SCALE_EXCEL)
+	  && (conf->metaparam.BestSKMrate == BEST_SKM_RATE_EXCEL)
+	  && (conf->metaparam.offset_ratio == OFFSET_RATIO_EXCEL)
+	  && (conf->metaparam.plocal_quality == PLOCAL_QUALITY_EXCEL))
 			return CONFIG_QUALITY_EXCEL;
 
 	else	
@@ -596,12 +596,12 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 		/* We have an existing expert config */
 		case CONFIG_QUALITY_UNKWN:
 		default:
-			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_TSLIMIT), conf->phyparam.TSLIMIT);
-			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_SKM_SCALE), conf->phyparam.SKM_SCALE);
-			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_RATE_ERR_BOUND), conf->phyparam.RateErrBOUND);
-			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_BEST_SKM_RATE), conf->phyparam.BestSKMrate);
-			fprintf(fd, "%s = %d\n", find_key_label(keys, CONFIG_OFFSET_RATIO), conf->phyparam.offset_ratio);
-			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_PLOCAL_QUALITY), conf->phyparam.plocal_quality);
+			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_TSLIMIT), conf->metaparam.TSLIMIT);
+			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_SKM_SCALE), conf->metaparam.SKM_SCALE);
+			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_RATE_ERR_BOUND), conf->metaparam.RateErrBOUND);
+			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_BEST_SKM_RATE), conf->metaparam.BestSKMrate);
+			fprintf(fd, "%s = %d\n", find_key_label(keys, CONFIG_OFFSET_RATIO), conf->metaparam.offset_ratio);
+			fprintf(fd, "%s = %.9lf\n", find_key_label(keys, CONFIG_PLOCAL_QUALITY), conf->metaparam.plocal_quality);
 			fprintf(fd, "\n"); 
 		}
 	}
@@ -1088,14 +1088,14 @@ switch (codekey) {
 		if (have_all_tmpqual == 0) { 
 			dval = strtod(value, NULL);
 			// Indicate changed value
-			if ( conf->phyparam.TSLIMIT != dval )
+			if ( conf->metaparam.TSLIMIT != dval )
 				SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
 			if (dval<0)  {
 				verbose(LOG_WARNING, "Using ts_limit value out of range (%f). Fall back to default.", dval);
-				conf->phyparam.TSLIMIT = TS_LIMIT_GOOD;
+				conf->metaparam.TSLIMIT = TS_LIMIT_GOOD;
 			}
 			else {
-				conf->phyparam.TSLIMIT = dval;
+				conf->metaparam.TSLIMIT = dval;
 			}
 		}
 		break;
@@ -1105,14 +1105,14 @@ switch (codekey) {
 		if (have_all_tmpqual == 0) { 
 			dval = strtod(value, NULL);
 			// Indicate changed value
-			if ( conf->phyparam.SKM_SCALE != dval )
+			if ( conf->metaparam.SKM_SCALE != dval )
 				SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
 			if (dval<0)  {
 				verbose(LOG_WARNING, "Using skm_scale value out of range (%f). Fall back to default.", dval);
-				conf->phyparam.SKM_SCALE = SKM_SCALE_GOOD;
+				conf->metaparam.SKM_SCALE = SKM_SCALE_GOOD;
 			}
 			else {
-				conf->phyparam.SKM_SCALE = dval;
+				conf->metaparam.SKM_SCALE = dval;
 			}
 		}
 		break;
@@ -1122,14 +1122,14 @@ switch (codekey) {
 		if (have_all_tmpqual == 0) { 
 			dval = strtod(value, NULL);
 			// Indicate changed value
-			if ( conf->phyparam.RateErrBOUND != dval )
+			if ( conf->metaparam.RateErrBOUND != dval )
 				SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
 			if (dval<0)  {
 				verbose(LOG_WARNING, "Using rate_error_bound value out of range (%f). Fall back to default.", dval);
-				conf->phyparam.RateErrBOUND = RATE_ERR_BOUND_GOOD;
+				conf->metaparam.RateErrBOUND = RATE_ERR_BOUND_GOOD;
 			}
 			else {
-				conf->phyparam.RateErrBOUND = dval;
+				conf->metaparam.RateErrBOUND = dval;
 			}
 		}
 		break;
@@ -1139,14 +1139,14 @@ switch (codekey) {
 		if (have_all_tmpqual == 0) { 
 			dval = strtod(value, NULL);
 			// Indicate changed value
-			if ( conf->phyparam.BestSKMrate != dval )
+			if ( conf->metaparam.BestSKMrate != dval )
 				SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
 			if (dval<0)  {
 				verbose(LOG_WARNING, "Using best_skm_rate value out of range (%f). Fall back to default.", dval);
-				conf->phyparam.BestSKMrate = BEST_SKM_RATE_GOOD;
+				conf->metaparam.BestSKMrate = BEST_SKM_RATE_GOOD;
 			}
 			else {
-				conf->phyparam.BestSKMrate = dval;
+				conf->metaparam.BestSKMrate = dval;
 			}
 		}
 		break;
@@ -1156,14 +1156,14 @@ switch (codekey) {
 		if (have_all_tmpqual == 0) { 
 			ival = atoi(value);
 			// Indicate changed value
-			if ( conf->phyparam.offset_ratio != ival )
+			if ( conf->metaparam.offset_ratio != ival )
 				SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
 			if (ival<=0)  {
 				verbose(LOG_WARNING, "Using offset_ratio value out of range (%f). Fall back to default.", ival);
-				conf->phyparam.offset_ratio = OFFSET_RATIO_GOOD;
+				conf->metaparam.offset_ratio = OFFSET_RATIO_GOOD;
 			}
 			else {
-				conf->phyparam.offset_ratio = ival;
+				conf->metaparam.offset_ratio = ival;
 			}
 		}
 		break;
@@ -1173,14 +1173,14 @@ switch (codekey) {
 		if (have_all_tmpqual == 0) { 
 			dval = strtod(value, NULL);
 			// Indicate changed value
-			if ( conf->phyparam.plocal_quality != dval )
+			if ( conf->metaparam.plocal_quality != dval )
 				SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
 			if (dval<0)  {
 				verbose(LOG_WARNING, "Using plocal_quality value out of range (%f). Fall back to default.", dval);
-				conf->phyparam.plocal_quality = PLOCAL_QUALITY_GOOD;
+				conf->metaparam.plocal_quality = PLOCAL_QUALITY_GOOD;
 			}
 			else {
-				conf->phyparam.plocal_quality = dval;
+				conf->metaparam.plocal_quality = dval;
 			}
 		}
 		break;
@@ -1203,36 +1203,36 @@ switch (codekey) {
 		switch (iqual) {
 			case CONFIG_QUALITY_POOR:
 				// Indicate changed value
-				if ( (conf->phyparam.TSLIMIT - TS_LIMIT_POOR) != 0)
+				if ( (conf->metaparam.TSLIMIT - TS_LIMIT_POOR) != 0)
 					SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
-				conf->phyparam.TSLIMIT 		= TS_LIMIT_POOR;
-				conf->phyparam.SKM_SCALE 		= SKM_SCALE_POOR;
-				conf->phyparam.RateErrBOUND 	= RATE_ERR_BOUND_POOR;
-				conf->phyparam.BestSKMrate 	= BEST_SKM_RATE_POOR;
-				conf->phyparam.offset_ratio 	= OFFSET_RATIO_POOR;
-				conf->phyparam.plocal_quality	= PLOCAL_QUALITY_POOR;
+				conf->metaparam.TSLIMIT 		= TS_LIMIT_POOR;
+				conf->metaparam.SKM_SCALE 		= SKM_SCALE_POOR;
+				conf->metaparam.RateErrBOUND 	= RATE_ERR_BOUND_POOR;
+				conf->metaparam.BestSKMrate 	= BEST_SKM_RATE_POOR;
+				conf->metaparam.offset_ratio 	= OFFSET_RATIO_POOR;
+				conf->metaparam.plocal_quality	= PLOCAL_QUALITY_POOR;
 				break;
 			case CONFIG_QUALITY_GOOD:
 				// Indicate changed value
-				if ( (conf->phyparam.TSLIMIT - TS_LIMIT_GOOD) != 0 )
+				if ( (conf->metaparam.TSLIMIT - TS_LIMIT_GOOD) != 0 )
 					SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
-				conf->phyparam.TSLIMIT 		= TS_LIMIT_GOOD;
-				conf->phyparam.SKM_SCALE		= SKM_SCALE_GOOD;
-				conf->phyparam.RateErrBOUND 	= RATE_ERR_BOUND_GOOD;
-				conf->phyparam.BestSKMrate 	= BEST_SKM_RATE_GOOD;
-				conf->phyparam.offset_ratio 	= OFFSET_RATIO_GOOD;
-				conf->phyparam.plocal_quality	= PLOCAL_QUALITY_GOOD;
+				conf->metaparam.TSLIMIT 		= TS_LIMIT_GOOD;
+				conf->metaparam.SKM_SCALE		= SKM_SCALE_GOOD;
+				conf->metaparam.RateErrBOUND 	= RATE_ERR_BOUND_GOOD;
+				conf->metaparam.BestSKMrate 	= BEST_SKM_RATE_GOOD;
+				conf->metaparam.offset_ratio 	= OFFSET_RATIO_GOOD;
+				conf->metaparam.plocal_quality	= PLOCAL_QUALITY_GOOD;
 				break;
 			case CONFIG_QUALITY_EXCEL:
 				// Indicate changed value
-				if ( (conf->phyparam.TSLIMIT - TS_LIMIT_EXCEL) != 0 )
+				if ( (conf->metaparam.TSLIMIT - TS_LIMIT_EXCEL) != 0 )
 					SET_UPDATE(*mask, UPDMASK_TEMPQUALITY);
-				conf->phyparam.TSLIMIT 		= TS_LIMIT_EXCEL;
-				conf->phyparam.SKM_SCALE 		= SKM_SCALE_EXCEL;
-				conf->phyparam.RateErrBOUND 	= RATE_ERR_BOUND_EXCEL;
-				conf->phyparam.BestSKMrate 	= BEST_SKM_RATE_EXCEL;
-				conf->phyparam.offset_ratio 	= OFFSET_RATIO_EXCEL;
-				conf->phyparam.plocal_quality	= PLOCAL_QUALITY_EXCEL;
+				conf->metaparam.TSLIMIT 		= TS_LIMIT_EXCEL;
+				conf->metaparam.SKM_SCALE 		= SKM_SCALE_EXCEL;
+				conf->metaparam.RateErrBOUND 	= RATE_ERR_BOUND_EXCEL;
+				conf->metaparam.BestSKMrate 	= BEST_SKM_RATE_EXCEL;
+				conf->metaparam.offset_ratio 	= OFFSET_RATIO_EXCEL;
+				conf->metaparam.plocal_quality	= PLOCAL_QUALITY_EXCEL;
 				break;
 			default:
 				verbose(LOG_ERR, "Quality parameter given is unknown");
@@ -1614,16 +1614,15 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 
 
 
-	/* Ok, the file has been parsed, but may the version may be outdated. Since
-	 * we just parsed the configuration, we can produce an up-to-date version
+	/* Ok, the file has been parsed, but the version may be outdated. Since
+	 * we just parsed the configuration, we can produce an up-to-date version.
 	 */
 	if ( strcmp(conf->radclock_version, PACKAGE_VERSION) != 0 ) {
 
 		// Modify umask so that the file can be read by all after being written
 		umask(022);
 		fd = fopen(conf->conffile, "w");
-		if ( !fd )
-		{
+		if ( !fd ) {
 			verbose(LOG_ERR, "Cannot update configuration file: %s.", conf->conffile);
 			umask(027);
 			return 0;
@@ -1634,8 +1633,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 
 		// Adjust version
 		strcpy(conf->radclock_version, PACKAGE_VERSION);
-		verbose(LOG_NOTICE, "Updated the configuration file "
-				    "to the current package version");
+		verbose(LOG_NOTICE, "Updated the configuration file to the current package version");
 	}
 
 	/* Check command line arguments and config file for exclusion. 
@@ -1716,12 +1714,13 @@ void config_print(int level, struct radclock_config *conf, int ns)
 	verbose(level, "Adjust system FFclock: %s", labels_bool[conf->adjust_FFclock]);
 	verbose(level, "Adjust system FBclock: %s", labels_bool[conf->adjust_FBclock]);
 	verbose(level, "Polling period       : %d", conf->poll_period);
-	verbose(level, "TSLIMIT              : %.9lf", conf->phyparam.TSLIMIT);
-	verbose(level, "SKM_SCALE            : %.9lf", conf->phyparam.SKM_SCALE);
-	verbose(level, "RateErrBound         : %.9lf", conf->phyparam.RateErrBOUND);
-	verbose(level, "BestSKMrate          : %.9lf", conf->phyparam.BestSKMrate);
-	verbose(level, "offset_ratio         : %d", conf->phyparam.offset_ratio);
-	verbose(level, "plocal_quality       : %.9lf", conf->phyparam.plocal_quality);
+	verbose(level, "TSLIMIT              : %.9lf", conf->metaparam.TSLIMIT);
+	verbose(level, "SKM_SCALE            : %.9lf", conf->metaparam.SKM_SCALE);
+	verbose(level, "RateErrBound         : %.9lf", conf->metaparam.RateErrBOUND);
+	verbose(level, "BestSKMrate          : %.9lf", conf->metaparam.BestSKMrate);
+	verbose(level, "offset_ratio         : %d", conf->metaparam.offset_ratio);
+	verbose(level, "plocal_quality       : %.9lf", conf->metaparam.plocal_quality);
+	verbose(level, "path_scale           : %.9lf", conf->metaparam.path_scale);
 	verbose(level, "Initial phat         : %lg", conf->phat_init);
 	verbose(level, "Host asymmetry       : %lf", conf->asym_host);
 	verbose(level, "Network asymmetry    : %lf", conf->asym_net);

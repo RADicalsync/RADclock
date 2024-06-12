@@ -40,8 +40,6 @@
  *
  *      @(#)bpf.h	8.1 (Berkeley) 6/10/93
  *	@(#)bpf.h	1.34 (LBL)     6/16/96
- *
- * $FreeBSD$
  */
 
 #ifndef _NET_BPF_H_
@@ -478,6 +476,7 @@ void	 bpf_mtap2_if(struct ifnet *, void *, u_int, struct mbuf *);
 void	 bpfattach(struct ifnet *, u_int, u_int);
 void	 bpfattach2(struct ifnet *, u_int, u_int, struct bpf_if **);
 void	 bpfdetach(struct ifnet *);
+bool	 bpf_peers_present_if(struct ifnet *);
 #ifdef VIMAGE
 int	 bpf_get_bp_params(struct bpf_if *, u_int *, u_int *);
 #endif

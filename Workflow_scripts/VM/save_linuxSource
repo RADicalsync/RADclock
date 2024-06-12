@@ -29,7 +29,7 @@ Patchtype="Original"		# Assume default of an un-FF-patched kernel
 
 if [[ "$1" == "" ]]; then
 	OSfullv=`uname -r | cut -d'-' -f1`		# gives full OSv including sublevel in Linux case
-	OSfullv="5.10.149"		# hack
+	OSfullv="6.1.27"		# hack
 	echo "** Running in Save mode: will save current version $OSfullv **"
 	grep FFC CurrentSource/timekeeping.c  >> /dev/null
 	if [ $? -ne 0 ]; then
@@ -42,7 +42,7 @@ if [[ "$1" == "" ]]; then
 
 else
 #	OSfullv="4.19.260"
-	OSfullv="5.10.149"
+	OSfullv="5.10.179"
 	read -p "** Running in Restore mode: use default $OSfullv [Yn] ? " ans
 	if [[ "$ans" == "n" ]]; then
 		OSfullv=$1
@@ -66,10 +66,14 @@ srcSave="usr-src"
 debSave="debs"
 echo "   Saved files are under a base dir $SaveBase"
 echo
+
+## Exit here if want to test
 #exit
+
+
+#### Let's go
 mkdir -p $SaveBase/$srcSave
 mkdir -p $SaveBase/$debSave
-
 
 ### Copy over files
 cd /usr/src

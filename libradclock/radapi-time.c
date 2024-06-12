@@ -147,12 +147,12 @@ static inline int
 ffcounter_to_abstime_kernel(struct radclock *clock, vcounter_t vcount,
 		long double *time)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	struct radclock_data rad_data;
 
-	if (get_kernel_ffclock(clock, &cest))
+	if (get_kernel_ffclock(clock, &cdat))
 		return (1);
-	fill_radclock_data(&cest, &rad_data);
+	fill_radclock_data(&cdat, &rad_data);
 	read_RADabs_UTC(&rad_data, &vcount, time, 0);	// no point trying plocal
 
 	return raddata_quality(vcount, rad_data.last_changed, rad_data.next_expected,
@@ -197,7 +197,7 @@ static inline int
 ffcounter_to_difftime_kernel(struct radclock *clock, vcounter_t from_vcount,
 		vcounter_t till_vcount, long double *time)
 {
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	struct radclock_data rad_data;
 	vcounter_t now;
 
@@ -205,9 +205,9 @@ ffcounter_to_difftime_kernel(struct radclock *clock, vcounter_t from_vcount,
 	if (radclock_get_vcounter(clock, &now))
 		return (1);
 
-	if (get_kernel_ffclock(clock, &cest))
+	if (get_kernel_ffclock(clock, &cdat))
 		return (1);
-	fill_radclock_data(&cest, &rad_data);
+	fill_radclock_data(&cdat, &rad_data);
 	*time = ((double)(till_vcount) - (double)from_vcount) * (long double)rad_data.phat_local;
 	
 	return 	raddata_quality(now, rad_data.last_changed, rad_data.next_expected, rad_data.phat);

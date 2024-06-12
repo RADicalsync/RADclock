@@ -17,7 +17,7 @@
 # When compiling a new sublevel using earthly 
 #    install_earthlyFF			# get latest debs and match to their sublevel
 #    update_linuxSource -d		# start from scratch only if needed, rebuild config
-# To check the config and regenerate if needed (no source changes, old .config saved to FFkernel_Work)
+# To check config and regenerate if needed (no source changes, no bootconfig move out, old .config saved to FFkernel_Work)
 # 	update_linuxSource
 
 echo -e "${BLU}Updating kernel source and regenerating a new config file${CLE}"
@@ -34,12 +34,16 @@ Based="$HOME/FFkernel_Work"
 ### Information gathering
 
 # Determine what source we have now
+echo "Distribution is `lsb_release -c |grep -v LSB |cut -f2` `cat /etc/debian_version` "
 echo -n "  Running image is `uname -r`"
 if [[ -d /sys/devices/system/ffclock ]]; then
-	echo "  - is a FFkernel"
+	echo "  - is a FFkernel according to sysfs"
 else
 	echo "  - is an Original kernel"
+#	grep FF /var/log/kern.log |tail -3
 fi
+#dmesg -T |grep FF |tail -1
+
 
 OSv=`uname -r | cut -d'.' -f1-2`
 OSsub=`uname -r | cut -d'.' -f3`
@@ -73,7 +77,7 @@ fi
 echo -e "${WHI}Comparing available config files $CLE"
 ls -altr /boot/config-$OSv*
 echo -e "${dGRY}`ls -latr $SourceDir/.config` $CLE"
-ls -altr $Based/kernelconfig_${OSv}*
+ls -altr $Based/*config*${OSv}*
 echo
 
 [[ "$1" == "-i" ]] && exit
@@ -90,7 +94,7 @@ echo
 
 # Determine what source we will move to
 if [[ "$1" == "-l" || "$CurrSUBLEVEL" == "" ]]; then
-	echo " Update to latest source required, will start clean"
+	echo -e "  ${WHI}Update to latest source required, will start clean$CLE"
 	apt update
 	apt upgrade
 	\rm -r *
@@ -98,18 +102,18 @@ if [[ "$1" == "-l" || "$CurrSUBLEVEL" == "" ]]; then
 	ls -l
 	tar xaf linux-source-$OSv.tar.xz
 	CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
-	echo "  Updated source in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
+	echo -e "  ${WHI}Updated source in $SourceDir has SUBLEVEL $CurrSUBLEVEL $CLE"
 	ls -l
-	echo "  Saving original source of FFfiles to OriginalSource_$OSv.$CurrSUBLEVEL"
+	echo -e "  ${WHI}Saving original source of FFfiles to OriginalSource_$OSv.$CurrSUBLEVEL $CLE"
 	cd $Based
 	mkdir OriginalSource_$OSv.$CurrSUBLEVEL
 	cp -p CurrentSource/* OriginalSource_$OSv.$CurrSUBLEVEL
 	cd /usr/src
 
-	# With new source, move old config out to avoid new one being based on it
-	saveName="/boot/config-$OSv.$CurrSUBLEVEL"
-	if [[ -e $saveName ]]; then
-		echo -e ">> ${GRE}Moving existing boot config $saveName out ${CLE}"
+	# With new source, move old config out to avoid new one being led on it
+	saveName="config-$OSv.$CurrSUBLEVEL"
+	if [[ -e "/boot/$saveName*" ]]; then
+		echo -e ">> ${GRE}Moving existing boot config /boot/$saveName out ${CLE}"
 		mv $saveName $Based/boot_$saveName
 	fi
 	echo "==================================================================="
@@ -120,14 +124,14 @@ if [[ "$1" == "-d" ]]; then
 	[[ "$Kname" == "" ]] && exit			# no debs to use
 	# Ensure source matches new packages
 	if [[ $NewSUBLEVEL != $CurrSUBLEVEL ]]; then
-    	echo "  Updating source to match packages"  # don't clean out /usr/src, the debs are there!
+		echo -e "  ${WHI}Updating source to match packages$CLE"  # don't clean out /usr/src, the debs are there
 		apt update
 		apt upgrade
 		apt reinstall linux-source-$OSv
 		tar xaf linux-source-$OSv.tar.xz
 		CurrSUBLEVEL=`head $SourceDir/Makefile |grep SUBL |cut -d' ' -f3`
-		echo "  Updated source  in $SourceDir has SUBLEVEL $CurrSUBLEVEL"
-		echo "  Saving original source of FFfiles to OriginalSource_$OSv.$CurrSUBLEVEL"
+		echo -e "  ${WHI}Updated source  in $SourceDir has SUBLEVEL $CurrSUBLEVEL $CLE"
+		echo -e "  ${WHI}Saving original source of FFfiles to OriginalSource_$OSv.$CurrSUBLEVEL $CLE"
 		cd $Based
 		mkdir OriginalSource_$OSv.$CurrSUBLEVEL
 		cp -p CurrentSource/* OriginalSource_$OSv.$CurrSUBLEVEL
@@ -135,10 +139,10 @@ if [[ "$1" == "-d" ]]; then
 	fi
 
 	# With new source, move old config out to avoid new one being based on it
-	saveName="/boot/config-$OSv.$CurrSUBLEVEL"
-	if [[ -e $saveName ]]; then
-		echo -e ">> ${GRE}Moving existing boot config $saveName out ${CLE}"
-		mv $saveName $Based/boot_$saveName
+	saveName="config-$OSv.$CurrSUBLEVEL"
+	if [[ -e /boot/$saveName* ]]; then
+		echo -e ">> ${GRE}Moving existing boot config /boot/$saveName out ${CLE}"
+		mv "$saveName*" $Based/boot_$saveName
 	fi
 	echo "==================================================================="
 fi
@@ -158,13 +162,13 @@ cd $SourceDir
 	if [[ ! -e $SourceDir/.config ]]; then
 		echo "  No .config as yet, can't save or compare it"
 	else
-	  saveName="kernelconfig_${OSv}_${CurrSUBLEVEL}_old"
-	  oldconfig="$Based/$saveName"
-	  echo -e ">> ${GRE}Saving existing $SourceDir/.config to $saveName $CLE"
-	  cp $SourceDir/.config $oldconfig
+		saveName="kernelconfig_${OSv}_${CurrSUBLEVEL}_old"
+		oldconfig="$Based/$saveName"
+		echo -e ">> ${GRE}Saving existing $SourceDir/.config to $saveName $CLE"
+		cp $SourceDir/.config $oldconfig
 	fi
 
-	echo ">> Creating new config"
+	echo ">> Creating new config [ NOTE: may not moved out old one from \boot ]"
 	# With this function, when $SourceDir/.config is empty, it seeds it from
 	# /usr/lib/modules/5.10.149/kernel/kernel/configs.ko  , which seems to work!
 	# It is is not empty, it makes minimal changes: if good already, stays good.

@@ -60,7 +60,7 @@ struct bintime {
  *		FreeBSD:  typedef uint64_t ffcounter   [ timeffc.h ]
  *		Linux:	 typedef u64 		ffcounter   [ radclock.h ]
 */
-struct ffclock_estimate {
+struct ffclock_data {
 	struct bintime	update_time;	/* FF clock time of last update, ie Ca(tlast) */
 	vcounter_t	update_ffcount;	/* Counter value at last update */
 	vcounter_t	leapsec_expected;	/* Estimated counter value of next leap second */
@@ -73,12 +73,12 @@ struct ffclock_estimate {
 	int8_t	leapsec_next;			/* Next leap second (in {-1,0,1}) */
 };
 
-int get_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest);
-int set_kernel_ffclock(struct radclock *clock, struct ffclock_estimate *cest);
+int get_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat);
+int set_kernel_ffclock(struct radclock *clock, struct ffclock_data *cdat);
 
-void fill_ffclock_estimate(struct radclock_data *rad_data,
-		struct radclock_error *rad_err, struct ffclock_estimate *cest);
-void fill_radclock_data(struct ffclock_estimate *cest, struct radclock_data *rad_data);
+void fill_ffclock_data(struct radclock_data *rad_data,
+		struct radclock_error *rad_err, struct ffclock_data *cdat);
+void fill_radclock_data(struct ffclock_data *cdat, struct radclock_data *rad_data);
 
 /*
  * XXX Deprecated

@@ -20,8 +20,8 @@ MountPoint="V4_mountedfrom_Icaro"
 RealRepo="$Based/$MountPoint/RADclock_mycurrent"
 TestRepo="$Based/$MountPoint/TestingGround/PortloopRepo"  # alternative for testing port drafts
 Repo=$RealRepo
-#read -p "** Repo is set to $Repo, continue [Yn] ? " ans
-#[[ "$ans" == "n" ]] && exit
+read -p "** Repo is set to $Repo, continue [Yn] ? " ans
+[[ "$ans" == "n" ]] && exit
 
 KernDir="$Repo/kernel"
 
@@ -53,6 +53,7 @@ FreeBSD)
 
 Linux)
 	OSfullv=`uname -r`						# VERSION.PATCHLEVEL.SUBLEVEL current running
+#	OSfullv="6.1.27"
 	OSv=`echo $OSfullv | cut -d'.' -f1-2`  	# VERSION.PATCHLEVEL = point release
 	if [[ "$1" != "" && "$1" != "-s" ]]; then
 		OSusing=$1

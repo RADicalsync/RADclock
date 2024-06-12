@@ -43,7 +43,7 @@
 #include <radclock.h>
 /* needed to access types for printout_{rad,FF}data, sms internals */
 #include "radclock-private.h"		// needed for struct radclock_data, clock defn defn
-#include "kclock.h"              // struct ffclock_estimate, get_kernel_ffclock
+#include "kclock.h"              // struct ffclock_data, get_kernel_ffclock
 
 
 
@@ -121,7 +121,7 @@ main (int argc, char *argv[])
 
 
 //	struct radclock_data rad_data;
-	struct ffclock_estimate cest;
+	struct ffclock_data cdat;
 	struct radclock_sms *sms;
 
 	if (clock->ipc_sms) {
@@ -131,25 +131,25 @@ main (int argc, char *argv[])
 	} else
 		printf("SMS is down, can''t print daemon''s raddata\n\n");
 	
-	if (get_kernel_ffclock(clock, &cest))
+	if (get_kernel_ffclock(clock, &cdat))
 		printf("kernel FFdata unreachable, can''t print it\n\n");
 	else {
 		printf("Got FFdata from the kernel.\n");
-		// fill_radclock_data(&cest, &rad_data);
-		printout_FFdata(&cest);
+		// fill_radclock_data(&cdat, &rad_data);
+		printout_FFdata(&cdat);
 		printf("\n");
 	}
 	
-	if ( SMS_DATA(sms)->last_changed < cest.update_ffcount ) {
+	if ( SMS_DATA(sms)->last_changed < cdat.update_ffcount ) {
 		printf("SMS data seems older than kernel data by %5.3lf [s], IPC server running? \n\n",
-		(cest.update_ffcount - SMS_DATA(sms)->last_changed)*SMS_DATA(sms)->phat );
+		(cdat.update_ffcount - SMS_DATA(sms)->last_changed)*SMS_DATA(sms)->phat );
 	}
-	if ( SMS_DATA(sms)->last_changed > cest.update_ffcount ) {
+	if ( SMS_DATA(sms)->last_changed > cdat.update_ffcount ) {
 		printf("SMS data seems fresher than kernel data by %5.3lf [s], is the "
 				 "kernel refusing updates? daemon or FFclock have unsyn'd status?\n\n",
-		-(cest.update_ffcount - SMS_DATA(sms)->last_changed)*SMS_DATA(sms)->phat );
+		-(cdat.update_ffcount - SMS_DATA(sms)->last_changed)*SMS_DATA(sms)->phat );
 	}
-	if ( SMS_DATA(sms)->last_changed == cest.update_ffcount )
+	if ( SMS_DATA(sms)->last_changed == cdat.update_ffcount )
 		printf("SMS data seems to match the kernel data, as it should. \n\n");
 	
 	

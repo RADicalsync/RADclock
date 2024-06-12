@@ -1,5 +1,5 @@
 /*-
- * SPDX-License-Identifier: BSD-2-Clause-FreeBSD
+ * SPDX-License-Identifier: BSD-2-Clause
  *
  * Copyright (c) 2002 Doug Rabson
  * All rights reserved.
@@ -27,8 +27,6 @@
  */
 
 #include <sys/cdefs.h>
-__FBSDID("$FreeBSD$");
-
 #include "opt_ffclock.h"
 #include "opt_inet.h"
 #include "opt_inet6.h"
@@ -84,6 +82,7 @@ __FBSDID("$FreeBSD$");
 #include <sys/sysproto.h>
 #include <sys/systm.h>
 #include <sys/thr.h>
+#include <sys/timerfd.h>
 #include <sys/timex.h>
 #include <sys/unistd.h>
 #include <sys/ucontext.h>
@@ -124,7 +123,20 @@ __FBSDID("$FreeBSD$");
 #include <compat/freebsd32/freebsd32_signal.h>
 #include <compat/freebsd32/freebsd32_proto.h>
 
-FEATURE(compat_freebsd_32bit, "Compatible with 32-bit FreeBSD");
+int compat_freebsd_32bit = 1;
+
+static void
+register_compat32_feature(void *arg)
+{
+	if (!compat_freebsd_32bit)
+		return;
+
+	FEATURE_ADD("compat_freebsd32", "Compatible with 32-bit FreeBSD");
+	FEATURE_ADD("compat_freebsd_32bit",
+	    "Compatible with 32-bit FreeBSD (legacy feature name)");
+}
+SYSINIT(freebsd32, SI_SUB_EXEC, SI_ORDER_ANY, register_compat32_feature,
+    NULL);
 
 struct ptrace_io_desc32 {
 	int		piod_op;
@@ -512,7 +524,7 @@ freebsd32_mprotect(struct thread *td, struct freebsd32_mprotect_args *uap)
 		prot |= PROT_EXEC;
 #endif
 	return (kern_mprotect(td, (uintptr_t)PTRIN(uap->addr), uap->len,
-	    prot));
+	    prot, 0));
 }
 
 int
@@ -2284,8 +2296,7 @@ ofreebsd32_stat(struct thread *td, struct ofreebsd32_stat_args *uap)
 	struct ostat32 sb32;
 	int error;
 
-	error = kern_statat(td, 0, AT_FDCWD, uap->path, UIO_USERSPACE,
-	    &sb, NULL);
+	error = kern_statat(td, 0, AT_FDCWD, uap->path, UIO_USERSPACE, &sb);
 	if (error)
 		return (error);
 	copy_ostat(&sb, &sb32);
@@ -2334,7 +2345,7 @@ freebsd32_fstatat(struct thread *td, struct freebsd32_fstatat_args *uap)
 	int error;
 
 	error = kern_statat(td, uap->flag, uap->fd, uap->path, UIO_USERSPACE,
-	    &ub, NULL);
+	    &ub);
 	if (error)
 		return (error);
 	copy_stat(&ub, &ub32);
@@ -2351,7 +2362,7 @@ ofreebsd32_lstat(struct thread *td, struct ofreebsd32_lstat_args *uap)
 	int error;
 
 	error = kern_statat(td, AT_SYMLINK_NOFOLLOW, AT_FDCWD, uap->path,
-	    UIO_USERSPACE, &sb, NULL);
+	    UIO_USERSPACE, &sb);
 	if (error)
 		return (error);
 	copy_ostat(&sb, &sb32);
@@ -2469,8 +2480,7 @@ freebsd11_freebsd32_stat(struct thread *td,
 	struct freebsd11_stat32 sb32;
 	int error;
 
-	error = kern_statat(td, 0, AT_FDCWD, uap->path, UIO_USERSPACE,
-	    &sb, NULL);
+	error = kern_statat(td, 0, AT_FDCWD, uap->path, UIO_USERSPACE, &sb);
 	if (error != 0)
 		return (error);
 	error = freebsd11_cvtstat32(&sb, &sb32);
@@ -2505,7 +2515,7 @@ freebsd11_freebsd32_fstatat(struct thread *td,
 	int error;
 
 	error = kern_statat(td, uap->flag, uap->fd, uap->path, UIO_USERSPACE,
-	    &sb, NULL);
+	    &sb);
 	if (error != 0)
 		return (error);
 	error = freebsd11_cvtstat32(&sb, &sb32);
@@ -2523,7 +2533,7 @@ freebsd11_freebsd32_lstat(struct thread *td,
 	int error;
 
 	error = kern_statat(td, AT_SYMLINK_NOFOLLOW, AT_FDCWD, uap->path,
-	    UIO_USERSPACE, &sb, NULL);
+	    UIO_USERSPACE, &sb);
 	if (error != 0)
 		return (error);
 	error = freebsd11_cvtstat32(&sb, &sb32);
@@ -2595,8 +2605,7 @@ freebsd11_freebsd32_nstat(struct thread *td,
 	struct nstat32 nsb;
 	int error;
 
-	error = kern_statat(td, 0, AT_FDCWD, uap->path, UIO_USERSPACE,
-	    &sb, NULL);
+	error = kern_statat(td, 0, AT_FDCWD, uap->path, UIO_USERSPACE, &sb);
 	if (error != 0)
 		return (error);
 	error = freebsd11_cvtnstat32(&sb, &nsb);
@@ -2614,7 +2623,7 @@ freebsd11_freebsd32_nlstat(struct thread *td,
 	int error;
 
 	error = kern_statat(td, AT_SYMLINK_NOFOLLOW, AT_FDCWD, uap->path,
-	    UIO_USERSPACE, &sb, NULL);
+	    UIO_USERSPACE, &sb);
 	if (error != 0)
 		return (error);
 	error = freebsd11_cvtnstat32(&sb, &nsb);
@@ -3139,6 +3148,60 @@ freebsd32_ktimer_gettime(struct thread *td,
 	if (error == 0) {
 		ITS_CP(val, val32);
 		error = copyout(&val32, uap->value, sizeof(val32));
+	}
+	return (error);
+}
+
+int
+freebsd32_timerfd_gettime(struct thread *td,
+    struct freebsd32_timerfd_gettime_args *uap)
+{
+	struct itimerspec curr_value;
+	struct itimerspec32 curr_value32;
+	int error;
+
+	error = kern_timerfd_gettime(td, uap->fd, &curr_value);
+	if (error == 0) {
+		CP(curr_value, curr_value32, it_value.tv_sec);
+		CP(curr_value, curr_value32, it_value.tv_nsec);
+		CP(curr_value, curr_value32, it_interval.tv_sec);
+		CP(curr_value, curr_value32, it_interval.tv_nsec);
+		error = copyout(&curr_value32, uap->curr_value,
+		    sizeof(curr_value32));
+	}
+
+	return (error);
+}
+
+int
+freebsd32_timerfd_settime(struct thread *td,
+    struct freebsd32_timerfd_settime_args *uap)
+{
+	struct itimerspec new_value, old_value;
+	struct itimerspec32 new_value32, old_value32;
+	int error;
+
+	error = copyin(uap->new_value, &new_value32, sizeof(new_value32));
+	if (error != 0)
+		return (error);
+	CP(new_value32, new_value, it_value.tv_sec);
+	CP(new_value32, new_value, it_value.tv_nsec);
+	CP(new_value32, new_value, it_interval.tv_sec);
+	CP(new_value32, new_value, it_interval.tv_nsec);
+	if (uap->old_value == NULL) {
+		error = kern_timerfd_settime(td, uap->fd, uap->flags,
+		    &new_value, NULL);
+	} else {
+		error = kern_timerfd_settime(td, uap->fd, uap->flags,
+		    &new_value, &old_value);
+		if (error == 0) {
+			CP(old_value, old_value32, it_value.tv_sec);
+			CP(old_value, old_value32, it_value.tv_nsec);
+			CP(old_value, old_value32, it_interval.tv_sec);
+			CP(old_value, old_value32, it_interval.tv_nsec);
+			error = copyout(&old_value32, uap->old_value,
+			    sizeof(old_value32));
+		}
 	}
 	return (error);
 }
@@ -4021,82 +4084,82 @@ freebsd32_ntp_adjtime(struct thread *td, struct freebsd32_ntp_adjtime_args *uap)
 
 #ifdef FFCLOCK
 extern struct mtx ffclock_mtx;
-extern struct ffclock_estimate ffclock_estimate;
+extern struct ffclock_data ffclock_data;
 extern int8_t ffclock_updated;
 
 int
-freebsd32_ffclock_setestimate(struct thread *td,
-    struct freebsd32_ffclock_setestimate_args *uap)
+freebsd32_ffclock_setdata(struct thread *td,
+    struct freebsd32_ffclock_setdata_args *uap)
 {
-	struct ffclock_estimate cest;
-	struct ffclock_estimate32 cest32;
+	struct ffclock_data cdat;
+	struct ffclock_data32 cdat32;
 	int error;
 
 	/* Reuse of PRIV_CLOCK_SETTIME. */
 	if ((error = priv_check(td, PRIV_CLOCK_SETTIME)) != 0)
 		return (error);
 
-	if ((error = copyin(uap->cest, &cest32,
-	    sizeof(struct ffclock_estimate32))) != 0)
+	if ((error = copyin(uap->cdat, &cdat32,
+	    sizeof(struct ffclock_data32))) != 0)
 		return (error);
 
-	CP(cest32.update_time, cest.update_time, sec);
-	memcpy(&cest.update_time.frac, &cest32.update_time.frac, sizeof(uint64_t));
-	CP(cest32, cest, update_ffcount);
-	CP(cest32, cest, leapsec_expected);
-	CP(cest32, cest, period);
-	CP(cest32, cest, errb_abs);
-	CP(cest32, cest, errb_rate);
-	CP(cest32, cest, status);
-	CP(cest32, cest, secs_to_nextupdate);
-	CP(cest32, cest, leapsec_total);
-	CP(cest32, cest, leapsec_next);
+	CP(cdat32.update_time, cdat.update_time, sec);
+	memcpy(&cdat.update_time.frac, &cdat32.update_time.frac, sizeof(uint64_t));
+	CP(cdat32, cdat, update_ffcount);
+	CP(cdat32, cdat, leapsec_expected);
+	CP(cdat32, cdat, period);
+	CP(cdat32, cdat, errb_abs);
+	CP(cdat32, cdat, errb_rate);
+	CP(cdat32, cdat, status);
+	CP(cdat32, cdat, secs_to_nextupdate);
+	CP(cdat32, cdat, leapsec_total);
+	CP(cdat32, cdat, leapsec_next);
 
 	mtx_lock_spin(&ffclock_mtx);
-	memcpy(&ffclock_estimate, &cest, sizeof(struct ffclock_estimate));
+	memcpy(&ffclock_data, &cdat, sizeof(struct ffclock_data));
 	ffclock_updated++;
 	mtx_unlock_spin(&ffclock_mtx);
 	return (error);
 }
 
 int
-freebsd32_ffclock_getestimate(struct thread *td,
-    struct freebsd32_ffclock_getestimate_args *uap)
+freebsd32_ffclock_getdata(struct thread *td,
+    struct freebsd32_ffclock_getdata_args *uap)
 {
-	struct ffclock_estimate cest;
-	struct ffclock_estimate32 cest32;
+	struct ffclock_data cdat;
+	struct ffclock_data32 cdat32;
 	int error;
 
 	mtx_lock_spin(&ffclock_mtx);
-	memcpy(&cest, &ffclock_estimate, sizeof(struct ffclock_estimate));
+	memcpy(&cdat, &ffclock_data, sizeof(struct ffclock_data));
 	mtx_unlock_spin(&ffclock_mtx);
 
-	CP(cest.update_time, cest32.update_time, sec);
-	memcpy(&cest32.update_time.frac, &cest.update_time.frac, sizeof(uint64_t));
-	CP(cest, cest32, update_ffcount);
-	CP(cest, cest32, leapsec_expected);
-	CP(cest, cest32, period);
-	CP(cest, cest32, errb_abs);
-	CP(cest, cest32, errb_rate);
-	CP(cest, cest32, status);
-	CP(cest, cest32, secs_to_nextupdate);
-	CP(cest, cest32, leapsec_total);
-	CP(cest, cest32, leapsec_next);
+	CP(cdat.update_time, cdat32.update_time, sec);
+	memcpy(&cdat32.update_time.frac, &cdat.update_time.frac, sizeof(uint64_t));
+	CP(cdat, cdat32, update_ffcount);
+	CP(cdat, cdat32, leapsec_expected);
+	CP(cdat, cdat32, period);
+	CP(cdat, cdat32, errb_abs);
+	CP(cdat, cdat32, errb_rate);
+	CP(cdat, cdat32, status);
+	CP(cdat, cdat32, secs_to_nextupdate);
+	CP(cdat, cdat32, leapsec_total);
+	CP(cdat, cdat32, leapsec_next);
 
-	error = copyout(&cest32, uap->cest, sizeof(struct ffclock_estimate32));
+	error = copyout(&cdat32, uap->cdat, sizeof(struct ffclock_data32));
 	return (error);
 }
 #else /* !FFCLOCK */
 int
-freebsd32_ffclock_setestimate(struct thread *td,
-    struct freebsd32_ffclock_setestimate_args *uap)
+freebsd32_ffclock_setdata(struct thread *td,
+    struct freebsd32_ffclock_setdata_args *uap)
 {
 	return (ENOSYS);
 }
 
 int
-freebsd32_ffclock_getestimate(struct thread *td,
-    struct freebsd32_ffclock_getestimate_args *uap)
+freebsd32_ffclock_getdata(struct thread *td,
+    struct freebsd32_ffclock_getdata_args *uap)
 {
 	return (ENOSYS);
 }

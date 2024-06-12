@@ -574,7 +574,7 @@ ntp_client(struct radclock_handle *handle)
 	 * the response pkt, required for the retry code if enabled.
 	 */
 	if (maxattempts > 1)		// ie, if retries are activated
-		if (algodata && state->stamp_i>0) {
+		if (algodata && state->stamp_i > -1) {
 			newtimeout = MIN(1, 2*rad_error->min_RTT);
 			if (newtimeout * 1e6 < NTP_MIN_SO_TIMEOUT)
 				newtimeout = NTP_MIN_SO_TIMEOUT * 1e-6;

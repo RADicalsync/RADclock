@@ -393,6 +393,7 @@ void ffclock_read_counter(ffcounter *ffcount)
 	unsigned seq;
 	u64 delta;
 
+	tk = &tk_core.timekeeper;
 	if (ffcounter_bypass == 1 && strcmp(tk->tkr_raw.clock->name, "tsc") == 0) {
 #ifdef __x86_64__
 		*ffcount = rdtsc_ordered();

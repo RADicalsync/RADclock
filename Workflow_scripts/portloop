@@ -18,12 +18,12 @@
 #  master  --- H
 #
 ## Manual outside the script:
-#    Finish NPort (resolve conflicts, other changes; git add .)
+#    Finish NPort (resolve conflicts, other changes, portloop tweaks; git add .)
 #      - test in a VM, and perfect as needed to generate N+
 #    This includes deletion of files with no FF content not actually needed,
 #    and more rarely, addition of new FFfiles.
 #    Have to add new dir to Xcode project to enable CR on it.
-#    Add additional cleanup scripts if needed (hopefully not).
+#    Add additional cleanup commits if needed (hopefully not).
 #
 ## Phase 2 of script:  "portloop -c"
 #   Visualize final N+: ask if happy to proceed
@@ -35,12 +35,15 @@
 #  master  --- H --- (≥0 commits) --- N'+
 #
 # Following (NPort), additional cleanup commits may be created inbetween (4) and (5),
-# but these are not handled by the script.  Options are provided for the commit
+# but these are not handled by the script.  Options are provided for the merge commit
 # message to automate the 2 simple cases (no conflict or trivial conflict),
 # and to seed the commit message if more complex.
 #
 # If have already completed port in the TestRepo, and now repeating in real repo,
 # have option at end of Phase 1 to transfer the final FFfiles into the repo.
+# BUT! use TestRepo with care, Workflow script changes often made, and need to be
+#      in the real repo for use in the VM, or are there by accident. Transfer
+#      them before committing in either repo if needed, or use stash.
 #
 # The SeedingCURRENT parameter is used to support the initial step for the
 # re-tracking of FreeBSD-CURRENT after a long break.
@@ -49,6 +52,15 @@
 #
 # The only files ever added for commit are those in the destination NewFF dir.
 # It is safe to use portloop without touching other uncommitted changes on master.
+#
+# Earthly based workflow:
+#   earthly +deb-kernel-build  will pull & store latest docker-accessible sublevel docV source
+#   This is then available here as a port target by setting Norigin="" and New="docV"
+#   Phase 1 of portloop then makes a Nport and later N+ available as the WD in the loopbranch.
+#   This is then available to +deb-kernel-build-patched to generate a docV-FFkernel .
+#   Test ports and N+ can be compiled using VM workflow (slower but more familiar
+#   diagnostics, or earthly (faster). Once port is finalised, earthly can be used
+#   by others (faster, easier reproducible workflow).
 
 
 # Base parameters
@@ -57,9 +69,10 @@ RealRepo="$Home/RADclock_mycurrent"
 TestRepo="$Home/TestingGround/PortloopRepo"
 
 # Input parameters
-Repo=$RealRepo      # select from {Real,Test}Repo
-SeedingCURRENT="y"  # if loop is to re-seed tracking of FreeBSD CURRENT
-OS='freebsd'        # select from {freebsd,linux}
+Repo=$TestRepo      # select from {Real,Test}Repo
+SeedingCURRENT="n"  # if loop is to re-seed tracking of FreeBSD CURRENT
+OS='freebsd'          # select from {freebsd,linux}
+Oorigin="VM"        # Linux only: distinguish between Earthly or VM origin of O version
 Norigin="VM"        # Linux only: distinguish between Earthly or VM origin of N version
 Old="4.19.235"      # O=Old is the current version to be advanced to N=New
 New="4.19.260"
@@ -67,6 +80,12 @@ Old="5.10.106"
 New="5.10.149"
 Old="13.1"
 New="14.0-CURRENT"
+Old="5.10.149"
+#New="5.10.179"
+New="6.1.27"
+Old="CURRENT"       # originally 14.0-CURRENT, renamed to match name in repo
+New="14.0"
+
 
 # Setup Repo where the loop will be created
 if [ "$Repo" == "$RealRepo" ]; then
@@ -95,11 +114,15 @@ cd $Repo	# to test, pretend you are running it in a real repo, except artifacts 
 # Note: the OldOrig also exists in the repo, but is in another commit in a prior loop.
 #   Could check it out, but would involve more work to copy it, then go back to Head.
 if [ $OS == "linux" ]; then
-	OldOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$Old/"	# O
-	if [[ "$Norigin" == "VM" ]]; then
-		NewOrig="$Home/OriginalFFfiles_Linux/$New/"			# N
+	if [[ "$Oorigin" == "VM" ]]; then
+		OldOrig="$Home/OriginalFFfiles_Linux/$Old/"					# O
 	else
-		NewOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$New/"
+		OldOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$Old/"	# O
+	fi
+	if [[ "$Norigin" == "VM" ]]; then
+		NewOrig="$Home/OriginalFFfiles_Linux/$New/"					# N
+	else
+		NewOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$New/"	# N
 	fi
 	OD=$Old			# dir of existing      ported FFfiles for O
 	ND=$New			# dir where will place ported FFfiles for N
@@ -236,19 +259,20 @@ if [ "$1" == "" ]; then
 
 	# Seeding Stage 1	(O)
 	echo
-	cp  $OldOrig/*  $NewFF		# wont copy directory linux-source/ if present, good
+	cp  $OldOrig/*  $NewFF      # wont copy directory linux-source/ if present, good
 	git add $NewFF
 	git commit  -m"Seeding stage 1 of $OS port from $Old to $New [original $Old FFfiles in new dir]."
 
 	# Seeding Stage 2	(N)
 	echo
-	cp  $NewOrig/*  $NewFF		# using cp: results in a union of files
+	# TODO: for FreeBSD, wipeout would be better, if Linux also, then replace with wipeout
+	cp  $NewOrig/*  $NewFF      # using cp: results in a union of files
 	git add $NewFF
 	git commit  -m"Seeding stage 2: overlay original FFfiles from $New source."
 
 	# Seeding Stage 3	(O+)
 	echo
-	\rm $NewFF/*				# wipeout to avoid union effect, but don't tell git!
+	\rm $NewFF/*                # wipeout to avoid union effect, but don't tell git!
 	cp  $OldFF/*  $NewFF        # exact set of O+ files
 	git add $NewFF
 	git commit  -m"Seeding stage 3: wipeout files, replace with ported FFfiles in $OldFF."
@@ -259,14 +283,14 @@ if [ "$1" == "" ]; then
 
 	# Automated initial naive port      Affects WD+SAonly, no new commit
 	echo
-	git cherry-pick -n HEAD^	# apply the 1-->2 commit (O-->N patch) to O+ in the WD
+	git cherry-pick -n HEAD^    # apply the 1-->2 commit (O-->N patch) to O+ in the WD
 
 	echo
 	echo "Inspect result of naive port"
-	git status					# lists files and shows which are in conflict
+	git status                  # lists files and shows which are in conflict
 
 	# Visualize the current commits
-	git logo -4			# view base commit + m3 seeds
+	git logo -4                 # view base commit + m3 seeds
 	H=`git logo -1         |cut -b1-4`
 	HH=`git logo HEAD^ -1  |cut -b1-4`
 	HHH=`git logo HEAD^^ -1 |cut -b1-4`
@@ -277,7 +301,7 @@ if [ "$1" == "" ]; then
 	echo "      ($HHH   $HH )  ($H WD)   ($HH  WD)"
 
 	echo
-	echo -e "${BLU}=== Phase 1 Complete:  complete port manually in WD, then run 'portloop -c' ===${CLE}"
+	echo -e "${BLE}=== Phase 1 Complete:  complete port manually in WD, then run 'portloop -c' ===${CLE}"
 	echo
 
 
@@ -324,7 +348,7 @@ else
 
 
 	echo
-	echo -e "${BLE}=========== Committing final port ====================${CLE}"
+	echo -e "${BLU}=========== Committing final port ====================${CLE}"
 
 	echo "Backing up current port in WD $NewFF to parent dir just in case"
 	cp -r $NewFF ../${New}_WDbackup
@@ -350,7 +374,7 @@ else
 	fi
 
 	echo
-	echo -e "${BLE}=========== Closing Loop -- Merge to master ==========${CLE}"
+	echo -e "${BLU}=========== Closing Loop -- Merge to master ==========${CLE}"
 	# checkout should work even if uncommitted changes (outside NewFF): they won't be merged
 	git checkout master
 	SM="Merge commit of branch $loopbranch : Port of $OS FFcode from $Old to $New."

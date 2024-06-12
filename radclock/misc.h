@@ -27,10 +27,12 @@
 #ifndef _MISC_H
 #define _MISC_H
 
+// TODO: this file is poorly named
 
-// TODO this file is really poorly named
-
-/* These don't exist in the standard math library */
+/* These don't exist in the standard math library
+ * Careful:  the sign of arguments is not tested, so if given an unsigned
+ * argument that rolls, they may return the wrong result.
+ */
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
 
