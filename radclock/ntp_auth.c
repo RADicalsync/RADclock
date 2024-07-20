@@ -57,7 +57,13 @@ cstr_2_bytes(char *key_str)
 
 /*
  * Adds authentication key
-*/
+ * Note convention here is for private keys_id's to begin in a higher range.
+ * This is the opposite (not to be confused with) the convention for NTC_id's.
+ * Apart from the range adjustment origin adding, the key_id for a node with
+ * NTC_id "i" is just the i'th key (ith row) in the list, i≥1, but the
+ * implemmentation may apply a C-notation correction to this
+ * All this to be confirmed!!)
+ */
 void
 add_auth_key(char ** key_data, char * buff, int is_private_key)
 {
@@ -75,7 +81,7 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 	if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key) == 3) {
 		// Set the private key ids to start from index PRIVATE_CN_NTP_KEYS
 		if (is_private_key)
-			key_id += PRIVATE_CN_NTP_KEYS; // want to do if fail test below?
+			key_id += PRIVATE_CN_NTP_KEYS;  // want to do if fail test below?
 
 		// Sanity check that private keys start at PRIVATE_CN_NTP_KEYS
 		if (is_private_key && key_id < PRIVATE_CN_NTP_KEYS) {
@@ -114,21 +120,25 @@ void read_key_file(char **key_data, char *file_path, int is_private_key)
 		verbose(LOG_WARNING, "No authentication keys present within %s", file_path);
 		return;
 	}
-	
+
 	char buff[128];
 	int buff_size = 0;
 	int ignore_content = 0;
 
 	buff[0] = 0;
 	char c;
+
+	/* Read file line by line into buff, zero terminated */
 	while ( !feof(fp) ) {
 		fread(&c, 1, 1, fp);
+
+		/* Ignore chars beyond the first comment character */
 		if (c == '#')
 			ignore_content = 1;
 
 		if (! ignore_content && buff_size < 126) {
 			buff[buff_size] = c;
-			buff_size ++;
+			buff_size++;
 		}
 
 		if (c == '\n') {

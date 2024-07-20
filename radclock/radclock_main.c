@@ -151,11 +151,13 @@ static int
 rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 {
 	struct radclock_config *conf;
+	struct stampsource *stamp_source;
 	int err;
 	
 	JDEBUG
 
 	conf = handle->conf;
+	stamp_source = handle->stamp_source;
 
 	verbose(LOG_NOTICE, "Rereading configuration and acting on allowed changes");
 	/* Parse the configuration file, update all conf values */
@@ -248,7 +250,10 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	/* Management of output files */
 	if (HAS_UPDATE(param_mask, UPDMASK_SYNC_OUT_ASCII)) {
 		close_output_stamp(handle);
-		open_output_stamp(handle);
+		if (((struct ascii_data*)(stamp_source->priv_data))->stamptype == STAMP_NTP_PERF)
+			open_output_stamp(handle, STAMP_NTP_PERF);
+		else
+			open_output_stamp(handle, STAMP_NTP);
 		CLEAR_UPDATE(param_mask, UPDMASK_SYNC_OUT_ASCII);
 	}
 
@@ -259,7 +264,7 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 	}
 
 	if (HAS_UPDATE(param_mask, UPDMASK_SYNC_OUT_PCAP)) {
-		err = update_dumpout_source(handle, (struct stampsource *)handle->stamp_source);
+		err = update_dumpout_source(handle, stamp_source);
 		if (err != 0) {
 			verbose(LOG_ERR, " Things are probably out of control. Bye !");
 			exit (1);
@@ -274,7 +279,7 @@ rehash_daemon(struct radclock_handle *handle, uint32_t param_mask)
 			HAS_UPDATE(param_mask, UPDMASK_TIME_SERVER) ||
 			HAS_UPDATE(param_mask, UPDMASK_HOSTNAME))
 	{
-		err = update_filter_source(handle, (struct stampsource *)handle->stamp_source);
+		err = update_filter_source(handle, stamp_source);
 		if (err != 0)  {
 			verbose(LOG_ERR, " Things are probably out of control. Bye !");
 			exit (1);
@@ -585,7 +590,8 @@ create_handle(struct radclock_config *conf, int is_daemon)
 
 	gettimeofday(&handle->telemetry_data.last_msg_time,NULL);
 
-	handle->ntp_keys = read_keys();
+	/* NTP authentication */
+	handle->ntp_keys = NULL;
 
 	/*
 	 * Thread related stuff
@@ -670,16 +676,16 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	 * variables and structures. */
 	if (handle->conf->is_cn) {
 		perfdata = malloc(sizeof *perfdata);
-		init_stamp_queue(perfdata);				// implicit cast works
+		init_stamp_queue(perfdata);     // implicit cast works
 		perfdata->laststamp = calloc(ns,sizeof(struct stamp_t));
-		perfdata->output = calloc(ns,sizeof(struct bidir_perfoutput));
-		perfdata->state = calloc(ns,sizeof(struct bidir_perfstate));
+		perfdata->output    = calloc(ns,sizeof(struct bidir_perfoutput));
+		perfdata->state     = calloc(ns,sizeof(struct bidir_perfstate));
 		memset(perfdata->state, 0, ns * sizeof(struct bidir_perfstate));
 		perfdata->RADBUFF_SIZE = ns * 8;
 		perfdata->RADbuff = calloc(perfdata->RADBUFF_SIZE,sizeof(struct stamp_t));
 		perfdata->RADbuff_next = 0;
-		perfdata->ntc_status = 0;		// initialize all NTC servers to trusted
-		handle->perfdata = (void*) perfdata;	// enduring copy of ptr to perfdata
+		perfdata->ntc_status = 0;    // initialize all NTC servers to trusted
+		handle->perfdata = (void*) perfdata;  // enduring copy of ptr to perfdata
 	}
 
 	return;
@@ -894,9 +900,7 @@ init_handle(struct radclock_handle *handle)
 			verbose(LOG_NOTICE, "IPC Shared Memory ready");
 		}
 
-		/*
-		 * Initialise Telemetry ring buffer agent
-		 */
+		/* Initialise Telemetry ring buffer agent */
 		if (handle->conf->server_telemetry == BOOL_ON) {
 			err = telemetry_init(handle);
 			if (err)
@@ -904,9 +908,13 @@ init_handle(struct radclock_handle *handle)
 			verbose(LOG_NOTICE, "Telemetry agent ready");
 		}
 
+		/* Read NTP authentication keys from database */
+		if (handle->conf->is_cn || handle->conf->is_ocn)
+			handle->ntp_keys = read_keys();
+
 	}
 
-	/* Open input file from which to read TS data */
+	/* Open source of timestamp data */
 	if (!VM_SLAVE(handle)) {
 		stamp_source = create_source(handle);
 		if (!stamp_source) {
@@ -918,9 +926,17 @@ init_handle(struct radclock_handle *handle)
 		handle->stamp_source = (void *) stamp_source;
 	}
 
-	/* Open output files */
-	open_output_stamp(handle);
+	/* Open ascii clock output file */
 	open_output_matlab(handle);
+
+	/* Open ascii sync output file (ie matched stamp timestamps)
+	 * Output PERF stamps if SHM thread running, or if reading them from input.
+	 */
+	if (handle->conf->server_shm == BOOL_ON || (strlen(handle->conf->sync_in_ascii) > 0 &&
+	    ((struct ascii_data*)(stamp_source->priv_data))->stamptype == STAMP_NTP_PERF) )
+		open_output_stamp(handle, STAMP_NTP_PERF);
+	else
+		open_output_stamp(handle, STAMP_NTP);
 
 	return (0);
 }
@@ -1432,12 +1448,14 @@ main(int argc, char *argv[])
 
 	/* Check compatibility for SHM thread
 	 * TODO: not a `server', better module_shm ?
+	 * TODO: these checks better centralised within create_source? (ditto those above)
 	 */
 	if (handle->conf->server_shm == BOOL_ON)
 	{
-		if (handle->run_mode == RADCLOCK_SYNC_LIVE && !handle->conf->is_cn) {
+		if (handle->run_mode == RADCLOCK_SYNC_LIVE && !handle->conf->is_cn ||
+		    handle->run_mode == RADCLOCK_SYNC_DEAD) {
 			verbose(LOG_ERR, "Configuration error. Disabling server_shm "
-					"(incompatible with running live if not an NTC Control Node).");
+			    "(must be running live and an NTC Trust Node).");
 			handle->conf->server_shm = BOOL_OFF;
 		}
 
@@ -1581,13 +1599,13 @@ main(int argc, char *argv[])
 	free(handle->ntp_client);
 	free(handle->ntp_server);
 
-	// Clear the memory data for the NTP keys so it isn't released into another process that may be able to see it
-	for (int i = 0 ; i < MAX_NTP_KEYS; i++)
-		if (handle->ntp_keys[i])
-		{
-			memset(handle->ntp_keys[i], 0, 20);
-			free(handle->ntp_keys[i]);
-		}
+	/* Free memory allocated for NTP key database, if any. */
+	if (handle->ntp_keys)
+		for (int i = 0 ; i < MAX_NTP_KEYS; i++)
+			if (handle->ntp_keys[i]) {
+				memset(handle->ntp_keys[i], 0, 20);
+				free(handle->ntp_keys[i]);
+			}
 
 	free(handle->ntp_keys);
 	pthread_mutex_destroy(&(handle->pcap_queue->rdb_mutex));

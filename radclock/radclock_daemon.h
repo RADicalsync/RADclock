@@ -27,16 +27,16 @@
 #ifndef _RADCLOCK_DAEMON_H
 #define _RADCLOCK_DAEMON_H
 
-#include "ring_buffer.h"
+#include "ring_buffer.h"  
 
 #ifdef VC_FMT
 #undef VC_FMT
 #endif
-#if defined (__LP64__) || defined (__ILP64__)
-#define VC_FMT "lu"
-#else
+//#if defined (__LP64__) || defined (__ILP64__)
+//#define VC_FMT "lu"
+//#else
 #define VC_FMT "llu"
-#endif
+//#endif
 
 
 

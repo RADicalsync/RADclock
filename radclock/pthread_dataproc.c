@@ -582,8 +582,8 @@ insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct
 	}
 
 	/* Non existent stamps */
-	if ((BST(stamp)->Ta == 0) || (BST(stamp)->Tb == 0) ||
-		 (BST(stamp)->Te == 0) || (BST(stamp)->Tf == 0)) {
+	if ((BD_TUPLE(stamp)->Ta == 0) || (BD_TUPLE(stamp)->Tb == 0) ||
+		 (BD_TUPLE(stamp)->Te == 0) || (BD_TUPLE(stamp)->Tf == 0)) {
 		verbose(LOG_WARNING, "Insane Stamp: bidir stamp with at least one 0 timestamp");
 		return (1);
 	}
@@ -597,27 +597,27 @@ insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct
 	 * insane for sure:
 	 * 		stamp->Ta <= laststamp->Ta
 	 */
-	if (BST(stamp)->Ta <= BST(laststamp)->Ta) {
+	if (BD_TUPLE(stamp)->Ta <= BD_TUPLE(laststamp)->Ta) {
 		verbose(LOG_WARNING, "Insane Stamp: Successive NTP requests with"
 		    " non-strictly increasing raw timestamps");
 		return (1);
 	}
-	if (BST(stamp)->Ta <= BST(laststamp)->Tf)
+	if (BD_TUPLE(stamp)->Ta <= BD_TUPLE(laststamp)->Tf)
 		verbose(VERB_DEBUG, "Suspicious Stamp: Successive stamps overlapping");
 
 	/* Raw timestamps break causality */
-	if ( BST(stamp)->Tf < BST(stamp)->Ta ) {
+	if ( BD_TUPLE(stamp)->Tf < BD_TUPLE(stamp)->Ta ) {
 		verbose(LOG_WARNING, "Insane Stamp: raw timestamps non-causal");
 		return (1);
 	}
 
 	/* Server timestamps break causality */
-	if ( BST(stamp)->Te < BST(stamp)->Tb ) {
+	if ( BD_TUPLE(stamp)->Te < BD_TUPLE(stamp)->Tb ) {
 		verbose(LOG_WARNING, "Insane Stamp: server timestamps non-causal");
 		return (1);
 	}
 	/* Server timestamps equal: survivable, but a sign something strange */
-	if ( BST(stamp)->Te == BST(stamp)->Tf )
+	if ( BD_TUPLE(stamp)->Te == BD_TUPLE(stamp)->Tf )
 		verbose(LOG_DEBUG, "Suspicious Stamp: server timestamps identical");
 		
 	/* RTC reset event, and server timestamps seem to predate it.
@@ -628,7 +628,7 @@ insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct
 //	long double resettime;
 //	get_kernel_ffclock(handle->clock, &cdat);
 //	bintime_to_ld(&resettime, &cdat.update_time);
-//	if ( cdat.secs_to_nextupdate == 0 && BST(stamp)->Tb < resettime ) {
+//	if ( cdat.secs_to_nextupdate == 0 && BD_TUPLE(stamp)->Tb < resettime ) {
 //		verbose(LOG_WARNING, "Insane Stamp: seems to predate last RTC reset");
 //		return (1);
 //	}
@@ -644,9 +644,9 @@ insane_bidir_stamp(struct radclock_handle *handle, struct stamp_t *stamp, struct
 		 * 		 HPET =  14318180
 		 * 		 TSC  > 500000000
 		 */
-		if ((BST(stamp)->Tf - BST(stamp)->Ta) < 120) {
+		if ((BD_TUPLE(stamp)->Tf - BD_TUPLE(stamp)->Ta) < 120) {
 			verbose(LOG_WARNING, "Insane Stamp: bidir stamp with RTT impossibly "
-			    "low (< 120): %"VC_FMT" cycles", BST(stamp)->Tf - BST(stamp)->Ta);
+			    "low (< 120): %"VC_FMT" cycles", BD_TUPLE(stamp)->Tf - BD_TUPLE(stamp)->Ta);
 			return (1);
 		}
 	}
@@ -869,14 +869,6 @@ process_stamp(struct radclock_handle *handle)
 
 	JDEBUG
 
-	/* Generic call for creating stamps depending on the type of input source */
-	// Need to differentiate ascii input from pcap input
-	err = get_next_stamp(handle, (struct stampsource *)handle->stamp_source, &stamp);
-
-	/* Signal big error */
-	if (err == -1)
-		return (-1);
-
 	/* Starvation test: have valid stamps stopped arriving to the algo?
 	 * Test is applied to all clocks, even that of the current stamp (if any).
 	 * Definition based on algo input only, as cannot be evaluated by the algo.
@@ -933,30 +925,100 @@ process_stamp(struct radclock_handle *handle)
 		}
 	}
 
+	/* Generic call for creating stamps depending on the type of input source */
+	// Need to differentiate ascii input from pcap input
+	err = get_next_stamp(handle, (struct stampsource *)handle->stamp_source, &stamp);
+	if (err == -1)
+		return (-1);
 
-	/* TELEMETRY:  Test for timeout based telemetry trigger */
 	/* No error, but no stamp to process */
 	if (err == 1) {
-		push_telemetry(handle, -1); // Check if telemetry message needs to be sent
+		push_telemetry(handle, -1);  // Check for timeout based telemetry trigger
 		return (1);
 	}
 
+	/* Buffer the RADstamp to supply perfstamp matching in the SHM thread.
+	 * Performed immediately here to ensure perfstamp matching has access to maximal
+	 * stamp_t level history, even if returning IP address not recognised by
+	 * serverIPtoID, or if RADstamp is deemed insane and never passed to algo.
+	 * Consequence: perfstamp ascii output may be longer than the algo-oriented
+	 * sync and clock ascii outputs. Can also be shorter due to perfstamp match failure.
+	// Prob: corresponding PERF stamp tuples, if exported as 6col, will no longer
+	// match mat.out lines.  Soln: full 6col can be replayed with SHM off, and
+	// both mat.out and matching PERF sync outputted.
+	 */
+	char *poptype;
+	if (handle->conf->server_shm == BOOL_ON)    // implies is_cn, hence perfdata non-NULL
+	{
+		struct bidir_perfdata *perfdata = handle->perfdata;
+		int writehead;  // maps next write index into buffer position to write
+
+		/* Convert the popped algo stamp into a `client side' RAD perf halfstamp */
+		stamp.type = STAMP_NTP_PERF;
+		stamp.st.pstamp.bstamp = stamp.st.bstamp;
+		stamp.st.pstamp.Tout = 0;
+		stamp.st.pstamp.Tin = 0;
+
+		/* Corrupt RAD halfstamp inputs for testing */
+		//if ((1+output->n_stamps) % 3 == 0) stamp.id -=1;    // corrupt some ids
+		//  corrupted server IP on RAD side will break halfRADstamp cleaning:  must trust IPs
+		//if (output->n_stamps % 4 == 0)  stamp.server_ipaddr[4] = "8";  // corrupt some IPs
+
+		/* Insert into the RAD halfstamp storage buffer
+		 * This production side has priority and no access protection is required.
+		 * Data consistency instead occurs on the consumer side in the SHM thread */
+		writehead = perfdata->RADbuff_next % perfdata->RADBUFF_SIZE;
+		memcpy(&perfdata->RADbuff[writehead], &stamp, sizeof(struct stamp_t));
+		perfdata->RADbuff_next ++;
+
+		/* Insert into the perf stamp matching queue */
+//		if (1)  // ((1+output->n_stamps) % 3 != 0) {  // randomly miss some insertions
+//			verbose(LOG_DEBUG, " >>> trying to insert a RAD halfstamp");
+//			pthread_mutex_lock(&handle->matchqueue_mutex);
+//			err = insertandmatch_halfstamp(perfdata->q, &stamp, MODE_RAD);
+//			pthread_mutex_unlock(&handle->matchqueue_mutex);
+//			if (err == 0)
+//				verbose(LOG_DEBUG, " >>> ...  yielded a fullstamp");
+//			else
+//				verbose(LOG_DEBUG, " >>> ... no fullstamp");
+//		}
+		poptype = "a RAD ";    // RAD half poppped here, full PERF assembled in SHM
+	} else
+		poptype = "a PERF";    // full perf stamp already available as read from input
+
+
 	/* If a recognized stamp is returned, record the server it came from */
 	sID = serverIPtoID(handle, stamp.server_ipaddr);
+
+	struct bidir_stamp *bd_tuple = BD_TUPLE(&stamp);
+	//	BD_TUPLE(bd_tuple,&stamp);  // obtain the 4tuple
+	if (stamp.type == STAMP_NTP_PERF)
+		verbose(VERB_DEBUG, "Popped %s stamp from server %d: [%llu]  "
+		    "%"VC_FMT" %"VC_FMT" %.6Lf %.6Lf    %.6Lf %.6Lf", poptype, sID,
+		    (long long unsigned) stamp.id,
+		    (long long unsigned) bd_tuple->Ta,
+		    (long long unsigned) bd_tuple->Tf,
+		    bd_tuple->Tb, bd_tuple->Te,
+		    PST(&stamp)->Tin, PST(&stamp)->Tout);
+	else
+		verbose(VERB_DEBUG, "Popped a stamp from server %d: [%llu]  "
+		    "%"VC_FMT" %"VC_FMT" %.6Lf %.6Lf", sID,
+		    (long long unsigned) stamp.id,
+		    (long long unsigned) bd_tuple->Ta,
+		    (long long unsigned) bd_tuple->Tf,
+		    bd_tuple->Tb, bd_tuple->Te);
+
 	if (sID < 0) {
 		verbose(LOG_WARNING, "Unrecognized stamp popped, skipping it");
 		return (1);
 	}
-
-	verbose(VERB_DEBUG, "Popped a stamp from server %d: %llu %.6Lf %.6Lf %llu %llu", sID,
-	    (long long unsigned) BST(&stamp)->Ta, BST(&stamp)->Tb, BST(&stamp)->Te,
-	    (long long unsigned) BST(&stamp)->Tf, (long long unsigned) stamp.id);
+	handle->last_sID = sID;    // needed for fake DAG msg code in SHM thread only
 
 	/* Authentication check for a CN using an OCN server */
 	if (handle->conf->is_cn) {
 		int OCN_id = OCN_ID(handle->conf->time_server_ntc_mapping[sID]);
 		if (OCN_id != -1 && stamp.auth_key_id != OCN_id + PRIVATE_CN_NTP_KEYS) {
-			verbose(LOG_ERR, "CN skipping received OCN stamp with incorrect auth_key!");
+			verbose(LOG_ERR, "CN skipping received OCN stamp [%d] with incorrect auth_key!", sID);
 			return (1);
 		}
 	}
@@ -1181,51 +1243,16 @@ process_stamp(struct radclock_handle *handle)
 	}  // RADCLOCK_SYNC_LIVE actions
 
 
-	/* Insert the RAD side of the perfstamp required by the SHM thread */
-	if (handle->conf->server_shm == BOOL_ON)		// implies perfdata non-NULL
-	{
-		struct bidir_perfdata *perfdata = handle->perfdata;
-		int writehead;		// maps next write index into buffer position to write
-
-		/* Convert the popped algo stamp into a `client side' RAD perf halfstamp */
-		stamp.type = STAMP_NTP_PERF;
-		stamp.st.bstamp_p.bstamp = stamp.st.bstamp;
-		stamp.st.bstamp_p.Tout = 0;
-		stamp.st.bstamp_p.Tin = 0;
-
-		/* Corrupt RAD halfstamp inputs for testing */
-		//if ((1+output->n_stamps) % 3 == 0)	stamp.id -=1;  					// corrupt some ids
-		//  corrupted server IP on RAD side will break halfRADstamp cleaning:  must trust IPs
-		//if (output->n_stamps % 4 == 0)	   stamp.server_ipaddr[4] = "8";	// corrupt some IPs
-
-		/* Insert into the RAD halfstamp storage buffer
-		 * This production side has priority and no access protection is required.
-		 * Data consistency instead occurs on the consumer side in the SHM thread */
-		writehead = perfdata->RADbuff_next % perfdata->RADBUFF_SIZE;
-		memcpy(&perfdata->RADbuff[writehead], &stamp, sizeof(struct stamp_t));
-		perfdata->RADbuff_next ++;
-
-		handle->last_sID = sID;		// needed for fake DAG msg code only
-
-		/* Insert into the perf stamp matching queue */
-//		if (1)  // ((1+output->n_stamps) % 3 != 0)  /* randomly miss some insertions */
-//		{	verbose(LOG_DEBUG, " >>> trying to insert a RAD halfstamp");
-//			pthread_mutex_lock(&handle->matchqueue_mutex);
-//			err = insertandmatch_halfstamp(perfdata->q, &stamp, MODE_RAD);
-//			pthread_mutex_unlock(&handle->matchqueue_mutex);
-//			if (err == 0)
-//				verbose(LOG_DEBUG, " >>> ...  yielded a fullstamp");
-//			else
-//				verbose(LOG_DEBUG, " >>> ... no fullstamp");
-//		}
-	}
-
-
 	/* Send telemetry data through ring buffer and eventually to the NTC's TICK server */
 	push_telemetry(handle, sID); // Check if telemetry message needs to be sent
 
-	/* Write ascii output files if open, much less urgent than previous tasks */
-	print_out_files(handle, &stamp, output, sID);
+	/* Write ascii output line for this stamp to files if open */
+	print_out_clockline(handle, &stamp, output, sID);
+	if (handle->conf->server_shm == BOOL_OFF)  // otherwise called within SHM
+		print_out_syncline(handle, &stamp, sID);
+
+
+
 
 	/* View updated RADclock data and compare with NTP server stamps in nice
 	 * format. The first 10 then every 6 hours (poll_period can change, but
@@ -1235,12 +1262,12 @@ process_stamp(struct radclock_handle *handle)
 	    !(output->n_stamps % ((int)(3600*6/state->poll_period))) )
 	{
 		read_RADabs_UTC(rad_data, &(rad_data->last_changed), &currtime, PLOCAL_ACTIVE);
-		timediff = (double) (currtime - (long double) BST(&stamp)->Te);
+		timediff = (double) (currtime - (long double) bd_tuple->Te);
 
 		verbose(VERB_CONTROL, "i=%ld: (sID=%d) Response timestamp %.6Lf, "
 				"RAD - NTPserver = %.3f [ms], RTT/2 = %.3f [ms]",
 				output->n_stamps - 1, sID,
-				BST(&stamp)->Te, 1000 * timediff, 1000 * rad_error->min_RTT / 2 );
+				bd_tuple->Te, 1000 * timediff, 1000 * rad_error->min_RTT / 2 );
 
 		verbose(VERB_CONTROL, "i=%ld: Clock Error Bound (cur,avg,std) %.6f "
 				"%.6f %.6f [ms]", output->n_stamps - 1,
@@ -1279,8 +1306,8 @@ process_stamp(struct radclock_handle *handle)
 //		DAGstamp.id |= (uint64_t) ntohl(dag_msg.server_reply_org.l_fra);
 //		//DAGstamp.id = RADstamp.id;		// direct fake
 //		strcpy(DAGstamp.server_ipaddr, inet_ntoa(dag_msg.ip));
-//		DAGstamp.st.bstamp_p.Tout = dag_msg.Tout;
-//		DAGstamp.st.bstamp_p.Tin  = dag_msg.Tin;
+//		DAGstamp.st.pstamp.Tout = dag_msg.Tout;
+//		DAGstamp.st.pstamp.Tin  = dag_msg.Tin;
 //
 //		/* Corrupt DAG halfstamp inputs for testing */
 ////		if (output->n_stamps % 3 == 0)	DAGstamp.id +=1;  					// corrupt some ids
@@ -1310,10 +1337,10 @@ process_stamp(struct radclock_handle *handle)
 //			verbose(LOG_WARNING, " >>> Unrecognized perf stamp popped, skipping it");
 //			return (1);
 //		} else
-//			verbose(VERB_DEBUG, " >>> Popped a RADperf stamp from server %d: [%llu]  %llu %llu %.6Lf %.6Lf ",
+//			verbose(VERB_DEBUG, " >>> Popped a PERF stamp from server %d: [%llu]  %llu %llu %.6Lf %.6Lf ",
 //			sID, (long long unsigned) RADstamp.id,
-//			(long long unsigned) PST(&RADstamp)->Ta, (long long unsigned) PST(&RADstamp)->Tf,
-//			PST(&RADstamp)->Tb, PST(&RADstamp)->Te);
+//			(long long unsigned) PSTB(&RADstamp)->Ta, (long long unsigned) PSTB(&RADstamp)->Tf,
+//			PSTB(&RADstamp)->Tb, PSTB(&RADstamp)->Te);
 //	}
 //
 

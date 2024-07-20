@@ -423,7 +423,7 @@ ntp_client(struct radclock_handle *handle)
 			if (key_id < MAX_NTP_KEYS && handle->ntp_keys)
 				ntp_key = handle->ntp_keys[key_id];		// = 0 if no key allocated
 			if ( ntp_key == -1 || ntp_key == 0 ) {
-				verbose(LOG_ERR, "NTPclient: NTP request failed, CN requires NTP key to communicate to OCN");
+				verbose(LOG_ERR, "NTPclient: aborting NTP request, (%d) CN requires NTP key to communicate to OCN", ntp_key);
 				return(1);
 			}
 		}

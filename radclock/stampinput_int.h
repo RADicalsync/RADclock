@@ -29,6 +29,18 @@
 
 #define INPUT_OPS(x) x->def
 
+/* This is ascii source specific, so should ideally not be here.
+ * Is necessary to enable open_output_stamp() to access the stamp type recorded
+ * in source->priv_data following sync ascii input parsing, so the correct
+ * output header can be written prior to seeing stamp_t's for printing.
+ */
+struct ascii_data
+{
+	FILE *fd;
+	stamp_type_t stamptype;
+};
+
+
 /*
  * Private stamp source definiton
  * All fields compulsary

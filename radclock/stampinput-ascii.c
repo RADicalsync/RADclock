@@ -50,35 +50,47 @@
 #define ASCII_DATA(x) ((struct ascii_data *)(x->priv_data))
 
 
-struct ascii_data
-{
-	FILE *fd;
-};
-
-
-/* Function to skip contiguous comment lines (comment char selectable)
- * Used to skip comment block headings in ascii input files.
+/* Parse commented header lines (comment char selectable)
+ * Used to skip comment block headings in ascii input files, and to parse it
+ * for tuple type information to determine if a RADstamp, PERFstamp etc.
+ * TODO: check for all types and throw error if not recognised, currently
+ *       only actively searching for NTP_PERF
  */
 int
-skip_commentblock(FILE *fd, const char commentchar)
+parse_commentblock(FILE *fd, const char commentchar, stamp_type_t *stamptype)
 {
 	int c;
-	// see if first char of line is a comment
-	while ((c=fgetc(fd))!=EOF && c==commentchar ){
-		while ((fgetc(fd))!= '\n'){}    // skip to start of next line
-		//fprintf(stdout,"c line: \n");
+	/* line extraction */
+	ssize_t linelen;
+	char *line = NULL;
+	size_t llen = 0;  // will be ignored
+	/* line parsing */
+	char typeline[] = " type: NTP_PERF";  // includes null termination
+	int tlen = strlen(typeline);          // excludes null termination
+
+	*stamptype = STAMP_NTP;  // default
+	/* If first char of line is a comment, skip it */
+	while ((c=fgetc(fd)) != EOF && c == commentchar) {
+		linelen = getline(&line, &llen, fd);  // read line post-commentchar incl EoL
+		// fprintf(stdout,"%s", line);        // echo it
+		if ( !strncmp(typeline, line, tlen) )
+			*stamptype = STAMP_NTP_PERF;
+
+		free(line); line = NULL;             // clean slate for next line
+//		fprintf(stdout,"c line with total %ld (%d) chars after c-char\n", linelen, tlen);
 	}
-	if (c!=EOF) {
-		// oops, first char wasn't a comment, push it back, is the first data element
-		c= ungetc(c,fd);
+
+	/* This first char wasn't a comment, push it back, is from the first data line */
+	if (c != EOF) {
+		c = ungetc(c,fd);
 	}
-	return (c);   // returns EOF if no data
+	return (c);    // returns EOF if no data
 }
 
 
-/* Open an ascii stamp input file. */
+/* Open the stamp file and obtain its type */
 static FILE *
-open_timestamp(char* in)
+open_stampfile(char* in, stamp_type_t *stamptype)
 {
 	FILE* stamp_fd = NULL;
 	int ch;
@@ -87,14 +99,18 @@ open_timestamp(char* in)
 		return (NULL);
 	}
 
-	if ((ch=skip_commentblock(stamp_fd,'%'))==EOF)
+	if ((ch = parse_commentblock(stamp_fd,'%', stamptype)) == EOF)
 		verbose(LOG_WARNING,"Stored ascii stamp file %s seems to be data free", in);
 	else
-		verbose(LOG_NOTICE, "Reading from stored ascii stamp file %s", in);
+		if (*stamptype == STAMP_NTP_PERF)
+			verbose(LOG_NOTICE, "Reading from ascii file %s (detected as NTP_PERF 6tuple)", in);
+		else
+			verbose(LOG_NOTICE, "Reading from ascii file %s (detected as NTP 4tuple)", in);
 
 	return (stamp_fd);
 }
 
+/* Prepare ascii input file for reading of data lines */
 static int
 asciistamp_init(struct radclock_handle *handle, struct stampsource *source)
 {
@@ -105,29 +121,35 @@ asciistamp_init(struct radclock_handle *handle, struct stampsource *source)
 		return (-1);
 	}
 
-	// Timestamp file input
+	stamp_type_t type = STAMP_UNKNOWN;
 	if (strlen(handle->conf->sync_in_ascii) > 0) {
-		// preprocessed ascii TS input available, assumed 4 column
-		ASCII_DATA(source)->fd = open_timestamp(handle->conf->sync_in_ascii);
+		ASCII_DATA(source)->fd = open_stampfile(handle->conf->sync_in_ascii, &type);
 		if (!ASCII_DATA(source)->fd)
 			return (-1);
 	}
+	ASCII_DATA(source)->stamptype = type;  // record detected type
+
 	return (0);
 }
 
 
-/* Reads in a line of input from an ascii input file containing the 4tuple.
+/* Reads in a line of input from an ascii input file holding the timestamp tuple.
  * Different versions of the ascii input format are supported:
- *  Unversioned: fields are Ta Tb Te Tf [RefIn [RefOut]]  ("4col 5col 6col" file)
- *  Version 3:   fields are Ta Tb Te Tf nonce
- *  Version 4:   fields are Ta Tb Te Tf nonce [sID]
- * where [RefIn RefOut] is an augmented version of the input used for evaluation
- * (the Ref fields are ignored by RADclock), "nonce" was the key used to perform
- * packet matching to assemble the RADstamp 4tuple, and sID only appears for
- * multiple servers.
+ *  NTP_PERF stamps:   [ auto-detected ]
+ *   Version 1:   fields are Ta Tb Te Tf RefIn RefOut [sID]  (modern 6col file)
+ *    Here the Ref inputs are read into a NTP_PERF stamp_t
+ *  NTP stamps:   [ auto-detected ]
+ *   Unversioned: fields are Ta Tb Te Tf [RefIn [RefOut]]  ("4col 5col 6col" file)
+ *   Version 3:   fields are Ta Tb Te Tf nonce
+ *   Version 4:   fields are Ta Tb Te Tf nonce [sID]
+ *    Here [RefIn RefOut] if present will be ignored by RADclock, and "nonce" was
+ *    the key used to perform packet matching to assemble the RADstamp 4tuple.
+ *
+ * For each type sID only appears when there are multiple servers.
  *
  * REQUIRE: the number of servers (ns) in the conf file must be at least as
- * great as those appearing in the input.
+ * great as those appearing in the input, otherwise the additional server lines
+ * will be dropped subsequently.
  *
  * NOTE: even if the same conf file (hence the same servers in the same order)
  * is used on dead replay as in ascii data generation, the replay sID's need not
@@ -138,6 +160,8 @@ asciistamp_init(struct radclock_handle *handle, struct stampsource *source)
  * TODO:  increase robustness to possible variations in import format
  *  Currently traditional 6col (and 5col) are "working" by fluke, sID read fails, so get
  *  sID=0, which is correct, and buggy stamp->id doesn't matter as matching done already.
+ *  Could potentially get the #cols from asciistamp_init and use it here, then
+ *  remove the static, but still want the stamp check verb.
  */
 static int
 asciistamp_get_next(struct radclock_handle *handle, struct stampsource *source,
@@ -146,37 +170,66 @@ asciistamp_get_next(struct radclock_handle *handle, struct stampsource *source,
 	FILE *stamp_fd = ASCII_DATA(source)->fd;
 	int ncols;
 	int input_sID = 0;
-	static int firstpass = 1;
+	static int firstpass = 1;  // input-check verbosity control
 
-	if ((ncols = fscanf(stamp_fd, "%"VC_FMT" %Lf %Lf %"VC_FMT" %"VC_FMT" %d",
-	    &(BST(stamp)->Ta), &(BST(stamp)->Tb),
-	    &(BST(stamp)->Te), &(BST(stamp)->Tf), &stamp->id, &input_sID )) == EOF )
-	{
+	/* line extraction */
+	char *line = NULL;
+	size_t llen = 0;  // will be ignored
+
+	getline(&line, &llen, stamp_fd);  // read line post-commentchar incl EoL
+	if (ASCII_DATA(source)->stamptype == STAMP_NTP_PERF) {
+		stamp->type = STAMP_NTP_PERF;
+		// verbose(LOG_NOTICE, "Getting next NTP_PERF 6tuple");
+		ncols = sscanf(line, "%"VC_FMT" %Lf %Lf %"VC_FMT" %Lf %Lf %d",
+		    &(PSTB(stamp)->Ta), &(PSTB(stamp)->Tb),
+		    &(PSTB(stamp)->Te), &(PSTB(stamp)->Tf),
+		    &(PST(stamp)->Tin), &(PST(stamp)->Tout), &input_sID);
+	} else {
+		stamp->type = STAMP_NTP;
+		// verbose(LOG_NOTICE, "Getting next NTP 4tuple");
+		ncols = sscanf(line, "%"VC_FMT" %Lf %Lf %"VC_FMT" %"VC_FMT" %d",
+		    &(BST(stamp)->Ta), &(BST(stamp)->Tb),
+		    &(BST(stamp)->Te), &(BST(stamp)->Tf),
+		    &stamp->id, &input_sID);
+	}
+	free(line); line = NULL;  // clean slate for next line
+
+	if (ncols == EOF) {
 		verbose(LOG_NOTICE, "Got EOF on ascii input file.");
 		return (-1);
 	}
-	else {
-		// skip to start of next line (robust to additional unexpected columns)
-		while((fgetc(stamp_fd))!= '\n'){}
 
-		/* Assign distinct fake IP address matching serverID */
-		if (firstpass) {
-			verbose(LOG_NOTICE, "Found ≥ %d columns in ascii input file.", ncols);
-			if (ncols == 6)
+	/* Assign distinct fake IP address matching serverID */
+	if (firstpass) {
+		verbose(LOG_NOTICE, "Found %d columns in ascii input file", ncols);
+		/* Stamp read check */
+		if (stamp->type == STAMP_NTP_PERF) {
+			verbose(VERB_DEBUG,"read check: %"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %d",
+			    (long long unsigned)PSTB(stamp)->Ta, PSTB(stamp)->Tb, PSTB(stamp)->Te,
+			    (long long unsigned)PSTB(stamp)->Tf,
+			    PST(stamp)->Tin, PST(stamp)->Tout, input_sID);
+			if (ncols > 6)
 				verbose(LOG_NOTICE, "Assuming multiple servers, will assign fake "
 				    "IP's as 10.0.0.input_sID in first-seen order");
-			firstpass = 0;
+		} else {
+			verbose(VERB_DEBUG,"read check: %"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu %d",
+			    (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+			    (long long unsigned)BST(stamp)->Tf,
+			    (long long unsigned)stamp->id, input_sID);
+			if (ncols > 5)
+				verbose(LOG_NOTICE, "Assuming multiple servers, will assign fake "
+				    "IP's as 10.0.0.input_sID in first-seen order");
 		}
-
-		// Assign IP to server (for each input stamp, even in single server case)
-		sprintf(stamp->server_ipaddr, "10.0.0.%d", input_sID);
-//		verbose(VERB_DEBUG, "input serverID value %d assigned to fake IP address %s",
-//		    input_sID, stamp->server_ipaddr);
-
-		// TODO: need to detect stamp type, ie, get a better input format
-		stamp->type = STAMP_NTP;
-		source->ntp_stats.ref_count += 2;
+		firstpass--;
 	}
+
+	// Assign IP to server (for each input stamp, even in single server case)
+	sprintf(stamp->server_ipaddr, "10.0.0.%d", input_sID);
+	verbose(VERB_DEBUG, "input serverID value %d assigned to fake IP address %s",
+	    input_sID, stamp->server_ipaddr);
+
+	source->ntp_stats.ref_count += 2;
+
 	return (0);
 }
 

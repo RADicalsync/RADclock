@@ -469,7 +469,7 @@ destroy_stamp_queue(struct bidir_algodata *algodata)
  *
  * The code handled two kinds of stamp matching:
  *  RAD stamps:   with the client and server halfstamps as above
- *  RADperf stamps: with a full RADstamp being the `client' halfstamp, matched
+ *  PERF stamps: with a full RADstamp being the `client' halfstamp, matched
  *                  to a DAG `server' halfstamp
  * Slightly different rules on halfstamp testing apply.
  *
@@ -524,7 +524,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 					break;
 
 				case MODE_RAD:
-					if (PST(stamp)->Ta != 0) {
+					if (PSTB(stamp)->Ta != 0) {
 						verbose(LOG_WARNING, "Dropping duplicate RAD stamp.");
 						return (1);
 					}
@@ -536,7 +536,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 					break;
 
 				case MODE_DAG:
-					if (stamp->st.bstamp_p.Tout != 0) {
+					if (stamp->st.pstamp.Tout != 0) {
 						verbose(LOG_WARNING, "Dropping duplicate DAG stamp.");
 						return (1);
 					}
@@ -624,12 +624,12 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			stamp->LI = new->LI;
 			stamp->rootdelay = new->rootdelay;
 			stamp->rootdispersion = new->rootdispersion;
-			stamp->st.bstamp_p.bstamp = new->st.bstamp_p.bstamp;
+			stamp->st.pstamp.bstamp = new->st.pstamp.bstamp;
 			break;
 		case MODE_DAG:	// the `server' side of a perf stamp match
 			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);// if orphaned, need IP to pass cleanout test
-			stamp->st.bstamp_p.Tout = new->st.bstamp_p.Tout;
-			stamp->st.bstamp_p.Tin  = new->st.bstamp_p.Tin;
+			stamp->st.pstamp.Tout = new->st.pstamp.Tout;
+			stamp->st.pstamp.Tin  = new->st.pstamp.Tin;
 			break;
 	}
 
@@ -650,9 +650,9 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			} else	// STAMP_NTP_PERF
 				verbose(VERB_DEBUG, "  perf stamp queue dump: [%llu]   %llu %llu %.6Lf %.6Lf %.6Lf %.6Lf %s",
 				(long long unsigned) stamp->id,
-				(long long unsigned) PST(stamp)->Ta, (long long unsigned) PST(stamp)->Tf,
-				PST(stamp)->Tb, PST(stamp)->Te,
-				stamp->st.bstamp_p.Tout, stamp->st.bstamp_p.Tin,
+				(long long unsigned) PSTB(stamp)->Ta, (long long unsigned) PSTB(stamp)->Tf,
+				PSTB(stamp)->Tb, PSTB(stamp)->Te,
+				stamp->st.pstamp.Tout, stamp->st.pstamp.Tin,
 				stamp->server_ipaddr);
 
 			qel = qel->next;
@@ -784,48 +784,46 @@ bad_packet_server(struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
  * Check the server's reply authentication signature.
  * If this host is a CN and the server reply is from OCN a SHA signature is required.
  * If the signature is not present or incorrect discard the packet
+ * TODO: check this, seems that if pkt doesn't have extra authentication length
+ * then will simply pass, no OCN checks right here so summary above misleading.
  */
 int
 check_auth(struct radclock_handle *handle, struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
-		struct sockaddr_storage *ss_src, int ntp_packet_size)
+    struct sockaddr_storage *ss_src, int ntp_packet_size)
 {
 	char ** key_data = handle->ntp_keys;
-	int auth_pass = 0;
+	int auth_pass = 0;    // by default wont pass
+
 	if (ntp_packet_size == LEN_PKT_NOMAC)
 		auth_pass = 1;
-	else if (ntp_packet_size > LEN_PKT_NOMAC && key_data) // If the client has requested authentication and we have some key data
+	else if (ntp_packet_size > LEN_PKT_NOMAC && key_data) // client requested auth'n and have some key data
 	{
-		unsigned int key_id = 0;
-		/* Authentication data structures*/
+		/* Authentication data structures */
 		unsigned char pck_dgst[20];
 		Sha sha;	
 
+		unsigned int key_id = 0;
 		key_id = ntohl( ntp->exten[0] );
 
-		if (key_id > 0 && key_id < MAX_NTP_KEYS && key_data[key_id])
-		{
-
+		if (key_id > 0 && key_id < MAX_NTP_KEYS && key_data[key_id]) {
 			wc_InitSha(&sha);
 			wc_ShaUpdate(&sha, key_data[key_id], 20);
 			wc_ShaUpdate(&sha, ntp, LEN_PKT_NOMAC);
 			wc_ShaFinal(&sha, pck_dgst);
 			// printf("size:%d %s %d key\n", n, key_data[key_id], key_id);
 
-			if  (memcmp(pck_dgst, ntp->mac, 20) == 0)
-			{
-				// verbose(LOG_WARNING, "PCAP - authentication SUCCESS");
+			if (memcmp(pck_dgst, ntp->mac, 20) == 0) {
+				// verbose(LOG_WARNING, "AUTH - authentication SUCCESS");
 				auth_pass = 1;
-			}
-			else
-				verbose(LOG_WARNING, "PCAP - authentication FAILURE");
-		}
-		else
-			verbose(LOG_WARNING, "PCAP - authentication request invalid key_id %d", key_id);
-
+			} else
+				verbose(LOG_WARNING, "AUTH - authentication FAILURE");
+		} else
+			verbose(LOG_WARNING, "AUTH - authentication request invalid key_id %d", key_id);
 	}
 	else if ( !key_data )
-		verbose(LOG_ERR, "PCAP - authentication request when this server has no keys");
-	return 1 - auth_pass;
+		verbose(LOG_ERR, "AUTH - authentication requested but server returned no key");
+
+	return 1 - auth_pass;    // return code has semantics of "err", so = 1 auth fails
 }
 
 
@@ -966,7 +964,7 @@ update_stamp_queue(struct radclock_handle *handle, struct stamp_queue *q, radpca
 			break;
 		err = check_auth(handle, ntp, ss, &ss_src, ntp_packet_size);
 		if (err)
-			break;			
+			break;
 		err = push_server_halfstamp(q, ntp, &vcount, &ttl, ntp_packet_size);
 		break;
 
@@ -1009,7 +1007,7 @@ update_stamp_queue(struct radclock_handle *handle, struct stamp_queue *q, radpca
  * This check is dropped for s-halfstamps, as they shouldn't be there anyway.
  *
  * The above applies to the matching performed for RAD stamps.
- * For RADperf stamps it is not an abberation that the DAG `server' halfstamp may
+ * For PERF stamps it is not an abberation that the DAG `server' halfstamp may
  * arrive before the RAD 'client' halfstamp, so the server ID match for cleaning
  * is also performed for DAG halfstamps. However such halfstamps are also
  * dropped if they are simply very old, because of the (remote) possibility that
@@ -1046,8 +1044,8 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 			Tc = BST(st)->Ta;			// client side timestamp
 			fullstamp = (Tc != 0) && (BST(st)->Tf != 0);
 		} else {  // STAMP_NTP_PERF
-			Tc = PST(st)->Ta;			// `client side'
-			fullstamp = (Tc != 0) && (st->st.bstamp_p.Tout != 0);
+			Tc = PSTB(st)->Ta;			// `client side'
+			fullstamp = (Tc != 0) && (st->st.pstamp.Tout != 0);
 		}
 
 		if (fullstamp) {
@@ -1085,17 +1083,17 @@ get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp)
 			if (dangerous)
 				verbose(VERB_DEBUG, "Clearing out dangerous halfstamp");
 		} else {  // STAMP_NTP_PERF
-			c_halfstamp = (PST(st)->Ta != 0) && (st->st.bstamp_p.Tout == 0);
-			s_halfstamp = (PST(st)->Ta == 0) && (st->st.bstamp_p.Tout != 0);
+			c_halfstamp = (PSTB(st)->Ta != 0) && (st->st.pstamp.Tout == 0);
+			s_halfstamp = (PSTB(st)->Ta == 0) && (st->st.pstamp.Tout != 0);
 			if (s_halfstamp)
 				verbose(VERB_DEBUG, "Found DAG halfstamp in stamp queue");	// unusual but not a failure
 			if (c_halfstamp)
 				verbose(VERB_DEBUG, "Found RAD halfstamp in stamp queue");	// debug info only
-			c_older = c_halfstamp && PST(st)->Ta < full_time;
-			s_older = s_halfstamp && st->st.bstamp_p.Tout < full_st->st.bstamp_p.Tout;
+			c_older = c_halfstamp && PSTB(st)->Ta < full_time;
+			s_older = s_halfstamp && st->st.pstamp.Tout < full_st->st.pstamp.Tout;
 			dangerous = (s_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) ||
 							(c_older && strcmp(st->server_ipaddr,full_st->server_ipaddr) == 0) ||
-							(s_older && st->st.bstamp_p.Tout < full_st->st.bstamp_p.Tout - 3); // very old
+							(s_older && st->st.pstamp.Tout < full_st->st.pstamp.Tout - 3); // very old
 			if (dangerous)
 				verbose(VERB_DEBUG, "Clearing out dangerous halfstamp");
 

@@ -46,53 +46,64 @@
 #include "jdebug.h"
 
 
+/* Open the ASCII sync stamp file for writing, and write the correct header
+ * dependent on the passed stamp type.
+ */
 int
-open_output_stamp(struct radclock_handle *handle)
+open_output_stamp(struct radclock_handle *handle, stamp_type_t type)
 {
 	char *backup;
+	char *out;
 
-	/* Sometimes, there is nothing to do */
-	if (strlen(handle->conf->sync_out_ascii) == 0)
+	out = handle->conf->sync_out_ascii;
+	if (strlen(out) == 0)
 		return (0);
 
 	/* Test if previous file exists. Rename it if so */
-	handle->stampout_fd = fopen(handle->conf->sync_out_ascii, "r");
+	handle->stampout_fd = fopen(out,"r");
 	if (handle->stampout_fd) {
 		fclose(handle->stampout_fd);
-		backup = (char *) malloc(strlen(handle->conf->sync_out_ascii)+ 5);
+		backup = (char *) malloc(strlen(out)+ 5);
 		JDEBUG_MEMORY(JDBG_MALLOC, backup);
 
-		sprintf(backup, "%s.old", handle->conf->sync_out_ascii);
-		if (rename(handle->conf->sync_out_ascii, backup) < 0) {
-			verbose(LOG_ERR, "Cannot rename existing output file: %s",
-			    handle->conf->sync_out_ascii);
+		sprintf(backup, "%s.old", out);
+		if (rename(out, backup) < 0) {
+			verbose(LOG_ERR, "Cannot rename existing output file: %s", out);
 
 			JDEBUG_MEMORY(JDBG_FREE, backup);
 			free(backup);
 			exit(EXIT_FAILURE);
 		}
-		verbose(LOG_NOTICE, "Backed up existing output file: %s",
-		    handle->conf->sync_out_ascii);
+		verbose(LOG_NOTICE, "Backed up existing output file: %s", out);
 		JDEBUG_MEMORY(JDBG_FREE, backup);
 		free(backup);
 		handle->stampout_fd = NULL;
 	}
 
 	/* Open output file to store input data in preprocessed stamp format */
-	handle->stampout_fd = fopen(handle->conf->sync_out_ascii,"w");
+	handle->stampout_fd = fopen(out,"w");
 	if (handle->stampout_fd == NULL) {
-		verbose(LOG_ERR, "Open failed on stamp output file- %s",
-		    handle->conf->sync_out_ascii);
+		verbose(LOG_ERR, "Open failed on stamp output file- %s", out);
 		exit(EXIT_FAILURE);
 	} else {  // write out comment header describing data
 		/* TODO: turn off buffering? */
 		setvbuf(handle->stampout_fd, (char *)NULL, _IONBF, 0);
 		fprintf(handle->stampout_fd, "%% BEGIN_HEADER\n");
-		fprintf(handle->stampout_fd, "%% description: radclock local vcounter "
-		    "and NTP server stamps\n");
-		fprintf(handle->stampout_fd, "%% type: NTP_rad\n");
-		fprintf(handle->stampout_fd, "%% version: 4\n");
-		fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf nonce [sID]\n");
+		if (type == STAMP_NTP_PERF) {
+			verbose(LOG_NOTICE, "Writing NTP_PERF (6tuple) stamp lines to file %s", out);
+			fprintf(handle->stampout_fd, "%% description: radclock local vcounter "
+			    "NTP server, and reference timestamps\n");
+			fprintf(handle->stampout_fd, "%% type: NTP_PERF\n");
+			fprintf(handle->stampout_fd, "%% version: 1\n");
+			fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf RefIn RefOut [sID]\n");
+		} else {
+			verbose(LOG_NOTICE, "Writing NTP (4tuple) stamp lines to file %s", out);
+			fprintf(handle->stampout_fd, "%% description: radclock local vcounter "
+			    "and NTP server timestamps\n");
+			fprintf(handle->stampout_fd, "%% type: NTP\n");
+			fprintf(handle->stampout_fd, "%% version: 4\n");
+			fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf nonce [sID]\n");
+		}
 		fprintf(handle->stampout_fd, "%% END_HEADER\n");
 	}
 	return (0);
@@ -115,7 +126,6 @@ open_output_matlab(struct radclock_handle *handle)
 {
 	char *backup;
 
-	/* Sometimes, there is nothing to do */
 	if (strlen(handle->conf->clock_out_ascii) == 0)
 		return (0);
 
@@ -174,7 +184,6 @@ open_output_matlab(struct radclock_handle *handle)
 }
 
 
-
 void
 close_output_matlab(struct radclock_handle *handle)
 {
@@ -184,49 +193,89 @@ close_output_matlab(struct radclock_handle *handle)
 	}
 }
 
-/* This function covers the cases of the
- *   ascii stamp out (4tuple + nonce + sID)  [ input to RADclock offline ]
- *   ascii algo-internals (lots..    + sID)  [ input to matlab evaluation analysis ]
- * Data is output one line per stamp regardless of originating server, with
+
+/* Outputs the {RAD,PERF}stamp timestamp tuples to file (if open).
+ *
+ * RADstamp case  [ 4tuple input for RADclock, and nonce for offline matching ]
+ *  4tuple + nonce [+ sID]
+ * PERFstamp case [ 4tuple input for RADclock, and 2tuple Reference timestamps
+ *                  required for SHM/PERF evaluation ]
+ *  4tuple + {RefIn RefOut} [+ sID]  [ traditional order for backward compat ]
+ *
+ * Outputs one ascii line per stamp regardless of originating server, with
  * the serverID in the last column when applicable.
  */
 void
-print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
-	struct bidir_algooutput *output, int sID)
+print_out_syncline(struct radclock_handle *handle, struct stamp_t *stamp, int sID)
 {
 	int err;
 
-	/* ld since must hold [s] since timescale origin, and at least 1mus precision */
-	long double currtime_out, currtime_in;
+	/* Generate fake DAG timestamps for one-off fake perf stamp generation */
+	//	struct radclock_error *rad_error = &handle->rad_error[sID];
+	//	double DAGOWD = rad_error->min_RTT/2 - 0.3e-3;    // fake constant OWD from DAG
+	//	long double fakeTout = BST(stamp)->Tb - DAGOWD;
+	//	long double fakeTin  = BST(stamp)->Te + DAGOWD;
 
-	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_SPY))
+	if (handle->stampout_fd == NULL)
+		return;
+
+	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_NTP_PERF) && (stamp->type != STAMP_SPY))
 		verbose(LOG_ERR, "Do not know how to print a stamp of type %d", stamp->type);
 
-	currtime_out = (long double)(BST(stamp)->Ta * output->phat) + output->K;
-	currtime_in  = (long double)(BST(stamp)->Tf * output->phat) + output->K;
-
-	/* Deal with sync output */
-	if (handle->stampout_fd != NULL) {
-		if (handle->nservers == 1)	// omit last column with serverID
+	if (stamp->type == STAMP_NTP_PERF)  // PERFstamp
+		if (handle->nservers == 1)  // omit last column with serverID
+			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf\n",
+			  (long long unsigned)PSTB(stamp)->Ta, PSTB(stamp)->Tb, PSTB(stamp)->Te,
+			  (long long unsigned)PSTB(stamp)->Tf, PST(stamp)->Tin, PST(stamp)->Tout);
+		 else                       // include serverID in last column
+			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %d\n",
+			  (long long unsigned)PSTB(stamp)->Ta, PSTB(stamp)->Tb, PSTB(stamp)->Te,
+			  (long long unsigned)PSTB(stamp)->Tf, PST(stamp)->Tin, PST(stamp)->Tout,
+			  sID);
+	else                                 // RADstamp
+		 if (handle->nservers == 1)
 			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu\n",
 			  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
 			  (long long unsigned)BST(stamp)->Tf,
 			  (long long unsigned)stamp->id);
-		else	// include serverID in last column
+		 else
+			/* Fake perf stamp generation in multiple server case */
+			//err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %d\n",
+			//  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+			//  (long long unsigned)BST(stamp)->Tf, fakeTin, fakeTout,
+			//  sID);
 			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu %d\n",
 			  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
 			  (long long unsigned)BST(stamp)->Tf,
 			  (long long unsigned)stamp->id,
 			  sID);
 
-		if (err < 0)
-			verbose(LOG_ERR, "Failed to write ascii data to timestamp file");
-	}
+	if (err < 0)
+		verbose(LOG_ERR, "Failed to write ascii data to timestamp file");
+}
 
 
-	/* Deal with internal algo output */
+
+/* Outputs the algo-internals output structure to file (if open).
+ * Output one line per stamp regardless of originating server, with
+ * the serverID in the last column when applicable.
+ */
+void
+print_out_clockline(struct radclock_handle *handle, struct stamp_t *stamp,
+	struct bidir_algooutput *output, int sID)
+{
+	int err;
+
 	if (handle->matout_fd == NULL)
 		return;
+
+	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_NTP_PERF) && (stamp->type != STAMP_SPY))
+		verbose(LOG_ERR, "Do not know how to print a stamp of type %d", stamp->type);
+
+	/* ld since must hold [s] since timescale origin, and at least 1mus precision */
+	long double currtime_out, currtime_in;
+	currtime_out = (long double)(BD_TUPLE(stamp)->Ta * output->phat) + output->K;
+	currtime_in  = (long double)(BD_TUPLE(stamp)->Tf * output->phat) + output->K;
 
 	char *buf;
 	buf = (char *) malloc(500 * sizeof(char));  // must be big enuf for single disk access
@@ -237,8 +286,8 @@ print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
 		"%"VC_FMT" %"VC_FMT" %"VC_FMT" %.9lg %.9lg %.9lg %.11Lf "
 		"%.11Lf %.10lf %.10lf %.6lg %.6lg %.6lg %"VC_FMT" %u "
 		"%.9lg %.9lg %.9lg",    // pathpenalty metrics
-		BST(stamp)->Tb,
-		(unsigned long long)BST(stamp)->Tf,
+		BD_TUPLE(stamp)->Tb,
+		(unsigned long long)BD_TUPLE(stamp)->Tf,
 		(unsigned long long)output->RTT,
 		output->phat,
 		output->plocal,

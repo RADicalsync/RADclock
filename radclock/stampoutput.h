@@ -28,14 +28,14 @@
 #define _STAMPOUTPUT_H
 
 
-int open_output_stamp(struct radclock_handle *handle) ;
-void close_output_stamp(struct radclock_handle *handle) ;
+int open_output_stamp(struct radclock_handle *handle, stamp_type_t);
+void close_output_stamp(struct radclock_handle *handle);
 
-int open_output_matlab(struct radclock_handle *handle) ;
-void close_output_matlab(struct radclock_handle *handle) ;
+int open_output_matlab(struct radclock_handle *handle);
+void close_output_matlab(struct radclock_handle *handle);
 
-void
-print_out_files(struct radclock_handle *handle, struct stamp_t *stamp,
-	struct bidir_algooutput *output, int sID);
+void print_out_syncline(struct radclock_handle *handle, struct stamp_t *stamp, int sID);
+void print_out_clockline(struct radclock_handle *handle, struct stamp_t *stamp,
+    struct bidir_algooutput *output, int sID);
 
 #endif

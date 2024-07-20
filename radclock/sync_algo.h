@@ -124,7 +124,7 @@ struct bidir_stamp {
  */
 struct bidir_stamp_perf
 {
-	struct bidir_stamp	bstamp;
+	struct bidir_stamp bstamp;
 	/* Authoritative client-side timestamps */
 	long double Tout;  // [sec] outgoing packet (corresponding to Ta)
 	long double Tin;   // [sec] incoming packet (corresponding to Tf)
@@ -143,22 +143,37 @@ struct stamp_t {
 	char server_ipaddr[INET6_ADDRSTRLEN];
 	int ttl;
 	int stratum;
-	int LI;    // value of LI bits in response header, in {0,1,2,3}
+	int LI;           // value of LI bits in response header, in {0,1,2,3}
 	uint32_t refid;
 	double rootdelay;
 	double rootdispersion;
-	int auth_key_id;      // -1 for non auth NTP, otherwise valid key id
+	int auth_key_id;  // -1 for non auth NTP, otherwise valid key id
 	union stamp_u {
-		struct unidir_stamp ustamp;
-		struct bidir_stamp  bstamp;
-		struct bidir_stamp_perf	bstamp_p;
+		struct unidir_stamp     ustamp;
+		struct bidir_stamp      bstamp;
+		struct bidir_stamp_perf pstamp;
 	} st;
 };
 
-/* Here x is a pointer to a stamp_t, returns a pointer to the tuple */
-#define UST(x) (&((x)->st.ustamp))
-#define BST(x) (&((x)->st.bstamp))
-#define PST(x) (&((x)->st.bstamp_p.bstamp))
+/* Macros to help directly access the relevant tuple in the union
+ * Here x is a pointer to a stamp_t, returns a pointer to the tuple */
+#define UST(x)  (&((x)->st.ustamp))
+#define BST(x)  (&((x)->st.bstamp))
+#define PST(x)  (&((x)->st.pstamp))
+#define PSTB(x) (&((x)->st.pstamp.bstamp))
+// Extract the RADstamp 4tuple from the right place regardless of stamp type
+#define BD_TUPLE(x) ( ((x)->type == STAMP_NTP_PERF) ? PSTB(x) : BST(x) )
+
+//#define BD_TUPLE(res,x)              \
+//do {                                 \
+//	if ((x)->type == STAMP_NTP_PERF) \
+//		res = PSTB(x);                 \
+//	else                              \
+//		res = BST(x);                  \
+//} while (0)
+
+
+
 
 /* Matching modes for perf stamps used in matching queue based on stamp_t :
  *  MODE_RAD : RAD stamps                [ `client' side in matching ]
@@ -204,7 +219,7 @@ struct bidir_algooutput {
 	double      pDb;
 	double      wsum;
 	vcounter_t  best_Tf;
-	unsigned int status;    // Not in state
+	unsigned int status;   // Not in state
 	// path penalty metrics
 	double      pathpenalty;  // latest algo evaluation of path metric
 	double      Pchange;      // windowed RTT BL change metric
@@ -351,30 +366,30 @@ struct bidir_algostate {
 
 };
 
-#define	ALGO_ERROR(x)	(&(x->algo_err))
+#define	ALGO_ERROR(x) (&(x->algo_err))
 
 
 
 /* Holds all RADclock perf variables needed to be visible outside the SHM thread
- * Includes both RADperf and SHM outputs. */
+ * Includes both PERF and SHM outputs. */
 struct bidir_perfoutput {
 
 	/* Per-stamp SHM output */
-	double auRTT;		// RTT measured using authoritative timestamps
-	int	SA;
-	/* Per-stamp RADperf output */
+	double auRTT;    // RTT measured using authoritative timestamps
+	int SA;
+	/* Per-stamp PERF output */
 	double RADerror;
 };
 
 struct bidir_perfstate {
 
 	index_t stamp_i;
-	struct bidir_stamp_perf stamp;	// previous input bidir_perf stamp (hence leap-free)
+	struct bidir_stamp_perf stamp;  // input bidir_perf stamp (hence leap-free)
 
 	/* Window sizes, measured in [pkt index] */
-	index_t warmup_win;			// warmup window, RTT estimation (indep of time and CPU, need samples)
-	index_t shift_win;			// shift detection window size
-	index_t shift_end;			// shift detection record of oldest pkt in shift window for RTT
+	index_t warmup_win; // warmup window, RTT estimation (indep of time and CPU, need samples)
+	index_t shift_win;  // shift detection window size
+	index_t shift_end;  // shift detection record of oldest pkt in shift window for RTT
 
 
 	/* ********* SHM variables: those not using RADclock timestamps ***********/
@@ -383,19 +398,19 @@ struct bidir_perfstate {
 	history stamp_hist;
 
 	/* OWD */
-	double Dfhat;				// Estimate of minimal Df
-	double Dfhat_shift;			// sliding window estimate for upward level shift detection
-	double Dfhat_shift_thres;	// threshold in [s] for triggering upward shift detection
-	double Dbhat;				// Estimate of minimal Db
-	double Dbhat_shift;			// sliding window estimate for upward level shift detection
-	double Dbhat_shift_thres;	// threshold in [s] for triggering upward shift detection
+	double Dfhat;              // Estimate of minimal Df
+	double Dfhat_shift;        // sliding window estimate for upward level shift detection
+	double Dfhat_shift_thres;  // threshold in [s] for triggering upward shift detection
+	double Dbhat;              // Estimate of minimal Db
+	double Dbhat_shift;        // sliding window estimate for upward level shift detection
+	double Dbhat_shift_thres;  // threshold in [s] for triggering upward shift detection
 
 	/* Path Asymmetry */
-	double Asymhat;				// Estimate of underlying asymmetry
+	double Asymhat;            // Estimate of underlying asymmetry
 
 	/* SA variables */
-	int SA;				// ServerAnomaly: {0,1} = {no,detected} SA for this stamp
-	long SA_total;		// total number of per-stamp SA detections
+	int SA;           // ServerAnomaly: {0,1} = {no,detected} SA for this stamp
+	long SA_total;    // total number of per-stamp SA detections
 
 
 	/* ********* Perf variables: those using RADclock timestamps ***********/
@@ -427,18 +442,18 @@ struct bidir_algodata {
  *  - needed queues to perform matching
  */
 struct bidir_perfdata {
-	/* Queue of RADperf stamps to be processed. Must be first member. */
+	/* Queue of PERF stamps to be processed. Must be first member. */
 	struct stamp_queue *q;
 
 	/* Buffer for fast dumping of sane popped RADstamps within PROC */
-	int RADBUFF_SIZE;				// number of buffer elements
+	int RADBUFF_SIZE;       // number of buffer elements
 	struct stamp_t *RADbuff;
-	index_t	RADbuff_next;			// buffer index for next write, won't wrap
+	index_t RADbuff_next;  // buffer index for next write, won't wrap
 
-	struct stamp_t *laststamp;		// containing bidir_stamp_perf tuples
+	struct stamp_t *laststamp;      // containing bidir_stamp_perf tuples
 	struct bidir_perfoutput *output;
-	struct bidir_perfstate *state;	// includes SHM state
-	uint64_t ntc_status;			// trust summary for servers with NTC indices
+	struct bidir_perfstate *state;  // includes SHM state
+	uint64_t ntc_status;    // trust summary for servers with NTC indices
 };
 
 //#define OUTPUT(handle, x) ((struct bidir_algooutput*)handle->algo_output)->x

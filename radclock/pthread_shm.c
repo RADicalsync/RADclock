@@ -59,7 +59,7 @@
 #include "config_mgr.h"
 #include "Ext_reference/ext_ref.h"    // API to dag code
 
-/* From create_stamp.c, include in create_stamp.h ? */
+/* From create_stamp.c, include in create_stamp.h ?  also MODE_RAD moved there fromm sync_algo.h */
 int          insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode);
 int get_fullstamp_from_queue_andclean(struct stamp_queue *q, struct stamp_t *stamp);
 
@@ -73,8 +73,8 @@ thread_shm(void *c_handle)
 	struct radclock_handle *handle = c_handle;
 
 	/* Multiple server management */
-	int sID; 							// server ID of new stamp popped here
-	int NTC_id;							// NTC global index of server sID
+	int sID;              // server ID of new stamp popped here
+	int NTC_id;           // NTC global index of server sID
 	struct radclock_data *rad_data;
 	struct bidir_perfdata *perfdata = handle->perfdata;
 	struct bidir_perfoutput *output;
@@ -82,12 +82,12 @@ thread_shm(void *c_handle)
 
 	/* Perf stamp matching related */
 	const int N = perfdata->RADBUFF_SIZE;
-	index_t  next0, r;			// unique RADperf buffer indices that never wrap
-	struct stamp_t copy;			// local copy of stamp from buffer
-	struct stamp_t DAGstamp, RADperfstamp;
+	index_t next0, r;     // unique PERF buffer indices that never wrap
+	struct stamp_t copy;  // local copy of stamp from buffer
+	struct stamp_t DAGstamp, PERFstamp;
 	struct stamp_t *st_r;
 	struct dag_cap dag_msg;
-	int last_next0;				// record RADbuffer write posn at start of emptying
+	index_t last_next0;   // record RADbuffer write posn at start of emptying
 	int got_dag_msg;
 	int fullerr;
 
@@ -123,28 +123,29 @@ thread_shm(void *c_handle)
 
 	/* Set a receive timeout */
 	struct timeval so_timeout;
-	so_timeout.tv_sec 	= 0;
-	so_timeout.tv_usec 	= 1e6 * 0.2;
+	so_timeout.tv_sec = 0;
+	so_timeout.tv_usec = 1e6 * 0.2;
 	setsockopt(socket_desc, SOL_SOCKET, SO_RCVTIMEO, (void*)(&so_timeout), sizeof(struct timeval));
 
 	/* Bind socket */
 	if ( bind(socket_desc, (struct sockaddr *)&server, sizeof(server)) == -1 ) {
-		verbose(LOG_ERR, "SHM: Socket bind() error. Killing thread: %s",
-				strerror(errno));
+		verbose(LOG_ERR, "SHM: Socket bind() error. Killing thread: %s", strerror(errno));
 		pthread_exit(NULL);
 	}
 
 
 	verbose(LOG_NOTICE, "SHM: now listening for DAG messages on port %d", DAG_PORT);
-	last_next0 = 0;	// enable dag msg code to see if anything new in buffer since last attempt.
+	last_next0 = 0;  // enable dag msg code to see if anything new in buffer since last attempt
 
 	while ((handle->pthread_flag_stop & PTH_SHM_CON_STOP) != PTH_SHM_CON_STOP)
 	{
 
-		/* Empty RAD halfstamp buffer into the perf matching queue
+		/* Empty RAD halfstamp buffer into the perf matching queue (ie, take a
+		 * batch of RAD arrivals from PROC and put under SHM control).
 		 * Each halfstamp successfully read is marked as read by zeroing the id.
 		 * Reads proceed backward in time until no unread stamps are left, or until
-		 * the (potentially advancing) write head position is encountered.
+		 * the (potentially advancing) write head position is encountered
+		 * [new arrivals during emptying are left for next time].
 		 * Checks are made to ensure data consistency, possible due to the unique
 		 * uint_64 indices (which don't wrap) of the write and read positions.
 		 * The buffer and stamp matching queue accept stamps from any clock/server.
@@ -152,13 +153,13 @@ thread_shm(void *c_handle)
 		next0 = perfdata->RADbuff_next;
 		r = next0 - 1;
 		while ( next0 > 0 && perfdata->RADbuff_next - r < N ) {
-			st_r = &perfdata->RADbuff[r % N];	// pointer to stamp r in buffer
-			if ( st_r->id > 0) { 	// data present
+			st_r = &perfdata->RADbuff[r % N];  // pointer to stamp r in buffer
+			if ( st_r->id > 0) {  // data present
 				memcpy(&copy, st_r, sizeof(struct stamp_t));
-				verbose(VERB_DEBUG, " RAD halfstamp found in buffer with id %llu, %d back from head at %llu",
-				    copy.id, next0-r, next0 );
+				verbose(VERB_DEBUG, " RAD halfstamp found in buffer with id %llu, "
+				    "%d back from head at %llu", copy.id, next0-r, next0 );
 				/* Check if copy can be trusted */
-				if ( perfdata->RADbuff_next - r >= N )	// not safe, stop here
+				if ( perfdata->RADbuff_next - r >= N )  // not safe, stop here
 					break;
 
 				/* Mark as read. If this corrupts a stamp write in progress (super
@@ -167,7 +168,7 @@ thread_shm(void *c_handle)
 				st_r->id = 0;
 				if ( perfdata->RADbuff_next - r >= N ) {
 					verbose(LOG_ERR, "SHM: halfstamp corrupted during RADstamp buffer"
-					" emptying, up to %d perf stamps may have been lost", next0 - r + 1);
+					    " emptying, up to %d perf stamps may have been lost", next0 - r + 1);
 					insertandmatch_halfstamp(perfdata->q, &copy, MODE_RAD);
 					break;
 				}
@@ -177,7 +178,7 @@ thread_shm(void *c_handle)
 				insertandmatch_halfstamp(perfdata->q, &copy, MODE_RAD);
 				r -= 1;
 			} else
-				break;		// end of unread data younger than next0: emptying done
+				break;  // end of unread data younger than next0: emptying done
 		}
 
 
@@ -235,12 +236,12 @@ thread_shm(void *c_handle)
 			DAGstamp.id = ((uint64_t) ntohl(dag_msg.stampid.l_int)) << 32;
 			DAGstamp.id |= (uint64_t) ntohl(dag_msg.stampid.l_fra);
 			strcpy(DAGstamp.server_ipaddr, inet_ntoa(dag_msg.ip));
-			DAGstamp.st.bstamp_p.Tout = dag_msg.Tout;
-			DAGstamp.st.bstamp_p.Tin  = dag_msg.Tin;
+			DAGstamp.st.pstamp.Tout = dag_msg.Tout;
+			DAGstamp.st.pstamp.Tin  = dag_msg.Tin;
 
 			/* Corrupt DAG halfstamp inputs for testing */
-			//if (next0 % 3 == 0)	DAGstamp.id +=1;  					// corrupt some ids
-			//if (next0 % 2 == 0)	DAGstamp.server_ipaddr[0] = "9";	// corrupt some IPs
+			//if (next0 % 3 == 0)	DAGstamp.id +=1;                  // corrupt some ids
+			//if (next0 % 2 == 0)	DAGstamp.server_ipaddr[0] = "9";  // corrupt some IPs
 
 			/* Insert DAG perf halfstamp into the perf stamp matching queue */
 			//verbose(LOG_DEBUG, " ||| trying to insert a DAG halfstamp");
@@ -251,10 +252,11 @@ thread_shm(void *c_handle)
 		/* Check if a fullstamp is available
 		 * Don't bother if there has been no new input since last time.
 		 * TODO: modify return codes of matching queue calls to keep track of the
-		 *       number of full stamps, so this will not be called if not needed */
+		 *       number of full stamps, so this will not be called if not needed,
+		 *       and Will be called if there is a fullstamp backlog, despite no new input */
 		if (got_dag_msg || next0 != last_next0) {
 			verbose(VERB_DEBUG, "New halfstamps inserted: checking for full perf stamp");
-			fullerr = get_fullstamp_from_queue_andclean(perfdata->q, &RADperfstamp);
+			fullerr = get_fullstamp_from_queue_andclean(perfdata->q, &PERFstamp);
 		} else
 			fullerr = 1;
 
@@ -266,15 +268,23 @@ thread_shm(void *c_handle)
 
 
 		/* If a recognized stamp is returned, record the server it came from */
-		sID = serverIPtoID(handle, RADperfstamp.server_ipaddr);
+		sID = serverIPtoID(handle, PERFstamp.server_ipaddr);
 		if (sID < 0) {
 			verbose(LOG_WARNING, "Unrecognized perf stamp popped, skipping it");
 			continue;
 		} else
-			verbose(VERB_DEBUG, "Popped a RADperf stamp from server %d: [%llu]  %llu %llu %.6Lf %.6Lf ",
-				sID, (long long unsigned) RADperfstamp.id,
-				(long long unsigned) PST(&RADperfstamp)->Ta, (long long unsigned) PST(&RADperfstamp)->Tf,
-				PST(&RADstamp)->Tb, PST(&RADperfstamp)->Te);
+			verbose(VERB_DEBUG, "Popped a PERF stamp from server %d: [%llu]  "
+			    "%"VC_FMT" %"VC_FMT" %.6Lf %.6Lf    %.6Lf %.6Lf", sID,
+			    (long long unsigned) PERFstamp.id,
+			    (long long unsigned) PSTB(&PERFstamp)->Ta,
+			    (long long unsigned) PSTB(&PERFstamp)->Tf,
+			    PSTB(&PERFstamp)->Tb, PSTB(&PERFstamp)->Te,
+			    PST(&PERFstamp)->Tin, PST(&PERFstamp)->Tout);
+
+
+		/* Write ascii output line for this stamp to file if open */
+		print_out_syncline(handle, &PERFstamp, sID);
+
 
 		/* Set pointers to data for this server */
 		rad_data = &handle->rad_data[sID];
@@ -283,9 +293,9 @@ thread_shm(void *c_handle)
 		NTC_id = handle->conf->time_server_ntc_mapping[sID];
 
 
-	/* TODO: code below here factor into a  process_perfstamp(handle, &RADperfstamp);  ??
-	 *		When processing this stamp, state holds the state from Last time, until it updates it at
-	 *		the end, just before telemetry
+	/* TODO: code below here factor into a  process_perfstamp(handle, &PERFstamp);  ??
+	 *  When processing this stamp, state holds the state from Last time, until it updates it at
+	 *  the end, just before telemetry
 	 */
 
 	/* ********************** SHM specific ****************************/
@@ -307,42 +317,42 @@ thread_shm(void *c_handle)
 		 *        telemetry: icn status reported in OCN DBs  (all the same)
 		 */
 		switch (NTC_id) {
-			case -1:	// Undefined
+			case -1:  // Undefined
 				verbose(LOG_NOTICE, "SHM: Encountered an undefined NTC_id .");
 				break;
-			case 1:	// SYD
-				SA_detected = ((state->stamp_i % (120*60/4)) ? 0 : 1);	// min*..
+			case 1:  // SYD
+				SA_detected = ((state->stamp_i % (120*60/4)) ? 0 : 1);  // min*..
 				break;
-			case 2:	// MEL
+			case 2:  // MEL
 				SA_detected = ((state->stamp_i % (3*120*60/4)) ? 0 : 1);
 				break;
-			case 3:	// BRI
+			case 3:  // BRI
 				break;
-			case 4:	// PER
+			case 4:  // PER
 				SA_detected = ((state->stamp_i % (160*60/4 +3)) ? 0 : 1);
 				break;
-			case 5:	// ADL
+			case 5:  // ADL
 				SA_detected = ((state->stamp_i % (180*60/4 +5)) ? 0 : 1);
 				break;
-			case 16: // OCN SYD
+			case 16:  // OCN SYD
 				break;
-			case 17: // OCN MEL
+			case 17:  // OCN MEL
 				SA_detected = ((state->stamp_i % (110*60/4 +5)) ? 0 : 1);
 				break;
-			default:	// other ICN, or an OCN
+			default:  // other ICN, or an OCN
 				SA_detected = 0;
 				break;
 		}
 		//verbose(VERB_DEBUG, "[%llu] (sID, NTC_id) = (%d, %d):   SA_detected = %d",
-		//						state->stamp_i, sID, NTC_id, SA_detected);
+		//   state->stamp_i, sID, NTC_id, SA_detected);
 
 
 		/* Update servertrust  [ warn yourself of the SA's discovered ]
 		 * TODO: this overrides the servertrust setting - to be reviewed */
 		if (state->SA != SA_detected) {
-			handle->servertrust &= ~(1ULL << sID);		// clear bit
+			handle->servertrust &= ~(1ULL << sID);     // clear bit
 			if (SA_detected)
-			    handle->servertrust |= (1ULL << sID);	// set bit
+			    handle->servertrust |= (1ULL << sID);  // set bit
 			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with "
 			   "(sID, NTC_id) = (%d, %d), servertrust now 0x%llX",
 			    state->stamp_i, sID, NTC_id, handle->servertrust);
@@ -354,9 +364,9 @@ thread_shm(void *c_handle)
 		 *       would require wait for next packet before being actioned
 		 *   Is used for SA telemetry, and for icn_status sent to OCNs inband. */
 		if (state->SA != SA_detected && NTC_id != -1) {
-			perfdata->ntc_status &= ~(1ULL << NTC_id);		// clear bit
+			perfdata->ntc_status &= ~(1ULL << NTC_id);    // clear bit
 			if (SA_detected)
-				perfdata->ntc_status |= (1ULL << NTC_id);	// set bit
+				perfdata->ntc_status |= (1ULL << NTC_id);  // set bit
 			verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with "
 			    "(sID, NTC_id) = (%d, %d), ntc_status now 0x%llX",
 			    state->stamp_i, sID, NTC_id, perfdata->ntc_status);
@@ -371,7 +381,7 @@ thread_shm(void *c_handle)
 		long double time;
 		double clockerr;
 
-		ptuple = &RADperfstamp.st.bstamp_p;
+		ptuple = &PERFstamp.st.pstamp;
 		read_RADabs_UTC(rad_data, &ptuple->bstamp.Ta, &time, 1);
 		clockerr = time;
 		read_RADabs_UTC(rad_data, &ptuple->bstamp.Tf, &time, 1);
@@ -411,7 +421,7 @@ thread_shm(void *c_handle)
 			// CN DB:        state->RADerror for clock sID
 
 
-	}	// thread_stop while loop
+	}  // thread_stop while loop
 
 
 	if (socket_desc >= 0)
