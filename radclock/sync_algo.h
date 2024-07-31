@@ -173,16 +173,6 @@ struct stamp_t {
 //} while (0)
 
 
-
-
-/* Matching modes for perf stamps used in matching queue based on stamp_t :
- *  MODE_RAD : RAD stamps                [ `client' side in matching ]
- *  MODE_DAG : authoritative timestamps  [ `server' side in matching ]
- */
-#define MODE_RAD (MODE_PRIVATE+1)    // ensures is above standard NTP modes
-#define MODE_DAG (MODE_PRIVATE+2)
-
-
 /* Holds all RADclock clock variables needed to be visible outside the algo.
 	It is used to hold the variables output to analysis, as well as those
 	transferred to rad_data.  Many of the algo-internal variables also appear in
@@ -369,18 +359,13 @@ struct bidir_algostate {
 #define	ALGO_ERROR(x) (&(x->algo_err))
 
 
-
-/* Holds all RADclock perf variables needed to be visible outside the SHM thread
- * Includes both PERF and SHM outputs. */
-struct bidir_perfoutput {
-
-	/* Per-stamp SHM output */
-	double auRTT;    // RTT measured using authoritative timestamps
-	int SA;
-	/* Per-stamp PERF output */
-	double RADerror;
-};
-
+/* Unified state for SHM and RADperf assessment.
+ * Although separate tasks requiring different data, some state is inherently
+ * shared (eg stamp_i) and input PERFstamps are synchronous.
+ * Terminology:
+ *    PERF: pertains to the 6tuple PERF timestamp format jointly used
+ * RADperf: pertains to using Ref timestamps to judge RADclock performance
+ */
 struct bidir_perfstate {
 
 	index_t stamp_i;
@@ -413,12 +398,26 @@ struct bidir_perfstate {
 	long SA_total;    // total number of per-stamp SA detections
 
 
-	/* ********* Perf variables: those using RADclock timestamps ***********/
+	/* ********* RADperf variables: those using RADclock timestamps ***********/
 	/* Histories */
 
 	/* rAdclock error estimation */
 	double RADerror;
 
+};
+
+/* SHM variables needed to be visible outside the SHM thread */
+struct SHM_output {
+	/* Per-stamp SHM output */
+	double auRTT;    // RTT measured using authoritative timestamps
+	int SA;
+
+};
+
+/* RADclock perf variables needed to be visible outside the SHM thread */
+struct RADperf_output {
+	/* Per-stamp PERF output */
+	double RADerror;
 };
 
 
@@ -437,24 +436,26 @@ struct bidir_algodata {
 };
 
 /* RADclock perf data, holding 6-tuple input and processing enabling :
- *  - analysis of RADclock performance [assuming a trusted server]
  *  - SHM of RADclock's server [using the authoritative timestamps]
+ *  - analysis of RADclock performance [assuming a trusted server]
  *  - needed queues to perform matching
  */
 struct bidir_perfdata {
-	/* Queue of PERF stamps to be processed. Must be first member. */
+	/* Queue of PERFstamps to be processed. Must be first member. */
 	struct stamp_queue *q;
 
 	/* Buffer for fast dumping of sane popped RADstamps within PROC */
-	int RADBUFF_SIZE;       // number of buffer elements
+	int RADBUFF_SIZE;      // number of buffer elements
 	struct stamp_t *RADbuff;
 	index_t RADbuff_next;  // buffer index for next write, won't wrap
 
-	struct stamp_t *laststamp;      // containing bidir_stamp_perf tuples
-	struct bidir_perfoutput *output;
-	struct bidir_perfstate *state;  // includes SHM state
+	struct stamp_t *laststamp;    // containing bidir_stamp_perf tuples
+	struct bidir_perfstate *state;
+	struct SHM_output *SHMoutput;
+	struct RADperf_output *RPoutput;
 	uint64_t ntc_status;    // trust summary for servers with NTC indices
 };
+
 
 //#define OUTPUT(handle, x) ((struct bidir_algooutput*)handle->algo_output)->x
 #define SOUTPUT(h,sID,x) ((struct bidir_algodata*)h->algodata)->output[sID].x

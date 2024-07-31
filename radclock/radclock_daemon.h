@@ -166,8 +166,9 @@ struct radclock_handle {
 	radclock_syncalgo_mode_t syncalgo_mode;
 	//void *algo_output;   // Defined as void* since not part of the library
 
-	/* Stamp source */
+	/* Stamp data sources */
 	void *stamp_source;    // Defined as void* since not part of the library
+	int ref_source;        // Ref timestamp source (for PERFstamps)
 
 	/* Points to an array of Synchronisation algodata, one per server */
 	void *algodata;
@@ -178,7 +179,7 @@ struct radclock_handle {
 	/* Multiple server management */
 	int nservers;         // number of servers
 	int pref_sID;         // ID ("array" index) of preferred RADclock
-	int last_sID;         // hack to give fake dag msg creation knowledge of last RADstamp popped: togo soon
+	int last_sID;         // sID of last valid recognized (RAD)stamp
 	vcounter_t pref_date; // raw time of last pref change
 
 	/* Server trust status word: 1 bit per server, denoting

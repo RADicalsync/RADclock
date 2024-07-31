@@ -600,8 +600,10 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	handle->pthread_flag_stop = 0;
 	pthread_mutex_init(&(handle->globaldata_mutex), NULL);
 
+	/* Stamp data sources */
 	handle->syncalgo_mode = RADCLOCK_BIDIR; // hardwired, as yet not really used
 	handle->stamp_source = NULL;
+	handle->ref_source = NULL;
 
 	/* Raw data queues */
 	handle->pcap_queue = (void*) malloc(sizeof(struct raw_data_bundle));
@@ -624,7 +626,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	init_stamp_queue(algodata);
 	handle->algodata = (void*) algodata;	// enduring copy of ptr to algodata data
 
- 	/* perfdata can't be set before conf parsing determines if is_cn */
+ 	/* perfdata can't be set before conf parsing determines if is_tn */
 	handle->perfdata = NULL;
 
 	/* Initialize all servers to trusted. */
@@ -672,15 +674,18 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	for (s=0; s<ns; s++)
 		algodata->state[s].stamp_i = -1;  // signal no stamps processed yet
 
-	/* If is_cn, create and initialize the perfdata handle, and all its internal
+	/* If is_tn, create and initialize the perfdata handle, and all its internal
 	 * variables and structures. */
-	if (handle->conf->is_cn) {
+	if (handle->conf->is_tn) {
 		perfdata = malloc(sizeof *perfdata);
 		init_stamp_queue(perfdata);     // implicit cast works
 		perfdata->laststamp = calloc(ns,sizeof(struct stamp_t));
-		perfdata->output    = calloc(ns,sizeof(struct bidir_perfoutput));
 		perfdata->state     = calloc(ns,sizeof(struct bidir_perfstate));
-		memset(perfdata->state, 0, ns * sizeof(struct bidir_perfstate));
+		perfdata->SHMoutput = calloc(ns,sizeof(struct SHM_output));
+		perfdata->RPoutput  = calloc(ns,sizeof(struct RADperf_output));
+//		memset(perfdata->state, 0, ns * sizeof(struct bidir_perfstate));
+		for (s=0; s<ns; s++)
+			perfdata->state[s].stamp_i = -1;  // signal no PERFstamps processed yet
 		perfdata->RADBUFF_SIZE = ns * 8;
 		perfdata->RADbuff = calloc(perfdata->RADBUFF_SIZE,sizeof(struct stamp_t));
 		perfdata->RADbuff_next = 0;
@@ -909,7 +914,7 @@ init_handle(struct radclock_handle *handle)
 		}
 
 		/* Read NTP authentication keys from database */
-		if (handle->conf->is_cn || handle->conf->is_ocn)
+		if (handle->conf->is_tn || handle->conf->is_ocn)
 			handle->ntp_keys = read_keys();
 
 	}
@@ -930,7 +935,7 @@ init_handle(struct radclock_handle *handle)
 	open_output_matlab(handle);
 
 	/* Open ascii sync output file (ie matched stamp timestamps)
-	 * Output PERF stamps if SHM thread running, or if reading them from input.
+	 * Output PERFstamps if SHM thread running, or if reading them from input.
 	 */
 	if (handle->conf->server_shm == BOOL_ON || (strlen(handle->conf->sync_in_ascii) > 0 &&
 	    ((struct ascii_data*)(stamp_source->priv_data))->stamptype == STAMP_NTP_PERF) )
@@ -1452,7 +1457,7 @@ main(int argc, char *argv[])
 	 */
 	if (handle->conf->server_shm == BOOL_ON)
 	{
-		if (handle->run_mode == RADCLOCK_SYNC_LIVE && !handle->conf->is_cn ||
+		if (handle->run_mode == RADCLOCK_SYNC_LIVE && !handle->conf->is_tn ||
 		    handle->run_mode == RADCLOCK_SYNC_DEAD) {
 			verbose(LOG_ERR, "Configuration error. Disabling server_shm "
 			    "(must be running live and an NTC Trust Node).");
@@ -1530,8 +1535,10 @@ main(int argc, char *argv[])
 
 		while (1) {
 			err = process_stamp(handle);
-			if (err < 0)
+			if (err < 0)  // when stamps run out, so do PERFstamps
 				break;
+			if (err == 2) // valid PERFstamp available
+				err = process_perfstamp(handle);
 		}
 	}
 	/*

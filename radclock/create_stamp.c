@@ -469,7 +469,7 @@ destroy_stamp_queue(struct bidir_algodata *algodata)
  *
  * The code handled two kinds of stamp matching:
  *  RAD stamps:   with the client and server halfstamps as above
- *  PERF stamps: with a full RADstamp being the `client' halfstamp, matched
+ *  PERFstamps: with a full RADstamp being the `client' halfstamp, matched
  *                  to a DAG `server' halfstamp
  * Slightly different rules on halfstamp testing apply.
  *
@@ -615,7 +615,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			BST(stamp)->Te = BST(new)->Te;
 			BST(stamp)->Tf = BST(new)->Tf;
 			break;
-		case MODE_RAD:	// the `client' side of a perf stamp match
+		case MODE_RAD:	// the `client' side of a PERFstamp match
 			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);
 			stamp->auth_key_id = new->auth_key_id;
 			stamp->ttl = new->ttl;
@@ -626,7 +626,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 			stamp->rootdispersion = new->rootdispersion;
 			stamp->st.pstamp.bstamp = new->st.pstamp.bstamp;
 			break;
-		case MODE_DAG:	// the `server' side of a perf stamp match
+		case MODE_DAG:	// the `server' side of a PERFstamp match
 			strncpy(stamp->server_ipaddr, new->server_ipaddr, 16);// if orphaned, need IP to pass cleanout test
 			stamp->st.pstamp.Tout = new->st.pstamp.Tout;
 			stamp->st.pstamp.Tin  = new->st.pstamp.Tin;
@@ -648,7 +648,7 @@ insertandmatch_halfstamp(struct stamp_queue *q, struct stamp_t *new, int mode)
 				BST(stamp)->Tb, BST(stamp)->Te,
 				stamp->server_ipaddr);
 			} else	// STAMP_NTP_PERF
-				verbose(VERB_DEBUG, "  perf stamp queue dump: [%llu]   %llu %llu %.6Lf %.6Lf %.6Lf %.6Lf %s",
+				verbose(VERB_DEBUG, "  PERFstamp queue dump: [%llu]   %llu %llu %.6Lf %.6Lf %.6Lf %.6Lf %s",
 				(long long unsigned) stamp->id,
 				(long long unsigned) PSTB(stamp)->Ta, (long long unsigned) PSTB(stamp)->Tf,
 				PSTB(stamp)->Tb, PSTB(stamp)->Te,
@@ -782,7 +782,7 @@ bad_packet_server(struct ntp_pkt *ntp, struct sockaddr_storage *ss_if,
 
 /*
  * Check the server's reply authentication signature.
- * If this host is a CN and the server reply is from OCN a SHA signature is required.
+ * If this host is a TN and the server reply is from OCN a SHA signature is required.
  * If the signature is not present or incorrect discard the packet
  * TODO: check this, seems that if pkt doesn't have extra authentication length
  * then will simply pass, no OCN checks right here so summary above misleading.
@@ -1007,7 +1007,7 @@ update_stamp_queue(struct radclock_handle *handle, struct stamp_queue *q, radpca
  * This check is dropped for s-halfstamps, as they shouldn't be there anyway.
  *
  * The above applies to the matching performed for RAD stamps.
- * For PERF stamps it is not an abberation that the DAG `server' halfstamp may
+ * For PERFstamps it is not an abberation that the DAG `server' halfstamp may
  * arrive before the RAD 'client' halfstamp, so the server ID match for cleaning
  * is also performed for DAG halfstamps. However such halfstamps are also
  * dropped if they are simply very old, because of the (remote) possibility that

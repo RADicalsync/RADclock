@@ -97,7 +97,7 @@ static struct _key keys[] = {
 	{ "vm_udp_list",			CONFIG_VM_UDP_LIST},
 	{ "ntc",					CONFIG_NTC},
 	{ "is_ocn",					CONFIG_IS_OCN},
-	{ "is_cn",					CONFIG_IS_CN},
+	{ "is_tn",					CONFIG_IS_TN},
 	{ "",			 			CONFIG_UNKNOWN} // Must be the last one
 };
 
@@ -390,7 +390,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 
 	/* Defines if this server is an OCN */
 	fprintf(fd, "# is_ocn.\n");
-	fprintf(fd, "# Defines if this server is an OCN - cannot be on with is_cn .\n");
+	fprintf(fd, "# Defines if this server is an OCN - cannot be on with is_tn .\n");
 	fprintf(fd, "#\ton : Start service - Turns on OCN services\n");
 	fprintf(fd, "#\toff: Stop service  - Disables OCN services\n");
 	if (conf == NULL)
@@ -401,17 +401,17 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 				labels_bool[conf->is_ocn]);
 
 
-	/* Defines if this server is an CN */
-	fprintf(fd, "# is_cn.\n");
-	fprintf(fd, "# Defines if this server is an CN - cannot be on with is_ocn .\n");
-	fprintf(fd, "#\ton : Start service - Turns on CN services\n");
-	fprintf(fd, "#\toff: Stop service  - Disables CN services\n");
+	/* Defines if this server is an TN */
+	fprintf(fd, "# is_tn.\n");
+	fprintf(fd, "# Defines if this server is an TN - cannot be on with is_ocn .\n");
+	fprintf(fd, "#\ton : Start service - Turns on TN services\n");
+	fprintf(fd, "#\toff: Stop service  - Disables TN services\n");
 	if (conf == NULL)
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_CN),
-				labels_bool[DEFAULT_IS_CN]);
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_TN),
+				labels_bool[DEFAULT_IS_TN]);
 	else
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_CN),
-				labels_bool[conf->is_cn]);
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_IS_TN),
+				labels_bool[conf->is_tn]);
 
 	/* Active SHM  */
 	fprintf(fd, "# SHM enabled.\n");
@@ -902,21 +902,21 @@ switch (codekey) {
 		break;
 
 
-	case CONFIG_IS_CN:
+	case CONFIG_IS_TN:
 		// If value specified on the command line
-		if ( HAS_UPDATE(*mask, UPDMASK_IS_CN) ) 
+		if ( HAS_UPDATE(*mask, UPDMASK_IS_TN) ) 
 			break;
 		ival = check_valid_option(value, labels_bool, 2);
 		// Indicate changed value
-		if ( conf->is_cn != ival )
-			SET_UPDATE(*mask, UPDMASK_IS_CN);
+		if ( conf->is_tn != ival )
+			SET_UPDATE(*mask, UPDMASK_IS_TN);
 		if ( ival < 0)
 		{
-			verbose(LOG_WARNING, "is_cn value incorrect. Fall back to default.");
-			conf->is_cn = DEFAULT_IS_CN;
+			verbose(LOG_WARNING, "is_tn value incorrect. Fall back to default.");
+			conf->is_tn = DEFAULT_IS_TN;
 		}
 		else
-			conf->is_cn = ival;
+			conf->is_tn = ival;
 		break;
 
 	case CONFIG_SERVER_SHM:
@@ -1647,8 +1647,8 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 		strcpy(conf->sync_in_pcap,"");
 	}
 
-	if (conf->is_cn && conf->is_ocn) {
-		verbose(LOG_ERR, "Configuration cannot have both is_cn and is_ocn enabled.");
+	if (conf->is_tn && conf->is_ocn) {
+		verbose(LOG_ERR, "Configuration cannot have both is_tn and is_ocn enabled.");
 		exit(1);
 	}
 
@@ -1695,7 +1695,7 @@ void config_print(int level, struct radclock_config *conf, int ns)
 {
 	verbose(level, "RADclock - configuration summary");
 	verbose(level, "radclock version     : %s", conf->radclock_version);
-	verbose(level, "Server CN            : %s", labels_bool[conf->is_cn]);
+	verbose(level, "Server TN            : %s", labels_bool[conf->is_tn]);
 	verbose(level, "Server OCN           : %s", labels_bool[conf->is_ocn]);
 	verbose(level, "Configuration file   : %s", conf->conffile);
 	verbose(level, "Log file             : %s", conf->logfile);

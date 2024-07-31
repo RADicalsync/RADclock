@@ -85,6 +85,7 @@ void* thread_shm(void *c_handle);
 
 int trigger_work(struct radclock_handle *handle);
 int process_stamp(struct radclock_handle *handle);
+int process_perfstamp(struct radclock_handle *handle);
 
 
 /*

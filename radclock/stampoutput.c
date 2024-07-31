@@ -210,7 +210,7 @@ print_out_syncline(struct radclock_handle *handle, struct stamp_t *stamp, int sI
 {
 	int err;
 
-	/* Generate fake DAG timestamps for one-off fake perf stamp generation */
+	/* Generate fake DAG timestamps for one-off fake PERFstamp generation */
 	//	struct radclock_error *rad_error = &handle->rad_error[sID];
 	//	double DAGOWD = rad_error->min_RTT/2 - 0.3e-3;    // fake constant OWD from DAG
 	//	long double fakeTout = BST(stamp)->Tb - DAGOWD;
@@ -239,7 +239,7 @@ print_out_syncline(struct radclock_handle *handle, struct stamp_t *stamp, int sI
 			  (long long unsigned)BST(stamp)->Tf,
 			  (long long unsigned)stamp->id);
 		 else
-			/* Fake perf stamp generation in multiple server case */
+			/* Fake PERFstamp generation in multiple server case */
 			//err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %d\n",
 			//  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
 			//  (long long unsigned)BST(stamp)->Tf, fakeTin, fakeTout,

@@ -82,7 +82,7 @@
 #define DEFAULT_SYNCHRO_TYPE     SYNCTYPE_NTP  // Protocol used
 #define DEFAULT_SERVER_IPC       BOOL_ON       // Update the clock
 #define DEFAULT_IS_OCN           BOOL_OFF    // Defines if this server is an OCN
-#define DEFAULT_IS_CN            BOOL_OFF    // Defines if this server is an CN
+#define DEFAULT_IS_TN            BOOL_OFF    // Defines if this server is an TN
 #define DEFAULT_SERVER_TELEMETRY BOOL_OFF    // Creates telemetry cache files in /radclock
 #define DEFAULT_SERVER_SHM       BOOL_OFF    // Defines if SHM is active
 #define DEFAULT_SERVER_NTP       BOOL_OFF    // Don't act as a server
@@ -161,7 +161,7 @@
 #define CONFIG_VM_UDP_LIST     63
 /* radclock type */
 #define CONFIG_IS_OCN          70
-#define CONFIG_IS_CN           71
+#define CONFIG_IS_TN           71
 /* NTP serving type */
 #define CONFIG_PUBLIC_NTP      80
 
@@ -212,7 +212,7 @@
 #define UPDMASK_SERVER_SHM      0x20000000
 #define UPDMASK_SHM_DAG_CLIENT  0x40000000
 #define UPDMASK_IS_OCN          0x80000000
-#define UPDMASK_IS_CN           0x100000000
+#define UPDMASK_IS_TN           0x100000000
 #define UPDMASK_PUBLIC_NTP      0x200000000
 
 #define HAS_UPDATE(val,mask)   ((val & mask) == mask)
@@ -222,7 +222,7 @@
 
 /* NTC Command&Control assigns NTC nodes unique ids for NTC-global consistency.
  * The NTC_id are allocated as follows:
- *  CN:  0
+ *  TN:  0
  *  ICN: 1,2,...  ICN_MAX   (currently ICN_MAX = MAX_NTC/2 -1)
  *  OCN: ICN_MAX+1 ... MAX_NTC
  *  non-NTC servers or uninitialized:  -1
@@ -263,7 +263,7 @@ struct radclock_config {
 	int server_xen;                    // Boolean
 	int server_vmware;                 // Boolean
 	int is_ocn;                        // Boolean
-	int is_cn;                         // Boolean
+	int is_tn;                         // Boolean
 	int public_ntp;                    // Boolean - whether radclock responds to public NTP requests
 	int adjust_FFclock;                // Boolean
 	int adjust_FBclock;                // Boolean

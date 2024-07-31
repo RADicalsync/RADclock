@@ -71,26 +71,26 @@ add_auth_key(char ** key_data, char * buff, int is_private_key)
 	char crypt_key[64];
 	int key_id = -1;
 	int min_key_id = 0;    // DV: seems to be actual min index in C notation
-	int max_key_id = PRIVATE_CN_NTP_KEYS - 1;   // DV: seems to be total number, not C notation
+	int max_key_id = PRIVATE_TN_NTP_KEYS - 1;   // DV: seems to be total number, not C notation
 
 	if (is_private_key) {
-		min_key_id = PRIVATE_CN_NTP_KEYS;
+		min_key_id = PRIVATE_TN_NTP_KEYS;
 		max_key_id = MAX_NTP_KEYS;
 	}
 
 	if (sscanf( buff, "%d %s %s", &key_id, crypt_type, crypt_key) == 3) {
-		// Set the private key ids to start from index PRIVATE_CN_NTP_KEYS
+		// Set the private key ids to start from index PRIVATE_TN_NTP_KEYS
 		if (is_private_key)
-			key_id += PRIVATE_CN_NTP_KEYS;  // want to do if fail test below?
+			key_id += PRIVATE_TN_NTP_KEYS;  // want to do if fail test below?
 
-		// Sanity check that private keys start at PRIVATE_CN_NTP_KEYS
-		if (is_private_key && key_id < PRIVATE_CN_NTP_KEYS) {
+		// Sanity check that private keys start at PRIVATE_TN_NTP_KEYS
+		if (is_private_key && key_id < PRIVATE_TN_NTP_KEYS) {
 			verbose(LOG_ERR, "Auth file read: Key id %d private key conflict", key_id);
 			return;
 		}
 
-		// Sanity check that public keys are below PRIVATE_CN_NTP_KEYS
-		if (!is_private_key && key_id >= PRIVATE_CN_NTP_KEYS) {
+		// Sanity check that public keys are below PRIVATE_TN_NTP_KEYS
+		if (!is_private_key && key_id >= PRIVATE_TN_NTP_KEYS) {
 			verbose(LOG_ERR, "Auth file read: Key id %d public key conflict", key_id);
 			return;
 		}

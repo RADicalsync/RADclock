@@ -319,8 +319,8 @@ thread_ntp_server(void *c_handle)
 
 				if  (memcmp(pck_dgst, ((struct ntp_pkt*)pkt_in)->mac, 20) == 0) {
 					// verbose(LOG_WARNING, "NTPserver: NTP Server authentication SUCCESS");
-					/* If the key is private, then packet must be from the CN.
-					 * In that case deal with possible CN inband signaling.
+					/* If the key is private, then packet must be from the TN.
+					 * In that case deal with possible TN inband signaling.
 					 */
 					if (IS_PRIVATE_KEY(key_id)) {
 						private_signed_ntp = 1;	// TODO: check if usage of this, given is now set without a is_ocn check
@@ -356,14 +356,14 @@ thread_ntp_server(void *c_handle)
 			}
 
 		/* Drop packets from the public (NTC customers) if public serving is disabled.
-		 * Requests with private CN-OCN keys will always be replied to. */
+		 * Requests with private TN-OCN keys will always be replied to. */
 		if ( ! handle->conf->public_ntp && !private_signed_ntp )
 			continue;
 
 
 		// Once the public_ntp_limit is hit. Stop responding to NTP requests until window has expired
 		// Tighten hash filter
-		// Allow CN messages to always get a reply - possible exploit on replay attacks from the CN
+		// Allow TN messages to always get a reply - possible exploit on replay attacks from the TN
 		if ( !private_signed_ntp && public_ntp_current_period_responses > public_ntp_limit ) {
 			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
 			UTCld_to_NTPtime(&time, &reftime);

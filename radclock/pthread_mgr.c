@@ -53,6 +53,7 @@
 #include "jdebug.h"
 
 #include "telemetry_consumer.h"
+#include "Ext_reference/ext_ref.h"    // API to DAG code
 
 void
 init_thread_signal_mgt()
@@ -82,7 +83,7 @@ thread_trigger(void *c_handle)
 
 	/* Deal with UNIX signal catching */
 	init_thread_signal_mgt();
-	
+
 	/* Clock handle to be able to read global data */
 	handle = (struct radclock_handle *) c_handle;
 
@@ -194,7 +195,7 @@ thread_data_processing(void *c_handle)
 				source_breakloop(handle, (struct stampsource *)handle->stamp_source);
 				break;
 			}
-		} while (err == 0);
+		} while (err == 0 || err == 2);
 
 		/* rdb empty, wait for more packets to arrive */
 		usleep(pktwait);
@@ -204,6 +205,65 @@ thread_data_processing(void *c_handle)
 	verbose(LOG_NOTICE, "Thread data processing is terminating.");
 	pthread_exit(NULL);
 }
+
+
+void *
+thread_shm(void *c_handle)
+{
+	struct radclock_handle *handle;
+	int err;
+
+	/* Deal with UNIX signal catching */
+	init_thread_signal_mgt();
+
+	/* Clock handle to be able to read global data */
+	handle = (struct radclock_handle *) c_handle;
+
+	/* UNIX socket related */
+	int socket_desc;
+	struct sockaddr_in server;
+
+	/* Create the server socket and initialize to listen to the Ref host */
+	socket_desc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+	if (socket_desc == -1) {
+		perror("socket");
+		verbose(LOG_ERR, "SHM: Could not create socket");
+		pthread_exit(NULL);
+	}
+	handle->ref_source = socket_desc;
+	memset((char *) &server, 0, sizeof(struct sockaddr_in));
+	server.sin_family = AF_INET;
+	server.sin_port = htons(DAG_PORT);
+	server.sin_addr.s_addr = htonl(INADDR_ANY);  // avoids needing to know DAGhost IP
+
+	/* Set a receive timeout */
+	struct timeval so_timeout;
+	so_timeout.tv_sec = 0;
+	so_timeout.tv_usec = 1e6 * 0.2;
+	setsockopt(socket_desc, SOL_SOCKET, SO_RCVTIMEO, (void*)(&so_timeout), sizeof(struct timeval));
+
+	/* Bind socket */
+	if ( bind(socket_desc, (struct sockaddr *)&server, sizeof(server)) == -1 ) {
+		verbose(LOG_ERR, "SHM: Socket bind() error. Killing thread: %s", strerror(errno));
+		pthread_exit(NULL);
+	}
+	verbose(LOG_NOTICE, "SHM: now listening for DAG messages on port %d", DAG_PORT);
+
+	while ((handle->pthread_flag_stop & PTH_SHM_CON_STOP) != PTH_SHM_CON_STOP)
+	{
+		err = process_perfstamp(handle);
+		// TODO: add sleeping in here?
+	}
+
+	if (socket_desc >= 0)
+		close(socket_desc);
+	handle->ref_source = 0;
+
+	/* Thread exit */
+	verbose(LOG_NOTICE, "Thread shm is terminating.");
+	pthread_exit(NULL);
+}
+
 
 
 void *

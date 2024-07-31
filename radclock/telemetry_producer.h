@@ -154,7 +154,7 @@ push_telemetry(struct radclock_handle *handle, int sID)
 
 	/* ntc_status holds flag-form summary of SAs across active NTC servers */
 	uint64_t SA = 0;
-	if (handle->conf->is_cn)
+	if (handle->conf->is_tn)
 		SA = ((struct bidir_perfdata *)handle->perfdata)->ntc_status;
 
 	if (active_trigger(handle, &radclock_ts, sID, PICN, is_sID_NTC, SA))
@@ -257,7 +257,7 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
 				double err_bound = handle->rad_data[sID].ca_err;
 				double min_RTT   = handle->rad_error[sID].min_RTT; //;handle->ntp_server[sID].minRTT;
 				double clockErr = 0;
-				if (handle->conf->is_cn)
+				if (handle->conf->is_tn)
 					clockErr= ((struct bidir_perfdata *)(handle->perfdata))->state[sID].RADerror;
 
 				// Create a telemetry NTC server specific packet
