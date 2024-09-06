@@ -358,8 +358,6 @@ FBSD_1.3 {
 	clock_getcpuclockid2;
 	connectat;
 	ffclock_getcounter;
-	ffclock_getestimate;
-	ffclock_setestimate;
 	pipe2;
 	posix_fadvise;
 	procctl;
@@ -409,7 +407,6 @@ FBSD_1.6 {
 	fhreadlink;
 	getfhat;
 	funlinkat;
-	memfd_create;
 	shm_create_largepage;
 	shm_rename;
 };
@@ -426,6 +423,7 @@ FBSD_1.7 {
 };
 
 FBSD_1.8 {
+	 kcmp;
 	ffclock_getdata;
 	ffclock_setdata;
 };

@@ -192,6 +192,16 @@ raw timestamps are stored.
 .Sh HISTORY
 Feedforward clock support first appeared in
 .Fx 10.0 .
+The
+.Fn ffclock_getdata
+and
+.Fn ffclock_setdata
+system calls were named
+.Fn ffclock_getestimate
+and
+.Fn ffclock_setestimate
+prior to
+.Fx 15 .
 .Sh AUTHORS
 .An -nosplit
 The feedforward clock support was written by
