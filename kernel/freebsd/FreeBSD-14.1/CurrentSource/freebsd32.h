@@ -64,26 +64,26 @@ struct bintime32 {
 	uint32_t frac[2];
 };
 
-struct ffclock_estimate32 {
+struct ffclock_data32 {
 	struct bintime32 update_time;
 	ffcounter update_ffcount;
-	ffcounter leapsec_next;
+	ffcounter leapsec_expected;
 	uint64_t period;
 	uint32_t errb_abs;
 	uint32_t errb_rate;
 	uint32_t status;
-	int16_t leapsec_total;
-	int8_t leapsec;
-	int8_t _pad;
+	int16_t secs_to_nextupdate;
+	int8_t leapsec_total;
+	int8_t leapsec_next;
 }
 #if defined(__amd64__)
 __attribute__((packed))
 #endif
 ;
 #if defined(__amd64__)
-_Static_assert(sizeof(struct ffclock_estimate32) == 52, "ffclock_estimate32 size");
+_Static_assert(sizeof(struct ffclock_data32) == 52, "ffclock_data32 size");
 #else
-_Static_assert(sizeof(struct ffclock_estimate32) == 56, "ffclock_estimate32 size");
+_Static_assert(sizeof(struct ffclock_data32) == 56, "ffclock_data32 size");
 #endif
 
 struct rusage32 {

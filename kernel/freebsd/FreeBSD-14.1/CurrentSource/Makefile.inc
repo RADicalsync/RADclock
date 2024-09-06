@@ -18,7 +18,6 @@
 #
 NOASM=	exit.o \
 	getlogin.o \
-	sbrk.o \
 	sstk.o \
 	yield.o
 PSEUDO=	_exit.o \
@@ -38,14 +37,6 @@ SRCS+= getdents.c lstat.c mknod.c stat.c
 
 NOASM+=  sched_getcpu.o
 PSEUDO+= _sched_getcpu.o
-
-SRCS+= fstat.c fstatat.c fstatfs.c getfsstat.c statfs.c
-NOASM+= fstat.o fstatat.o fstatfs.o getfsstat.o statfs.o
-PSEUDO+= _fstat.o _fstatat.o _fstatfs.o _getfsstat.o _statfs.o
-
-SRCS+= getdirentries.c
-NOASM+= getdirentries.o
-PSEUDO+= _getdirentries.o
 
 SRCS+= brk.c
 SRCS+= closefrom.c
@@ -109,8 +100,10 @@ SRCS+=${MDASM}
 # not declared for no generation of default code (NOASM).  Add each
 # syscall that satisfies these conditions to the ASM list.
 .for _asm in ${MIASM}
-.if !${MDASM:R:M${_asm:R}} && !${NOASM:R:M${_asm:R}}
+.if (${MDASM:R:M${_asm:R}} == "")
+.if (${NOASM:R:M${_asm:R}} == "")
 ASM+=$(_asm)
+.endif
 .endif
 .endfor
 
@@ -226,7 +219,6 @@ MAN+=	abort2.2 \
 	ioctl.2 \
 	issetugid.2 \
 	jail.2 \
-	kcmp.2 \
 	kenv.2 \
 	kill.2 \
 	kldfind.2 \
@@ -366,10 +358,8 @@ MAN+=	abort2.2 \
 	write.2 \
 	_umtx_op.2
 
-MLINKS+=aio_read.2 aio_readv.2 \
-	aio_read.2 aio_read2.2
-MLINKS+=aio_write.2 aio_writev.2 \
-	aio_write.2 aio_write2.2
+MLINKS+=aio_read.2 aio_readv.2
+MLINKS+=aio_write.2 aio_writev.2
 MLINKS+=accept.2 accept4.2
 MLINKS+=access.2 eaccess.2 \
 	access.2 faccessat.2
@@ -412,8 +402,8 @@ MLINKS+=extattr_get_file.2 extattr.2 \
 	extattr_get_file.2 extattr_set_file.2 \
 	extattr_get_file.2 extattr_set_link.2
 MLINKS+=ffclock.2 ffclock_getcounter.2 \
-	ffclock.2 ffclock_getestimate.2 \
-	ffclock.2 ffclock_setestimate.2
+	ffclock.2 ffclock_getdata.2 \
+	ffclock.2 ffclock_setdata.2
 MLINKS+=fhlink.2 fhlinkat.2
 MLINKS+=fhopen.2 fhstat.2 fhopen.2 fhstatfs.2
 MLINKS+=fork.2 _Fork.2
@@ -478,6 +468,7 @@ MLINKS+=sched_get_priority_max.2 sched_get_priority_min.2 \
 	sched_get_priority_max.2 sched_rr_get_interval.2
 MLINKS+=sched_setparam.2 sched_getparam.2
 MLINKS+=sched_setscheduler.2 sched_getscheduler.2
+MLINKS+=sctp_generic_sendmsg.2 sctp_generic_sendmsg_iov.2
 MLINKS+=select.2 FD_CLR.3 \
 	select.2 FD_ISSET.3 \
 	select.2 FD_SET.3 \

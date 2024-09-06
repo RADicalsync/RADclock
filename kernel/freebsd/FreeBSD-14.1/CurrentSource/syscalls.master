@@ -34,6 +34,7 @@
 ;	COMPAT11 included on COMPAT_FREEBSD11 #ifdef (FreeBSD 11 compat)
 ;	COMPAT12 included on COMPAT_FREEBSD12 #ifdef (FreeBSD 12 compat)
 ;	COMPAT13 included on COMPAT_FREEBSD13 #ifdef (FreeBSD 13 compat)
+;	COMPAT14 included on COMPAT_FREEBSD14 #ifdef (FreeBSD 14 compat)
 ;	OBSOL	obsolete, not included in system, only specifies name
 ;	RESERVED reserved for local or vendor use (not for FreeBSD)
 ;	UNIMPL	not implemented, placeholder only
@@ -1426,16 +1427,8 @@
 		    _Out_ ffcounter *ffcount
 		);
 	}
-242	AUE_NULL	STD {
-		int ffclock_setestimate(
-		    _In_ _Contains_timet_ struct ffclock_estimate *cest
-		);
-	}
-243	AUE_NULL	STD {
-		int ffclock_getestimate(
-		    _Out_ _Contains_timet_ struct ffclock_estimate *cest
-		);
-	}
+242	AUE_NULL	OBSOL	ffclock_setestimate
+243	AUE_NULL	OBSOL	ffclock_getestimate
 244	AUE_NULL	STD {
 		int clock_nanosleep(
 		    clockid_t clock_id,
@@ -3339,12 +3332,13 @@
 		);
 	}
 588	AUE_NULL	STD {
-		int kcmp(
-		    pid_t pid1,
-		    pid_t pid2,
-		    int type,
-		    uintptr_t idx1,
-		    uintptr_t idx2
+		int ffclock_setdata(
+		    _In_ _Contains_timet_ struct ffclock_data *cdat
+		);
+	}
+589	AUE_NULL	STD {
+		int ffclock_getdata(
+		    _Out_ _Contains_timet_ struct ffclock_data *cdat
 		);
 	}
 

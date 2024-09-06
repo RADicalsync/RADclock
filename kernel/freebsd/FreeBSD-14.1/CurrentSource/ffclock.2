@@ -1,8 +1,8 @@
 .\" Copyright (c) 2011 The University of Melbourne
 .\" All rights reserved.
 .\"
-.\" This documentation was written by Julien Ridoux at the University of
-.\" Melbourne under sponsorship from the FreeBSD Foundation.
+.\" This documentation was written by Julien Ridoux and Darryl Veitch at the
+.\" University of Melbourne under sponsorship from the FreeBSD Foundation.
 .\"
 .\" Redistribution and use in source and binary forms, with or without
 .\" modification, are permitted provided that the following conditions
@@ -25,14 +25,15 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 21, 2011
+.Dd Nov 30, 2023
 .Dt FFCLOCK 2
 .Os
 .Sh NAME
 .Nm ffclock_getcounter ,
-.Nm ffclock_getestimate ,
-.Nm ffclock_setestimate
-.Nd Retrieve feed-forward counter, get and set feed-forward clock estimates
+.Nm ffclock_getdata ,
+.Nm ffclock_setdata
+.Nd Retrieve feedforward counter, get and set the parameters defining the
+native feedforward clock.
 .Sh LIBRARY
 .Lb libc
 .Sh SYNOPSIS
@@ -40,78 +41,74 @@
 .Ft int
 .Fn ffclock_getcounter "ffcounter *ffcount"
 .Ft int
-.Fn ffclock_getestimate "struct ffclock_estimate *cest"
+.Fn ffclock_getdata "struct ffclock_data *cdat"
 .Ft int
-.Fn ffclock_setestimate "struct ffclock_estimate *cest"
+.Fn ffclock_setdata "struct ffclock_data *cdat"
 .Sh DESCRIPTION
-The ffclock is an alternative method to synchronise the system clock.
-The ffclock implements a feed-forward paradigm and decouples the timestamping
-and timekeeping kernel functions.
-This ensures that past clock errors do not affect current timekeeping, an
-approach radically different from the feedback alternative implemented by the
-ntpd daemon when adjusting the system clock.
-The feed-forward approach has demonstrated better performance and higher
+The FFclock is an alternative method to synchronize the system clock.
+It implements a feedforward paradigm that decouples low level timestamping
+from the kernel timekeeping functions. This ensures that past clock errors do
+not affect current timekeeping, an approach radically different from the
+feedback alternative implemented by the ntpd daemon when adjusting the system
+clock. The feedforward approach has demonstrated better performance and higher
 robustness than a feedback approach when synchronising over the network.
 .Pp
-In the feed-forward context, a
-.Em timestamp
-is a cumulative value of the ticks of the timecounter, which can be converted
-into seconds by using the feed-forward
-.Em clock estimates .
+In the feedforward context, a
+.Em raw timestamp
+is a cumulative count of the increments of a timecounter of suitable width
+.Po
+at least 64 bits
+.Pc ,
+that can be converted into UTC when needed by using the feedforward
+.Em clock data
+held in the kernel, that is periodically updated by a suitable FFclock daemon.
 .Pp
 The
 .Fn ffclock_getcounter
-system call allows the calling process to retrieve the current value of the
-feed-forward counter maintained by the kernel.
+system call allows the calling process to retrieve the current value of a
+feedforward counter maintained by the kernel.
 .Pp
 The
-.Fn ffclock_getestimate
+.Fn ffclock_getdata
 and
-.Fn ffclock_setestimate
-system calls allow the caller to get and set the kernel's feed-forward clock
-parameter estimates respectively.
+.Fn ffclock_setdata
+system calls allow the caller to respectively get and set the kernel's
+native feedforward clock parameters.
 The
-.Fn ffclock_setestimate
-system call should be invoked by a single instance of a feed-forward
-synchronisation daemon.
+.Fn ffclock_setdata
+system call should be invoked by a single instance of a feedforward
+synchronization daemon.
 The
-.Fn ffclock_getestimate
-system call can be called by any process to retrieve the feed-forward clock
-estimates.
+.Fn ffclock_getdata
+system call can be called by any process to retrieve the current value of the
+parameters.
 .Pp
-The feed-forward approach does not require that the clock estimates be retrieved
-every time a timestamp is to be converted into seconds.
-The number of system calls can therefore be greatly reduced if the calling
-process retrieves the clock estimates from the clock synchronisation daemon
-instead.
-The
-.Fn ffclock_getestimate
-must be used when the feed-forward synchronisation daemon is not running
-.Po see
-.Sx USAGE
-below
-.Pc .
+It is not necessary to use the get/set system calls to use the clock, as
+detailed below.
+Furthermore if bypass mode is active, system calls can also be avoided for the
+reading of the ffcounter itself.
 .Pp
-The clock parameter estimates structure pointed to by
-.Fa cest
+The native clock parameter data structure pointed to by
+.Fa cdat
 is defined in
 .In sys/timeffc.h
 as:
 .Bd -literal
-struct ffclock_estimate {
-	struct bintime update_time;    /* Time of last estimates update. */
-	ffcounter      update_ffcount; /* Counter value at last update. */
-	ffcounter      leapsec_next;   /* Counter value of next leap second. */
-	uint64_t       period;         /* Estimate of counter period. */
-	uint32_t       errb_abs;       /* Bound on absolute clock error [ns]. */
-	uint32_t       errb_rate;      /* Bound on counter rate error [ps/s]. */
-	uint32_t       status;         /* Clock status. */
-	int16_t        leapsec_total;  /* All leap seconds seen so far. */
-	int8_t         leapsec;        /* Next leap second (in {-1,0,1}). */
+struct ffclock_data {
+  struct bintime  update_time;       /* FFclock time of last update */
+  ffcounter       update_ffcount;    /* Counter value at last update */
+  ffcounter       leapsec_expected;  /* Estimated counter value of next leap. */
+  uint64_t        period;            /* Counter period estimate [2^-64 s]. */
+  uint32_t        errb_abs;          /* Bound on absolute clock error [ns]. */
+  uint32_t        errb_rate;         /* Bound on rel. counter period err [ps/s]. */
+  uint32_t        status;            /* Clock status. */
+  uint16_t        secs_to_nextupdate;/* Estimated wait til next update [s]. */
+  int8_t          leapsec_total;     /* Sum of leapsecs seen since clock start. */
+  int8_t          leapsec_next;      /* Next leap second (in {-1,0,1}) */
 };
 .Ed
 .Pp
-Only the super-user may set the feed-forward clock estimates.
+Only the super-user may set the feedforward clock data.
 .Sh RETURN VALUES
 .Rv -std
 .Sh ERRORS
@@ -122,54 +119,85 @@ The following error codes may be set in
 The
 .Fa ffcount
 or
-.Fa cest
+.Fa cdat
 pointer referenced invalid memory.
 .It Bq Er EPERM
-A user other than the super-user attempted to set the feed-forward clock
-parameter estimates.
+A user other than the super-user attempted to set the FFclock data.
 .El
 .Sh USAGE
-The feed-forward paradigm enables the definition of specialised clock functions.
+There are several ways to use the features and clocks made available by the
+FFclock family.
 .Pp
-In its simplest form,
-.Fn ffclock_getcounter
-can be used to establish strict order between events or to measure small time
-intervals very accurately with a minimum performance cost.
-.Pp
-Different methods exist to access absolute time
-.Po or
-.Qq wall-clock time
-.Pc tracked by the ffclock.
-The simplest method uses the ffclock sysctl interface
+The simplest uses the ffclock sysctl interface
 .Va kern.ffclock
-to make the system clock return the ffclock time.
-The
-.Xr clock_gettime 2
-system call can then be used to retrieve the current time seen by the
-feed-forward clock.
-Note that this setting affects the entire system and that a feed-forward
-synchronisation daemon should be running.
+to set the system clock to use the FFclock family rather than the traditional
+FBclock family. Then normal absolute time
+functions (both in the kernel and in userland) will be derived from the FFclock.
+Specifically, timetamps based on the monoFFC clock will be returned.
+This setting affects the entire system and so a feedforward synchronization
+daemon should be running.
 .Pp
-A less automated method consists of retrieving the feed-forward counter
-timestamp from the kernel and using the feed-forward clock parameter estimates
-to convert the timestamp into seconds.
-The feed-forward clock parameter estimates can be retrieved from the kernel or
-from the synchronisation daemon directly (preferred).
+Another use is in packet timestamping. If a FFclock daemon is running, then
+regardless of which clock family is serving system time, the sysclock and
+FFclock bpf support allows any kind of timestamp, from any clock of either clock
+family, to be obtained by passing an appropriate timestamp descriptor
+.Po see
+.Xr bpf 4
+.Pc .
+In this way userland programs can receive timestamps based on any of the three
+kernel FFclocks: natFFC, monoFFC, and diffFFC
+.Po see
+.Xr ffclock 2
+.Pc .
+It is also possible for different applications monitoring the same packets to
+request different timestamps
+.Po
+in addition to raw timestamps
+.Pc ,
+for example one using natFCC in bintime format,
+and another using FBclock in microtime format, based on a single shared
+underlying raw timestamp marking the packet event. This scales to any number of
+taps as the raw timestamp and clock states are captured once only and reused,
+and so the delivered timestamps are unaffected by subsequent latency or tap
+access order.
+.Pp
+A third approach is less automated but more flexible. It consists of obtaining
+raw timestamps and using the contemporaneous FFclock parameters to calculate
+the UTC timestamp of the FFclock (specifically the natFFC clock), and/or to
+calculate the time interval in seconds between two events using the FFclock
+difference clock. These are simple affine functions easily calculated
+in floating point arithmetic in userland.
+The raw timestamps could be given
+externally, or obtained from the kernel via either bpf or
+.Nm ffclock_getcounter ,
+or directly in bypass mode.
+The clock parameters could be obtained via
+.Fn ffclock_getdata ,
+or
+.Po
+preferred
+.Pc
+by interfacing with the daemon, given a suitable library.
 This method allows converting timestamps using different clock models as needed
 by the application, while collecting meaningful upper bounds on current clock
-error.
+error, and could be done in post processing if needed clock parameters and
+raw timestamps are stored.
 .Sh SEE ALSO
 .Xr date 1 ,
 .Xr adjtime 2 ,
 .Xr clock_gettime 2 ,
-.Xr ctime 3
+.Xr ctime 3 ,
+.Xr bpf 4 ,
+.Xr ffclock 4
 .Sh HISTORY
-Feed-forward clock support first appeared in
+Feedforward clock support first appeared in
 .Fx 10.0 .
 .Sh AUTHORS
 .An -nosplit
-The feed-forward clock support was written by
-.An Julien Ridoux Aq Mt jridoux@unimelb.edu.au
+The feedforward clock support was written by
+.An Julien Ridoux
 in collaboration with
-.An Darryl Veitch Aq Mt dveitch@unimelb.edu.au
+.An Darryl Veitch
 at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+It was later revised and extended by Darryl Veitch at the University of
+Technology Sydney (darryl.veitch@uts.edu.au).
