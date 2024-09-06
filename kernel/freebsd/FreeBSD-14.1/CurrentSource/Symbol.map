@@ -409,7 +409,6 @@ FBSD_1.6 {
 	fhreadlink;
 	getfhat;
 	funlinkat;
-	memfd_create;
 	shm_create_largepage;
 	shm_rename;
 };
@@ -423,6 +422,10 @@ FBSD_1.7 {
 	timerfd_create;
 	timerfd_gettime;
 	timerfd_settime;
+};
+
+FBSD_1.8 {
+	 kcmp;
 };
 
 FBSDprivate_1.0 {
