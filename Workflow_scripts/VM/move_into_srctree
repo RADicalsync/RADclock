@@ -6,6 +6,22 @@ if [ `id -u` -ne 0 ]; then
 	exit 0
 fi
 
+# options  -o  :  use the original, not current source
+#
+# Defaults
+source="latest"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o)
+        source="original"
+        echo "  > setting FFsource to $source"
+        ;;
+  esac
+  shift
+done
+
+
 echo -e "${BLU}==== Moving Source into Source Tree ====${CLE}"
 
 Arch=`uname -m`
@@ -25,18 +41,18 @@ case $OS in
 		OSv=`uname -r | cut -d'-' -f1`
 		Installd="/usr/src";;
 	Linux)
-		OSmajor=`uname -r | cut -d'.' -f1`	# eg  4     if  4.19.235
-		OSv=`uname -r | cut -d'.' -f1-2`	# VERSION.PATCHLEVEL currently running, assumed same as target
+		OSmajor=`uname -r | cut -d'.' -f1`  # eg  4     if  4.19.235
+		OSv=`uname -r | cut -d'.' -f1-2`    # VERSION.PATCHLEVEL currently running, assumed same as target
 		Installd="/usr/src/linux-source-$OSv"
 		SUBLEVEL=`grep "SUBLEVEL =" $Installd/Makefile | cut -d' ' -f3`;;  # SUBLEVEL of target
 esac
 
 # Determine source dir
-if [ "$1" == "-o" ]; then
-	FFsource=$Based/OriginalSource_$OSv	# when preparing a patch: move Original back in
+if [ "$source" == "original" ]; then
+	FFsource=$Based/OriginalSource_$OSv # when preparing a patch: move Original back in
 	echo "Reinstating Original kernel files into $Installd (for arch $Arch)" 
 else
-	FFsource=$Based/FFclock_working		# default: install latest version
+	FFsource=$Based/FFclock_working     # default: install latest version
 	echo "Installing Current kernel files into $Installd (for arch $Arch)" 
 fi
 
@@ -46,7 +62,7 @@ echo "  Copying from  $FFsource  -->  source tree rooted at $Installd"
 if [ $OS == "FreeBSD" ]; then
 	if [ $OSv == "11.2" ]; then
 		ls -l $FFsource
-		\cp $FFsource/if_*.c			$Installd/sys/dev/e1000/
+		\cp $FFsource/if_*.c  $Installd/sys/dev/e1000/
 	else
 		ls -l $FFsource  | grep -v "if_"
 	fi
@@ -54,16 +70,16 @@ if [ $OS == "FreeBSD" ]; then
 	\cp $FFsource/syscalls.master                 $Installd/sys/kern/
 	\cp $FFsource/{timeffc,timepps,_ffcounter}.h  $Installd/sys/sys/
 	\cp $FFsource/bpf.{c,h}                       $Installd/sys/net/
-	\cp $FFsource/FFCLOCK                         $Installd/sys/$Arch/conf/
-	\cp $FFsource/FFCLOCK                         $Installd/sys/i386/conf/
-	\cp $FFsource/{Symbol.map,Makefile.inc}       $Installd/lib/libc/sys/
-	\cp $FFsource/ffclock.2                       $Installd/lib/libc/sys/
-	\cp $FFsource/ffclock.4                       $Installd/share/man/man4/
+	\cp $FFsource/{NOTES,options}                 $Installd/sys/conf/
 	\cp $FFsource/freebsd32_misc.c                $Installd/sys/compat/freebsd32/
 	\cp $FFsource/freebsd32.h                     $Installd/sys/compat/freebsd32/
-	\cp $FFsource/bpf.4                           $Installd/share/man/man4/
+	\cp $FFsource/FFCLOCK                         $Installd/sys/$Arch/conf/
+	\cp $FFsource/FFCLOCK                         $Installd/sys/i386/conf/
+	\cp $FFsource/compat.h                        $Installd/lib/libc/include/
+	\cp $FFsource/{Symbol.map,Makefile.inc}       $Installd/lib/libc/sys/
+	\cp $FFsource/ffclock.2                       $Installd/lib/libc/sys/
+	\cp $FFsource/{ffclock.4,bpf.4}               $Installd/share/man/man4/
 fi
-
 
 
 if [ $OS == "Linux" ]; then
@@ -112,3 +128,19 @@ if [ $OS == "Linux" ]; then
 		$CMD $FFsource/unistd.h				$Installd/include/uapi/asm-generic/
 	fi
 fi
+
+
+## Copy over some include header files
+case $OS in
+    FreeBSD)
+        Included="/usr/include"
+        echo "  Also copying header files into $Included"
+        \cp $FFsource/{timeffc,_ffcounter}.h   $Included/sys/
+        \cp $FFsource/bpf.h                    $Included/net/;;
+    Linux)
+        Included="/usr/include"
+#		echo "  Also copying header files into $Included"
+#		\cp $FFsource/ffclock.h	$Included/linux/
+        #Included="/usr/src/linux-source-$OSv/include/"
+        echo "  On Linux, not yet copying header files into $Included or anywhere else"
+esac

@@ -1,28 +1,47 @@
 #!/usr/bin/env bash
 # #!/bin/bash
 
-# options -n :  use existing source, don't update FFfiles or overwrite with them
-#         -f :  Linux:  select faster (non-clean) compile options
-#         -nf:  if you want both: must be in this order !
-#         -c :  FreeBSD: select clean (slower) compile option
-#         -w :  FreeBSD: build world
-#
-# TODO:  is a mess: process these properly at the head of the file, and use to define stable
-#        keywords like "fast" "current" for use in script
-
 if [ `id -u` -ne 0 ]; then
 	echo "Sorry `id -un`, this must be run as root"
 	exit 0
 fi
 
-
 ## Process options
-if [[ "$1" == "-n" || "$1" == "-nf" || "$1" == "-nc" ]]; then
-	source="current"
-fi
-if [[ "$1" == "-f" || "$1" == "-nf" ]]; then
-	compile="fast"
-fi
+# options -n :  use existing source, dont update FFfiles or change existing source
+#         -c :  select clean (slower) compile option
+#         -w :  FreeBSD: build world   (prompts to see if you want fast/clean for wbuild)
+#         -b :  FreeBSD: used nextboot facility to boot FFtest next, then revert after that
+
+# Defaults
+source="update"
+compile="fast"
+wbuild="no"
+nextb="no"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -n)
+        source="existing"
+        echo "  > setting FFsource to $source"
+        ;;
+    -c)
+        compile="clean"
+        echo "  > setting compile speed to $compile (ie slow)"
+        ;;
+    -w)
+        wbuild="yes"
+        echo "  > setting world build to $wbuild"
+        ;;
+    -b)
+        nextb="yes"
+        echo "  > setting nextboot to $nextb"
+        ;;
+  esac
+  shift
+done
+
+
+
 
 ## Select source Dir
 OS=`uname -s`
@@ -38,13 +57,13 @@ esac
 
 # Determine if will patch this kernel or not
 Based="$HOME/FFkernel_Work"
-if [[ "$source" == "current" ]]; then
+if [[ "$source" == "existing" ]]; then
 	echo "=== Will build and install the existing source $SourceDir for $OS ==="
 else	
 	echo "=== Will update FF source, copy it to source tree at $SourceDir for $OS, then build and install ==="
 	update_workingFFsource  # pass explicit argument here as a hack if not finding desired version
 	echo
-	#update_linuxSource -l		# a hack, dont do this unless it works for you
+	#update_linuxSource -l   # a hack, dont do this unless it works for you
 	echo "=============================================================="
 	cd $Based
 	move_into_srctree
@@ -52,7 +71,7 @@ fi
 
 ## Set up log files
 cp -f $Based/build.log $Based/build_backup.log
-rm $Based/build.log			# wipe log file to start afresh
+rm $Based/build.log                # wipe log file to start afresh
 
 
 pushd $SourceDir 
@@ -150,7 +169,6 @@ if [ $OS == "Linux" ]; then
 			#cp $SourceDir/.config $ConfigFile 
 		fi
 
-
 		echo
 		echo -e ${GRE}All good${CLE}, you can snapshot then reboot your new FFtest kernel with "shutdown -r now"
 	else
@@ -164,10 +182,12 @@ fi
 #-----------------------------------------------------------------------------#
 if [ $OS == "FreeBSD" ]; then
 
-if [ "$1" == "-w" ]; then
-	read -p "So you want to build the world? big job! risk it fast? [Ny] ?" ans
+if [ "$wbuild" == "yes" ]; then
+	make sysent > /dev/null         # regen syscalls before wbuild just in case
+	read -p "So you want to build the world? big job! risk it fast  ? [Ny] ?" ans
+	echo "Starting worldbuild at:   `date`"
 	if [ "$ans" == "y" ]; then
-		echo " Executing 'make -j2 -DNO_CLEAN buildworld'"
+		echo " Executing fast with 'make -j2 -DNO_CLEAN buildworld'"
 		make -j2  -DNO_CLEAN buildworld > $Based/buildworld.log
 	else
 		echo " Ok slow it is: executing 'make -j2  buildworld'"
@@ -178,34 +198,40 @@ else
 fi
 
 if [ $? -eq 0 ]; then    # if previous command exits with success
-	if [ "$1" == "-w" ]; then
+	if [ "$wbuild" == "yes" ]; then
 		tail -3 $Based/buildworld.log
 		echo Buildworld successful!
 		echo
 	fi
 
-	if [[ "$1" == "-c" || "$1" == "-nc" || "$1" == "-w" ]]; then
-		echo "Now trying to build clean, executing 'make sysent' then 'make -j2  buildkernel KERNCONF=FFCLOCK'"
-		make sysent
+	echo "Starting kernel build at:   `date`"
+	echo "Executing make sysent"
+	make sysent
+	grep ffclock /usr/src/sys/sys/syscall.h
+	grep ffclock /usr/src/lib/libc/include/compat.h
+	if [ "$compile" == "clean" ]; then
+		echo "Now trying to build clean, executing: 'make -j2  buildkernel KERNCONF=FFCLOCK'"
 		make -j2  buildkernel KERNCONF=FFCLOCK > $Based/build.log
 	else
-		echo "Now trying to build fast, executing 'make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK'"
+		echo "Now trying to build fast, executing: 'make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK'"
 		make -j2 -DNO_CLEAN buildkernel KERNCONF=FFCLOCK > $Based/build.log
 	fi
 
 	if [ $? -eq 0 ]; then    # if previous command exits with success
-		tail -3 $Based/build.log 
-		#if [ "$1" == "-w" ]; then
-		if [ "-w" == "-w" ]; then
+		tail -3 $Based/build.log
+		if [ "$nextb" == "no" ]; then
 			echo Build successful, now executing 'make installkernel KERNCONF=FFCLOCK'
 			make installkernel KERNCONF=FFCLOCK		> $Based/install.log
-			echo All good, you can snapshot then reboot
+			echo All good, you can snapshot if needed then reboot
 		else
 			echo Build successful, now executing 'make installkernel KERNCONF=FFCLOCK  KODIR=/boot/FFtest'
 			make installkernel KERNCONF=FFCLOCK KODIR=/boot/FFtest	> $Based/install.log
 			nextboot -k FFtest
 			echo
 			echo All good, you can snapshot then reboot your new FFtest kernel [should fallback to this one if fails]
+		fi
+		if [ "$wbuild" == "yes" ]; then
+			echo "** You did a world build, so boot into single-user mode and run root/install_world first"
 		fi
 	else
 		echo
@@ -218,5 +244,5 @@ fi
 
 fi		# OS=FreeBSD
 #-----------------------------------------------------------------------------#
-
+date
 popd

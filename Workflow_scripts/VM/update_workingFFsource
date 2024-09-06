@@ -108,19 +108,3 @@ echo "  rSyncing from  $FFsource  -->  "
 echo "                 $FFtarget"
 rsync  -aic $FFsource/*	$FFtarget
 #rsync $1  -aic $FFsource/{kern_{ffclock,tc}.c,subr_rtc.c,timeffc.h,bpf.{c,h},_ffcounter.h,if_*.c}	$FFtarget
-
-
-## Copy over some include header files
-case $OS in
-	FreeBSD)
-		Included="/usr/include"
-		echo "  Also copying header files into $Included"
-		\cp $FFtarget/{timeffc,_ffcounter}.h	$Included/sys/
-		\cp $FFtarget/bpf.h			$Included/net/;;
-	Linux)
-		Included="/usr/include"
-#		echo "  Also copying header files into $Included"
-#		\cp $FFtarget/ffclock.h	$Included/linux/
-		#Included="/usr/src/linux-source-$OSv/include/"
-		echo "  On Linux, not yet copying header files into $Included or anywhere else"
-esac
