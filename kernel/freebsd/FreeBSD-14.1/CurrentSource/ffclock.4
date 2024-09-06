@@ -1,0 +1,157 @@
+.\" Copyright (c) 2011 The University of Melbourne
+.\" All rights reserved.
+.\"
+.\" This documentation was written by Julien Ridoux and Darryl Veitch at the
+.\" University of Melbourne under sponsorship from the FreeBSD Foundation.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd Nov 30, 2023
+.Dt FFCLOCK 4
+.Os
+.Sh NAME
+.Nm FFCLOCK
+.Nd Feedforward system clock
+.Sh SYNOPSIS
+.Cd options FFCLOCK
+.Sh DESCRIPTION
+The
+.Xr ntpd 8
+daemon has been the dominant solution for system clock synchronization for many
+years, which has in turn influenced the design of the system clock.
+The ntpd daemon implements a feedback control algorithm which has been
+demonstrated to perform poorly in common use cases.
+.Pp
+Feedforward clock synchronization algorithms implemented by an appropriate
+daemon, in concert with the
+.Nm
+kernel support, have been shown to provide highly robust and accurate clock
+synchronization.
+In addition to time keeping, the
+.Nm
+kernel mechanism provides new timestamping capabilities and the ability to
+use specialized clocks. This includes one designed for the
+measurement of time differences which is extremely robust and accurate, for
+example offering nanosecond accuracy and below for packet round-trip times.
+Feedforward synchronization is also naturally suited for virtualised
+environments, reducing the overhead of timekeeping in guests and ensuring
+continued smooth operation of the system clock during guest live migration.
+.Pp
+The
+.Nm
+kernel support provides a feedforward compatible counter, feedforward
+timestamping functions within the kernel, system calls to support feedforward
+synchronization daemons
+.Po see
+.Xr ffclock 2
+.Pc ,
+and advanced packet timestamping support
+.Po see
+.Xr bpf 4
+.Pc .
+.Ss Kernel Options
+The following kernel configuration options are related to
+.Nm :
+.Pp
+.Bl -tag -width ".Dv FFCLOCK" -compact
+.It Dv FFCLOCK
+Enable feedforward clock support.
+.El
+.Ss Configuration
+When feedforward clock support is compiled into the kernel, two system
+clock families become available to choose from: the traditional FBclock (the
+default) and FFclock. System clock configuration is possible via the
+.Va kern.sysclock
+.Xr sysctl 8
+tree which provides the following variables:
+.Bl -tag -width "    " -offset indent
+.It Va kern.sysclock.active
+The system clock family that is currently serving time.
+Can be dynamically set to one of the available families, as given by
+.Va kern.sysclock.available
+.It Va kern.sysclock.available
+Lists the available system clock families
+.Po
+read-only
+.Pc .
+.El
+.Pp
+Within each clock family, variants of the underlying clock may be available. In
+the case of FFclock there are three: the underlying clock
+.Va natFFC
+that is directly synchronized by the FFclock daemon, a monotonized version
+.Va monoFFC
+of it
+.Po
+the system clock default, used in system timestamping functions
+.Pc , and the 'difference clock'
+.Va diffFFC ,
+available for accurate measurement of time
+difference over small time intervals
+.Po
+for example 1hr, beyond which it is better to use
+natFFC
+.Pc .
+.Pp
+Feedforward system clock configuration is possible via the
+.Va kern.sysclock.ffclock
+sysctl tree which provides the following variables:
+.Bl -tag -width "    " -offset indent
+.It Va kern.sysclock.ffclock.version
+Feedforward clock kernel version
+.Po
+read-only
+.Pc .
+.It Va kern.sysclock.ffclock.ffcounter_bypass
+Use direct reads of the chosen hardware timecounter when timestamping for
+latency reduction, rather than using the timecounter mechanism's
+re-synthesized version of the counter. This only applies when the native
+hardware counter is suitable for feedforward use, and direct access is
+available. It is currently supported only in the case of an invariant TSC.
+The origins of the native and timecounter-based versions of the counter are
+guaranteed to align.
+.El
+.Sh SEE ALSO
+.Xr clock_gettime 2 ,
+.Xr ffclock 2 ,
+.Xr bpf 4 ,
+.Xr timecounters 4 ,
+.Xr sysctl 8
+.Sh HISTORY
+Feedforward clock support first appeared in
+.Fx 10.0 .
+.Sh AUTHORS
+.An -nosplit
+The feedforward clock support was written by
+.An Julien Ridoux
+in collaboration with
+.An Darryl Veitch
+at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+It was later revised and extended by Darryl Veitch at the University of
+Technology Sydney.
+.Pp
+This manual page was written by
+.An Julien Ridoux
+and
+.An Lawrence Stewart Aq Mt lstewart@FreeBSD.org ,
+and updated by
+.An Darryl Veitch Aq Mt darryl.veitch@uts.edu.au .
