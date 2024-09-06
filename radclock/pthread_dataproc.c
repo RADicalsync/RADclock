@@ -736,8 +736,9 @@ preferred_RADclock(struct radclock_handle *handle, vcounter_t now)
 	struct bidir_algooutput *output;
 
 	/* Antichurn Filtering (set churn_scale to path_scale) */
-	if (RAD_DATA(handle)->phat * (now - handle->pref_date) < handle->conf->metaparam.path_scale)
-		return (handle->pref_sID);  // blocked, even pathpenalty update pointless
+	if (RAD_DATA(handle)->phat != DEFAULT_PHAT_INIT)  // if pref clock initialized
+		if (RAD_DATA(handle)->phat * (now - handle->pref_date) < handle->conf->metaparam.path_scale)
+			return (handle->pref_sID);  // blocked, even pathpenalty update pointless
 
 	/* Precalculate worst case drift per counter-period, using preferred server */
 	driftpertick = RAD_DATA(handle)->phat * handle->conf->metaparam.RateErrBOUND;
@@ -746,7 +747,9 @@ preferred_RADclock(struct radclock_handle *handle, vcounter_t now)
 	 * Untrusted candidates are excluded, but the current pref server is always
 	 * considered, thus the loop always returns a recommendation. If the pref
 	 * server is consistently untrusted then its gap will grow (untrusted stamps
-	 * are rejected), and ultimately be replaced.  */
+	 * are rejected), and ultimately be replaced.
+	 */
+	pp_curr = 0;  // signal an uninitialized s=0 clock, allowing it to be replaced
 	for (s=0; s < handle->nservers; s++) {
 		state  = &((struct bidir_algodata *)handle->algodata)->state[s];
 		if (state->stamp_i == -1) continue;    // no stamp for this server yet
@@ -785,7 +788,7 @@ preferred_RADclock(struct radclock_handle *handle, vcounter_t now)
 
 	/* Test if a new best server is sufficiently better to switch */
 	if (s_min != handle->pref_sID) {
-		if (pp_min < 0.8 * pp_curr) {  // apply improvement ratio "antichurn_fac"
+		if (pp_min < 0.8 * pp_curr || pp_curr == 0) {  // apply improvement ratio "antichurn_fac"
 			state = &((struct bidir_algodata *)handle->algodata)->state[s_min];
 			verbose(LOG_NOTICE, "New preferred clock %d has minRTT %3.1lfms at stamp %d"
 			    " (UTC %13.1Lf), with pathpenalty %3.1lfms being %3.1lf%% of old value %3.1lf",

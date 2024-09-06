@@ -519,8 +519,8 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	/* RADclock data. Initialize all to zero then override some members */
 	handle->rad_data = calloc(ns,sizeof(struct radclock_data));
 	for (s=0; s<ns; s++) {
-		handle->rad_data[s].phat       = 1e-9;
-		handle->rad_data[s].phat_local = 1e-9;
+		handle->rad_data[s].phat       = DEFAULT_PHAT_INIT;
+		handle->rad_data[s].phat_local = DEFAULT_PHAT_INIT;
 		handle->rad_data[s].status     = STARAD_UNSYNC | STARAD_WARMUP;
 	}
 
