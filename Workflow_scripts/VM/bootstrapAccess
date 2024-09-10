@@ -3,10 +3,10 @@
 ## Perform low level bootstrap of new machine, sufficient to allow
 #  ansible to take over with  bootstrap_node.yml
 #  Specifically, it must
-#	- enable root access via the given key
+#	 - enable root access via the given key
 #   - enable root to login remotely
 #  Needs to run on the machine itself !!  chicken and egg, how get the script there?
-$  For VMs, access via  V4_mountedfrom_Icaro/RADclock_mycurrent/Workflow_scripts/VM/bootstrapAccess
+#   V4_mountedfrom_Icaro/RADclock_mycurrent/Workflow_scripts/VM/bootstrapAccess
 
 if [ `id -u` -ne 0 ]; then
 	echo "Sorry `id -un`, this must be run as root"

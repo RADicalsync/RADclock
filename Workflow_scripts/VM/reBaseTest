@@ -24,6 +24,7 @@
 #   - pulls main always unless abort explicitly
 #   - attempts rebase in Tbranch unless abort explicitly
 #     - exits there ready for testing with  quick_FF_build -n
+#     - if trivial conflicts, fix with simple local edits to see if can compile afterward
 #
 #  Non-use cases:
 #    i) FF-only changed in CURRENT on master, tested with VM workflow on FFport
@@ -58,7 +59,7 @@
 #      If conflicts make it stop before completion, gives option to exit/forge-ahead.
 #
 ## Notes:
-#  - to repeat use currently must clean up manually:
+#  - to repeat use must clean up manually:
 #        git checkout FFPort
 #        git branch -D reBaseTest
 #

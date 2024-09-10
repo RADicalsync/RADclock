@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+
+# Run this in single-user mode immediately following a world build
+# Is required to install the new world just built
+# Afterward reboot to get the new system and kernel working together
+#
+OS=`uname -s`
+if [ $OS != "FreeBSD" ]; then
+	echo "Sorry, this script is only meant for FreeBSD at present, you are on $OS"
+	exit
+fi
+
+if [ `id -u` -ne 0 ]; then
+	echo "Sorry `id -un`, this must be run as root"
+	exit 0
+fi
+
+read -p "This should be run in single-user mode, proceed [Yn] ?" ans
+if [ "$ans" == "n" ]; then
+	echo "ok aborting"
+	freebsd-version -kru
+	uname -a
+	exit
+fi
+
+# Setup system
+fsck -p
+mount -u /              # in s-user filesystem is rdonly, this makes it writable
+sh /etc/rc.d/zfs start  # mount zfs filesystem (now src exists)
+mount
+#adjkerntz -i            # if CMOS is wall time             // was ok already
+
+# Proceed
+cd /usr/src
+etcupdate -p            # does minimal work needed by make installworld
+make installworld       # ~ 5mins
+etcupdate -B            # no user input needed if no conflicts, takes a minute
+
+# Cleanup
+yes| make delete-old
+yes| make delete-old-libs
+
+echo "Ready for reboot"

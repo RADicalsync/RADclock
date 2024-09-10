@@ -45,8 +45,8 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-#include <pcap.h>               // includes <net/bpf.h>
-//#include <net/bpf.h>            // not needed if just using tsmode presets in radclock.h
+#include <net/bpf.h>  // ensures correct bpf.h, that via pcap.h can be out of date
+//#include <pcap.h>     // includes <net/bpf.h>
 
 /* RADclock API and RADclock packet capture API */
 #include <radclock.h>           // includes <pcap.h>
@@ -59,11 +59,11 @@
 #define PCAP_TIMEOUT   15       // [ms]  Previous value of 5 caused huge delays
 
 /* bpf based KV detection */
-#define	BPF_KV             2.	// Define symbol, with default value
-#ifdef	BPF_T_FFC           	// KV≥3 detection
+#define	BPF_KV             2.  // Define symbol, with default value
+#ifdef	BPF_T_FFC              // KV≥3 detection
 #define	BPF_KV             3.
 #endif
-#ifdef	BPF_T_SYSC         	    // KV3bis detection
+#ifdef	BPF_T_SYSC             // KV3bis detection
 #define	BPF_KV             3.5
 #endif
 

@@ -1,0 +1,213 @@
+.\" Copyright (c) 2011 The University of Melbourne
+.\" All rights reserved.
+.\"
+.\" This documentation was written by Julien Ridoux and Darryl Veitch at the
+.\" University of Melbourne under sponsorship from the FreeBSD Foundation.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd Nov 30, 2023
+.Dt FFCLOCK 2
+.Os
+.Sh NAME
+.Nm ffclock_getcounter ,
+.Nm ffclock_getdata ,
+.Nm ffclock_setdata
+.Nd Retrieve feedforward counter, get and set the parameters defining the
+native feedforward clock.
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/timeffc.h
+.Ft int
+.Fn ffclock_getcounter "ffcounter *ffcount"
+.Ft int
+.Fn ffclock_getdata "struct ffclock_data *cdat"
+.Ft int
+.Fn ffclock_setdata "struct ffclock_data *cdat"
+.Sh DESCRIPTION
+The FFclock is an alternative method to synchronize the system clock.
+It implements a feedforward paradigm that decouples low level timestamping
+from the kernel timekeeping functions. This ensures that past clock errors do
+not affect current timekeeping, an approach radically different from the
+feedback alternative implemented by the ntpd daemon when adjusting the system
+clock. The feedforward approach has demonstrated better performance and higher
+robustness than a feedback approach when synchronising over the network.
+.Pp
+In the feedforward context, a
+.Em raw timestamp
+is a cumulative count of the increments of a timecounter of suitable width
+.Po
+at least 64 bits
+.Pc ,
+that can be converted into UTC when needed by using the feedforward
+.Em clock data
+held in the kernel, that is periodically updated by a suitable FFclock daemon.
+.Pp
+The
+.Fn ffclock_getcounter
+system call allows the calling process to retrieve the current value of a
+feedforward counter maintained by the kernel.
+.Pp
+The
+.Fn ffclock_getdata
+and
+.Fn ffclock_setdata
+system calls allow the caller to respectively get and set the kernel's
+native feedforward clock parameters.
+The
+.Fn ffclock_setdata
+system call should be invoked by a single instance of a feedforward
+synchronization daemon.
+The
+.Fn ffclock_getdata
+system call can be called by any process to retrieve the current value of the
+parameters.
+.Pp
+It is not necessary to use the get/set system calls to use the clock, as
+detailed below.
+Furthermore if bypass mode is active, system calls can also be avoided for the
+reading of the ffcounter itself.
+.Pp
+The native clock parameter data structure pointed to by
+.Fa cdat
+is defined in
+.In sys/timeffc.h
+as:
+.Bd -literal
+struct ffclock_data {
+  struct bintime  update_time;       /* FFclock time of last update */
+  ffcounter       update_ffcount;    /* Counter value at last update */
+  ffcounter       leapsec_expected;  /* Estimated counter value of next leap. */
+  uint64_t        period;            /* Counter period estimate [2^-64 s]. */
+  uint32_t        errb_abs;          /* Bound on absolute clock error [ns]. */
+  uint32_t        errb_rate;         /* Bound on rel. counter period err [ps/s]. */
+  uint32_t        status;            /* Clock status. */
+  uint16_t        secs_to_nextupdate;/* Estimated wait til next update [s]. */
+  int8_t          leapsec_total;     /* Sum of leapsecs seen since clock start. */
+  int8_t          leapsec_next;      /* Next leap second (in {-1,0,1}) */
+};
+.Ed
+.Pp
+Only the super-user may set the feedforward clock data.
+.Sh RETURN VALUES
+.Rv -std
+.Sh ERRORS
+The following error codes may be set in
+.Va errno :
+.Bl -tag -width Er
+.It Bq Er EFAULT
+The
+.Fa ffcount
+or
+.Fa cdat
+pointer referenced invalid memory.
+.It Bq Er EPERM
+A user other than the super-user attempted to set the FFclock data.
+.El
+.Sh USAGE
+There are several ways to use the features and clocks made available by the
+FFclock family.
+.Pp
+The simplest uses the ffclock sysctl interface
+.Va kern.ffclock
+to set the system clock to use the FFclock family rather than the traditional
+FBclock family. Then normal absolute time
+functions (both in the kernel and in userland) will be derived from the FFclock.
+Specifically, timetamps based on the monoFFC clock will be returned.
+This setting affects the entire system and so a feedforward synchronization
+daemon should be running.
+.Pp
+Another use is in packet timestamping. If a FFclock daemon is running, then
+regardless of which clock family is serving system time, the sysclock and
+FFclock bpf support allows any kind of timestamp, from any clock of either clock
+family, to be obtained by passing an appropriate timestamp descriptor
+.Po see
+.Xr bpf 4
+.Pc .
+In this way userland programs can receive timestamps based on any of the three
+kernel FFclocks: natFFC, monoFFC, and diffFFC
+.Po see
+.Xr ffclock 2
+.Pc .
+It is also possible for different applications monitoring the same packets to
+request different timestamps
+.Po
+in addition to raw timestamps
+.Pc ,
+for example one using natFCC in bintime format,
+and another using FBclock in microtime format, based on a single shared
+underlying raw timestamp marking the packet event. This scales to any number of
+taps as the raw timestamp and clock states are captured once only and reused,
+and so the delivered timestamps are unaffected by subsequent latency or tap
+access order.
+.Pp
+A third approach is less automated but more flexible. It consists of obtaining
+raw timestamps and using the contemporaneous FFclock parameters to calculate
+the UTC timestamp of the FFclock (specifically the natFFC clock), and/or to
+calculate the time interval in seconds between two events using the FFclock
+difference clock. These are simple affine functions easily calculated
+in floating point arithmetic in userland.
+The raw timestamps could be given
+externally, or obtained from the kernel via either bpf or
+.Nm ffclock_getcounter ,
+or directly in bypass mode.
+The clock parameters could be obtained via
+.Fn ffclock_getdata ,
+or
+.Po
+preferred
+.Pc
+by interfacing with the daemon, given a suitable library.
+This method allows converting timestamps using different clock models as needed
+by the application, while collecting meaningful upper bounds on current clock
+error, and could be done in post processing if needed clock parameters and
+raw timestamps are stored.
+.Sh SEE ALSO
+.Xr date 1 ,
+.Xr adjtime 2 ,
+.Xr clock_gettime 2 ,
+.Xr ctime 3 ,
+.Xr bpf 4 ,
+.Xr ffclock 4
+.Sh HISTORY
+Feedforward clock support first appeared in
+.Fx 10.0 .
+The
+.Fn ffclock_getdata
+and
+.Fn ffclock_setdata
+system calls were named
+.Fn ffclock_getestimate
+and
+.Fn ffclock_setestimate
+prior to
+.Fx 15 .
+.Sh AUTHORS
+.An -nosplit
+The feedforward clock support was written by
+.An Julien Ridoux
+in collaboration with
+.An Darryl Veitch
+at the University of Melbourne under sponsorship from the FreeBSD Foundation.
+It was later revised and extended by Darryl Veitch at the University of
+Technology Sydney (darryl.veitch@uts.edu.au).

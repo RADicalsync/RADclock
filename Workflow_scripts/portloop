@@ -50,6 +50,11 @@
 # Once used, "retrack" (run in the VM) continues the tracking process on master
 # without any further loops.
 #
+# The TipOfSpear parameter is used to support use of a bleeding edge
+# CURRENT for O+ that is not on master. The idea is to set it to where
+# the tipofspear is in a testrepo to generate the best possible port,
+# but in the realrepo to apply that final port on master as required.
+#
 # The only files ever added for commit are those in the destination NewFF dir.
 # It is safe to use portloop without touching other uncommitted changes on master.
 #
@@ -69,9 +74,10 @@ RealRepo="$Home/RADclock_mycurrent"
 TestRepo="$Home/TestingGround/PortloopRepo"
 
 # Input parameters
-Repo=$TestRepo      # select from {Real,Test}Repo
+Repo=$RealRepo      # select from {Real,Test}Repo
 SeedingCURRENT="n"  # if loop is to re-seed tracking of FreeBSD CURRENT
-OS='freebsd'          # select from {freebsd,linux}
+TipOfSpear="master" # branch where the latest CURRENT lives, if not master
+OS='freebsd'        # select from {freebsd,linux}
 Oorigin="VM"        # Linux only: distinguish between Earthly or VM origin of O version
 Norigin="VM"        # Linux only: distinguish between Earthly or VM origin of N version
 Old="4.19.235"      # O=Old is the current version to be advanced to N=New
@@ -83,9 +89,11 @@ New="14.0-CURRENT"
 Old="5.10.149"
 #New="5.10.179"
 New="6.1.27"
-Old="CURRENT"       # originally 14.0-CURRENT, renamed to match name in repo
+Old="CURRENT"       # assumes base CURRENT set correctly in OriginalFFfiles_Linux
 New="14.0"
-
+#
+Old="CURRENT"
+New="14.1"
 
 # Setup Repo where the loop will be created
 if [ "$Repo" == "$RealRepo" ]; then
@@ -101,8 +109,9 @@ else
 		rm -rf $TestRepo
 		mkdir $TestRepo
 		cd $TestRepo
-		git clone $RealRepo .		# get latest commit, but nth modified in the WD
-		git remote remove origin
+		git clone $RealRepo .      # get latest commit, but nth modified in the WD
+		git checkout $TipOfSpear   # this is bleeding edge where O+ can be found
+		# git remote remove origin
 	else
 		echo "Phase 2 of Loop port will continue in existing TestRepo $Repo"
 	fi
@@ -115,30 +124,32 @@ cd $Repo	# to test, pretend you are running it in a real repo, except artifacts 
 #   Could check it out, but would involve more work to copy it, then go back to Head.
 if [ $OS == "linux" ]; then
 	if [[ "$Oorigin" == "VM" ]]; then
-		OldOrig="$Home/OriginalFFfiles_Linux/$Old/"					# O
+		OldOrig="$Home/OriginalFFfiles_Linux/$Old/"               # O
 	else
-		OldOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$Old/"	# O
+		OldOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$Old/" # O
 	fi
 	if [[ "$Norigin" == "VM" ]]; then
-		NewOrig="$Home/OriginalFFfiles_Linux/$New/"					# N
+		NewOrig="$Home/OriginalFFfiles_Linux/$New/"               # N
 	else
-		NewOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$New/"	# N
+		NewOrig="$RealRepo/artifacts/kernelsourcefiles/deb-$New/" # N
 	fi
-	OD=$Old			# dir of existing      ported FFfiles for O
-	ND=$New			# dir where will place ported FFfiles for N
+	OD=$Old      # dir of existing      ported FFfiles for O
+	ND=$New      # dir where will place ported FFfiles for N
 else
-	OldOrig="$Home/OriginalFFfiles_FreeBSD/$Old/"		# O
-	NewOrig="$Home/OriginalFFfiles_FreeBSD/$New/"		# N
-	OD="FreeBSD-$Old"
+	OldOrig="$Home/OriginalFFfiles_FreeBSD/$Old/"   # O
+	NewOrig="$Home/OriginalFFfiles_FreeBSD/$New/"   # N
+
+	OD="FreeBSD-$Old"       # name mirrors name of NewOrig dir
+
 	if [[ "$SeedingCURRENT" == "n" ]]; then
-		ND="FreeBSD-$New"       # neme mirrors name of NewOrig dir
+		ND="FreeBSD-$New"       # name mirrors name of NewOrig dir
 	else
 		ND="FreeBSD-CURRENT"    # only one CURRENT tracking dir, name not versioned
 		echo "** You are looping to re-start tracking of CURRENT, a special case. Target dir is $ND ***"
 	fi
 fi
-OldFF="kernel/$OS/$OD/CurrentSource/"					# O+
-NewFF="kernel/$OS/$ND/CurrentSource/"					# N+
+OldFF="kernel/$OS/$OD/CurrentSource/"              # O+
+NewFF="kernel/$OS/$ND/CurrentSource/"              # N+
 
 
 # Test inputs
@@ -214,8 +225,8 @@ currbranch=`git status |head -1 |cut -d' ' -f3`
 if [ "$1" == "" ]; then
 
 	if [ $currbranch != "master" ]; then
-		echo "Branch is $currbranch, needs to be master!"
-		abort="True"
+		read -p "** Branch is $currbranch, not master, happy with that [Yn] ? " ans
+		[[ "$ans" == "n" ]] && abort="True"
 	fi
 	git branch |grep "$loopbranch" > /dev/null
 	if [ $? -eq 0 ]; then
@@ -374,9 +385,9 @@ else
 	fi
 
 	echo
-	echo -e "${BLU}=========== Closing Loop -- Merge to master ==========${CLE}"
+	echo -e "${BLU}=========== Closing Loop -- Merge to $TipOfSpear ==========${CLE}"
 	# checkout should work even if uncommitted changes (outside NewFF): they won't be merged
-	git checkout master
+	git checkout $TipOfSpear
 	SM="Merge commit of branch $loopbranch : Port of $OS FFcode from $Old to $New."
 	if [[ "$SeedingCURRENT" == "n" ]]; then
 		git merge --no-ff  $loopbranch	-m"$SM"	# insist on a MC, even though not necessary

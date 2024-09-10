@@ -44,8 +44,8 @@
 #include <net/ethernet.h>
 #include <arpa/inet.h>
  
-#include <pcap.h>          // includes <net/bpf.h>
-//#include <net/bpf.h>     // not needed if just using tsmode presets in radclock.h
+#include <net/bpf.h>  // ensures correct bpf.h, that via pcap.h can be out of date
+//#include <pcap.h>          // includes <net/bpf.h>
 
 /* RADclock API and RADclock packet capture API */
 #include <radclock.h>      // includes <pcap.h>
