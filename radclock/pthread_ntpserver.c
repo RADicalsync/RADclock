@@ -335,7 +335,7 @@ thread_ntp_server(void *c_handle)
 							for (int s=0; s < handle->nservers; s++) {
 								NTC_id = handle->conf->time_server_ntc_mapping[s];
 								if ( NTC_id > 0 && icn_status & (1ULL << NTC_id) )
-									inband_trust |= (1ULL << s);	// if bit set, copy in
+									inband_trust |= (1ULL << s);    // if bit set, copy in
 							}
 							handle->servertrust = inband_trust;
 							verbose(VERB_DEBUG, "NTPserver: received inband ICN status: 0x%llX, "

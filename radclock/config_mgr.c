@@ -167,6 +167,7 @@ config_init(struct radclock_config *conf)
 	conf->metaparam.offset_ratio   = OFFSET_RATIO_GOOD;
 	conf->metaparam.plocal_quality = PLOCAL_QUALITY_GOOD;
 	conf->metaparam.path_scale     = DEFAULT_PATH_SCALE;  // in conf, but EXCluded from conf file
+	conf->metaparam.relasym_bound_global = DEFAULT_RELASYM_BOUND_GLOBAL; // "
 	conf->phat_init                = DEFAULT_PHAT_INIT;
 	conf->asym_host                = DEFAULT_ASYM_HOST;
 	conf->asym_net                 = DEFAULT_ASYM_NET;

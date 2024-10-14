@@ -254,8 +254,9 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
 
 				struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
 				double uA = state->Asymhat; // (float)(rand()%1000) * 0.001;
-				double err_bound = handle->rad_data[sID].ca_err;
-				double min_RTT   = handle->rad_error[sID].min_RTT; //;handle->ntp_server[sID].minRTT;
+				double err_bound = handle->rad_error[sID].error_bound;
+				double min_RTT   = handle->rad_error[sID].min_RTT;    // ;handle->ntp_server[sID].minRTT;
+
 				double clockErr = 0;
 				if (handle->conf->is_tn)
 					clockErr= ((struct bidir_perfdata *)(handle->perfdata))->state[sID].RADerror;

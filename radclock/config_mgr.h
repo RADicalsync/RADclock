@@ -89,14 +89,15 @@
 #define DEFAULT_SERVER_VM_UDP    BOOL_OFF    // Don't Start VM servers
 #define DEFAULT_SERVER_XEN       BOOL_OFF
 #define DEFAULT_SERVER_VMWARE    BOOL_OFF
-#define DEFAULT_ADJUST_FFCLOCK   BOOL_ON       // Normally a FFclock daemon !
-#define DEFAULT_ADJUST_FBCLOCK   BOOL_OFF      // Not normally a FBclock daemon
-#define DEFAULT_NTP_POLL_PERIOD  16            // 16 NTP pkts every [s]
+#define DEFAULT_ADJUST_FFCLOCK   BOOL_ON     // Normally a FFclock daemon !
+#define DEFAULT_ADJUST_FBCLOCK   BOOL_OFF    // Not normally a FBclock daemon
+#define DEFAULT_NTP_POLL_PERIOD  16          // 16 NTP pkts every [s]
 #define DEFAULT_PHAT_INIT        1.e-9
 #define CONFIG_PLOCAL_QUALITY    36
-#define DEFAULT_PATH_SCALE       (5*3600)      // [s] in conf, but EXCluded from conf file
-#define DEFAULT_ASYM_HOST        0.0           // [mus]
-#define DEFAULT_ASYM_NET         0.0           // [mus]
+#define DEFAULT_PATH_SCALE       (5*3600)    // [s] in conf, but EXCluded from conf file
+#define DEFAULT_RELASYM_BOUND_GLOBAL 0.2     //     in conf, but EXCluded from conf file
+#define DEFAULT_ASYM_HOST        0.0         // [mus]
+#define DEFAULT_ASYM_NET         0.0         // [mus]
 #define DEFAULT_HOSTNAME         "platypus2.tklab.feit.uts.edu.au"
 #define DEFAULT_TIME_SERVER      "tock.une.edu.au"
 #define DEFAULT_NETWORKDEV       "em0"

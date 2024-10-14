@@ -87,9 +87,11 @@ struct bidir_metaparam {
 	double RateErrBOUND;
 	double BestSKMrate;
 	/* algo meta-parameters */
-	int offset_ratio;       // used in setting of state->Eoffset
-	double plocal_quality;  // used in setting of state->Eplocal_qual
-	double path_scale;      // [s] comparison scale used in preferred server code
+	int offset_ratio;             // used in setting of state->Eoffset
+	double plocal_quality;        // used in setting of state->Eplocal_qual
+	/* path meta-parameters */
+	double path_scale;            // [s] comparison scale used in pref-server code
+	double relasym_bound_global;  // used in pathpenalty metric
 };
 
 
