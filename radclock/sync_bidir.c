@@ -2176,7 +2176,7 @@ void process_thetahat_full(struct bidir_metaparam *metaparam, struct bidir_algos
  *
  * The three components are designed to be approximately decoupled, focussed
  * on different types of impacts :
- *  Pbase:    average overall environment  (insensitive to BL shifts and quality]
+ *  Pbase:    basic environment (insensitive to BL shifts and quality)
  *  Pchange:  quantifying a bound on the asymmetry-error impact of BL shifts
  *  Pquality: dynamic performance of rAdclock, given the base and irrespective of
  *            asymmetry, incorporating path congestion and stamp availability
@@ -2185,11 +2185,12 @@ void process_thetahat_full(struct bidir_metaparam *metaparam, struct bidir_algos
  * error or a clock error bound, which are hard to estimate and therefore would
  * not be a robust choice for the important task of preferred server selection.
  * However in some circumstances pathpenalty's components do correspond to
- * an estimated clock error bound. For example Pbase is an average bound on worse case
- * path asymmetry error. Under persistent starvation Pquality bounds worst case
- * drift that will dominate pathpenalty, and then be understood as a bound on
- * the clock error. Pathpenalty can be thought of as an "error risk" metric
- * that reflects risks from all the main sources of clock error.
+ * an estimated clock error bound. For example Pbase is a bound on the
+ * in-practice worse case path asymmetry error. Under persistent starvation
+ * Pquality bounds worst case drift that will dominate pathpenalty, and
+ * then be understood as a bound on the clock error.
+ * Pathpenalty can be thought of as an "error risk" metric that reflects
+ * risks from all the main sources of clock error.
  *
  * Notes on stampgap definition and treatment
  *  - a stampgap processed internally here once a new stamp finally arrives
@@ -2211,9 +2212,9 @@ void process_thetahat_full(struct bidir_metaparam *metaparam, struct bidir_algos
  *    to changing path conditions, and to avoid jitter from most source
  *  - but small enough so no long wait to move to clearly better alternative
  *  - complicated to automate: going with expert setting around 5hrs
- * Context: time to drift 1ms ~ 3hrs;
+ * Context: time to drift 1ms ~ 3hrs (@ excellent 1e-7 rate)
  *   (small,classic,typical,max) shiftwin: 100samples @ pp=1,16,64,1024) ~ (1.7m,27m,1.8h,28h)
- */
+ * */
 static void
 update_pathpenalty_full(struct bidir_metaparam *metaparam, struct bidir_algostate* state,
     struct bidir_stamp *stamp, struct bidir_algooutput *output)
@@ -2231,7 +2232,7 @@ update_pathpenalty_full(struct bidir_metaparam *metaparam, struct bidir_algostat
 	 *  sRh = (1-al)sRh + al*RTThat  [ state variable is sRh = state->Pbase ]
 	 * Purely a fn of RTThat timeseries (except for phat conversion) */
 	state->Pbase *= 1 - alpha;
-	state->Pbase += alpha * state->RTThat * state->phat;
+	state->Pbase += alpha * state->phat * state->RTThat * metaparam->relasym_bound_global;
 
 
 	/* Pchange
@@ -2445,7 +2446,7 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 	*    plocal:       just copies phat
 	*    thetahat:     simple on-line weighted average with aging
 	*                  no sanity checking
-	*    pathpenality: just copies the current minRTT
+	*    pathpenality: simple based off the current minRTT
 	*
 	* FULL ALGO Initialization :  i=warmup_win-1
 	*  Initialization of on-line components of all full sub-algos
@@ -2467,7 +2468,7 @@ RADalgo_bidir(struct radclock_handle *handle, struct bidir_algostate *state,
 		process_phat_warmup(state, RTT, warmup_winratio);
 		state->plocal = state->phat;
 		process_thetahat_warmup(metaparam, state, stamp, rad_data, RTT, output);
-		output->pathpenalty = state->RTThat * state->phat;
+		output->pathpenalty = state->RTThat * state->phat * metaparam->relasym_bound_global;
 		// TODO: review UNSYNC un/re-setting in general, should be more quality based
 		if (state->stamp_i >= NTP_BURST)
 			DEL_STATUS(rad_data, STARAD_UNSYNC);

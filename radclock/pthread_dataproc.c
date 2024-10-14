@@ -697,7 +697,7 @@ serverIPtoID(struct radclock_handle *handle, char *server_ipaddr)
  * Since pathpenalty cannot be updated inbetween stamp arrivals, this function
  * tracks the gap since the last update and uses it to inflate state->pathpenalty.
  * This ensures in particular that during extended starvation of the
- * preferred clock, it will eventually drift out of contention and be replaced.
+ * preferred clock it will eventually drift out of contention and be replaced.
  *
  * The result of the quality assessment is subject to two anti-churn measures.
  * A recommended switching of the preferred server is inhibited when
@@ -706,10 +706,14 @@ serverIPtoID(struct radclock_handle *handle, char *server_ipaddr)
  * Together these prevent recomendation churn when servers have similar qualities,
  * and provide robustness to inadequacies in the pathpenalty evaluation.
  * Thus the final recommendation is not dependent on a high accuracy of pathpenalty.
+ * The antichurn timescale aspect can be disabled via ANTICHURN_ACTIVE,
+ * but verbosity will still indicate when it would have applied.
  *
  * << Stamp gap notes >>
  * Gaps commence immediately after the last stamp, no poll period subtracted.
- * Differs from starvation code in that "starvation"
+ * They are similar to starvation in that they refer to gaps in valid stamps
+ * seen by the ALGO, regardless of cause (unavailability, loss, trust, insanity).
+ * It differs from starvation code in that "starvation"
  *  - only operates when running live
  *  - crucially, it operates even if no stamp received from Any server
  *  - is for verbosity and status flag only, not used by the algo
@@ -724,21 +728,32 @@ serverIPtoID(struct radclock_handle *handle, char *server_ipaddr)
  *    but in that case pref selection is not required, and in the starvation
  *    case, there is no standard means to report the growing pathpenalty either.
  */
+ /* Global setting for use of antichurn mechanism  */
+# define ANTICHURN_ACTIVE 1    //  {0,1} = {inactive, active}
+
 static int
 preferred_RADclock(struct radclock_handle *handle, vcounter_t now)
 {
-	int trusted;
+	int trusted, blockupdate;
 	double pathpenalty, pp_min, pp_curr;  // path metric [s] to minimize
 	int s_min = -1;              // serverID of pp_min
 	double driftpertick;         // convenience
-	int s;
+	int s, s_pref;
 	struct bidir_algostate *state;
 	struct bidir_algooutput *output;
 
+	s_pref = handle->pref_sID;
+
+	/* RTThat Quality control */
+	int qual_win = MAX(NTP_BURST, 20);  // implies insisting on at least qual_window+1 before acting
+
 	/* Antichurn Filtering (set churn_scale to path_scale) */
-	if (RAD_DATA(handle)->phat != DEFAULT_PHAT_INIT)  // if pref clock initialized
+	blockupdate = 0;
+	state = &((struct bidir_algodata *)handle->algodata)->state[s_pref];
+	if (state->stamp_i >= qual_win )    // if pref clock adequate
 		if (RAD_DATA(handle)->phat * (now - handle->pref_date) < handle->conf->metaparam.path_scale)
-			return (handle->pref_sID);  // blocked, even pathpenalty update pointless
+			blockupdate = 1;            // note here but use later (enables greater verb)
+//			return (s_pref);  // efficient to block here, even pathpenalty update pointless
 
 	/* Precalculate worst case drift per counter-period, using preferred server */
 	driftpertick = RAD_DATA(handle)->phat * handle->conf->metaparam.RateErrBOUND;
@@ -748,11 +763,18 @@ preferred_RADclock(struct radclock_handle *handle, vcounter_t now)
 	 * considered, thus the loop always returns a recommendation. If the pref
 	 * server is consistently untrusted then its gap will grow (untrusted stamps
 	 * are rejected), and ultimately be replaced.
+	 * Important caveat: the PSS system is founded on reliable RTThat. Exclude
+	 * individual servers with fewer than a critical minimum number of processed,
+	 * and refuse to act until a corressponding expected aggregate are received.
 	 */
 	pp_curr = 0;  // signal an uninitialized s=0 clock, allowing it to be replaced
+	int stampsinplay = 0;  // aggregate stamp count for servers in play
 	for (s=0; s < handle->nservers; s++) {
 		state  = &((struct bidir_algodata *)handle->algodata)->state[s];
-		if (state->stamp_i == -1) continue;    // no stamp for this server yet
+
+		/* Insist on minimal RTThat quality, and viable phat requiring ≥2 stamps */
+		if ( (int)(state->stamp_i + 1) < qual_win) continue;
+		stampsinplay += state->stamp_i + 1;
 
 		output = &((struct bidir_algodata *)handle->algodata)->output[s];
 		trusted = ! (handle->servertrust & (1ULL << s));
@@ -763,11 +785,14 @@ preferred_RADclock(struct radclock_handle *handle, vcounter_t now)
 		/* Inflate algo-based penalty with drift bound over stampgap */
 		pathpenalty = output->pathpenalty + state->rawstampgap * driftpertick;
 
-		if (s == handle->pref_sID)
+		if (s == s_pref) {
 			pp_curr = pathpenalty;  // will need later
+			if ( !trusted )
+				verbose(VERB_DEBUG, "server sID=%d not trusted, yet is preferred", s);
+		}
 
 		/* Find best between the current preferred, and trusted alternatives */
-		if ( s == handle->pref_sID || trusted ) {
+		if ( s == s_pref || trusted ) {
 			if (s_min < 0) {  // first server seen, initialize to it
 				pp_min = pathpenalty;
 				s_min = s;
@@ -777,33 +802,66 @@ preferred_RADclock(struct radclock_handle *handle, vcounter_t now)
 					s_min = s;
 				}
 		} else
-			verbose(LOG_WARNING, "server %d not trusted, excluded from pref-server selection", s);
+			verbose(LOG_NOTICE, "server sID=%d not trusted, excluded from pref-server selection", s);
 	}
 
-	/* Safely blanket: should be impossible unless servers untrusted immediately */
-	if (s_min < 0) {
-		verbose(LOG_ERR, "No server passed checks, preferred server unchanged");
-		return (handle->pref_sID);
+	/* Quality test for candidate pool */
+	if (s_min < 0 || stampsinplay < qual_win * handle->nservers ) {
+		verbose(VERB_DEBUG, "Server pool too young/small, pref-server unchanged"
+		    "(%d stamps in play)", stampsinplay);
+		return (s_pref);
 	}
 
 	/* Test if a new best server is sufficiently better to switch */
-	if (s_min != handle->pref_sID) {
+	if (s_min != s_pref) {
+
 		if (pp_min < 0.8 * pp_curr || pp_curr == 0) {  // apply improvement ratio "antichurn_fac"
 			state = &((struct bidir_algodata *)handle->algodata)->state[s_min];
-			verbose(LOG_NOTICE, "New preferred clock %d has minRTT %3.1lfms at stamp %d"
-			    " (UTC %13.1Lf), with pathpenalty %3.1lfms being %3.1lf%% of old value %3.1lf",
-			    s_min, 1000*state->RTThat*state->phat, state->stamp_i, state->stamp.Tb,
+			verbose(LOG_NOTICE, "New preferred clock %d slated for adoption at stamp %d"
+			    " inflated pathpenalty %3.1lfms being %3.1lf%% of old value %3.1lf",
+			    s_min, state->stamp_i, state->stamp.Tb,
 			    1000*pp_min, 100*pp_min/pp_curr, 1000*pp_curr);
-			handle->pref_date = now;
-		} else {
-			trusted = ! (handle->servertrust & (1ULL << s_min));
-			if (!trusted)
-				verbose(LOG_NOTICE, "Warning, preferred clock %d no longer the"
-				    " best. It is retained, but not trusted", s_min);
-			return (handle->pref_sID);
+			verbose(LOG_NOTICE, "  NEW pref [%d]: minRTT %3.1lfms, pathpenalty %3.2lfms, "
+			    "components: [%3.1lf, %3.1lf, %3.1lf]ms", s_min,
+			    1000*state->RTThat*state->phat, 1000*pp_min,
+			    1000*state->Pbase, 1000*state->Pchange, 1000*state->Pquality);
+			state = &((struct bidir_algodata *)handle->algodata)->state[s_pref];
+			verbose(LOG_NOTICE, "  OLD pref [%d]: minRTT %3.1lfms, pathpenalty %3.2lfms, "
+			    "components: [%3.1lf, %3.1lf, %3.1lf]ms", s_pref,
+			    1000*state->RTThat*state->phat, 1000*pp_curr,
+			    1000*state->Pbase, 1000*state->Pchange, 1000*state->Pquality);
+
+			/* Apply anti-churn timescale blocking if enabled */
+			if (blockupdate)
+				if (ANTICHURN_ACTIVE) {
+					verbose(LOG_NOTICE, " ** New preferred clock %d suppressed by anti-churn **", s_min);
+					return (s_pref);
+				} else
+					verbose(VERB_DEBUG, " ** New preferred clock %d marked for anti-churn but accepted **", s_min);
+
+		} else {  // better, but not by enough to change
+			state = &((struct bidir_algodata *)handle->algodata)->state[s_pref];
+			verbose(VERB_DEBUG, "HeadsUp: preferred clock %d now bested by %d yet retained (%3.1lf%%)",
+			    s_pref, s_min, 100*pp_min/pp_curr);
+			verbose(VERB_DEBUG, "  CURR pref [%d]: minRTT %3.1lfms, pathpenalty %3.1lfms, "
+			    "components: [%3.1lf, %3.1lf, %3.1lf]ms", s_pref,
+			    1000*state->RTThat*state->phat, 1000*pp_curr,
+			    1000*state->Pbase, 1000*state->Pchange, 1000*state->Pquality);
+			state = &((struct bidir_algodata *)handle->algodata)->state[s_min];
+			verbose(VERB_DEBUG, "  BEST pref [%d]: minRTT %3.1lfms, pathpenalty %3.1lfms, "
+			    "components: [%3.1lf, %3.1lf, %3.1lf]ms", s_min,
+			    1000*state->RTThat*state->phat, 1000*pp_min,
+			    1000*state->Pbase, 1000*state->Pchange, 1000*state->Pquality);
+
+//			trusted = ! (handle->servertrust & (1ULL <<s_pref));
+//			if (!trusted)
+//				verbose(LOG_NOTICE, "Warning, preferred clock %d no longer the"
+//				    " best, and not trusted, yet is retained", s_pref);
+			return (s_pref);
 		}
 	}
 
+	/* No exceptions apply, simply return the best acceptable server */
 	return (s_min);
 }
 
@@ -950,7 +1008,7 @@ process_stamp(struct radclock_handle *handle)
 	laststamp = &algodata->laststamp[sID];
 	output    = &algodata->output[sID];
 	state     = &algodata->state[sID];
-	trusted = ! (handle->servertrust & (1ULL << s));
+	trusted = ! (handle->servertrust & (1ULL << sID));
 
 	/* If the stamp fails basic tests we won't endanger the algo with it, just exit
 	 * Lower level tests already performed in bad_packet_server() which
@@ -963,8 +1021,16 @@ process_stamp(struct radclock_handle *handle)
 	if (output->n_stamps > 0) {
 		/* Flag a change in this server's advertised NTP characteristics */
 		flag_serverchange(laststamp, &stamp, &qual_warning);
-		/* Check fundamental properties are satisfied */
-		if (insane_bidir_stamp(handle, &stamp, laststamp) || !trusted) {
+
+		/* Check fundamental properties required by algo are satisfied
+		 *  insane:  stamp errors that will break algo
+		 *  trust:   skip to be safe, but allow minimal pkts for basic RTThat viability
+		 */
+		if (insane_bidir_stamp(handle, &stamp, laststamp) || !trusted && output->n_stamps > NTP_BURST) {
+//			if (!trusted)
+//				verbose(VERB_DEBUG, "[%llu] stamp mistrusted from server "
+//				    "sID=%d, servertrust now 0x%llX, skipping it",
+//				    state->stamp_i, sID, handle->servertrust);
 			memcpy(laststamp, &stamp, sizeof(struct stamp_t));  // always record
 			return (0);    // a starved clock will remain starved
 		}
@@ -1061,13 +1127,16 @@ process_stamp(struct radclock_handle *handle)
 		pref_sID_new = preferred_RADclock(handle, stamp.st.bstamp.Tf);
 		if (pref_sID_new != handle->pref_sID) {
 			verbose(LOG_NOTICE, "Preferred clock changed from %d to %d",
-			     handle->pref_sID, pref_sID_new);
+			    handle->pref_sID, pref_sID_new);
 
 			// Apply asym management for continuity of absolute pref clock
 			// TODO: add asym parameter to state and incorporate into all Ca calls, in Algo and elsewhere.
 //			if (asym_manage_enable)  // create a handle->conf.asym_manage_enable member
 //				pref_asym_manage(handle, handle->pref_sID, pref_sID_new);
-			handle->pref_sID = pref_sID_new;    // register change
+
+			DEL_STATUS(RAD_DATA(handle), STARAD_SYSCLOCK);  // drop responsibility for FBclock sync
+			handle->pref_sID = pref_sID_new;
+			handle->pref_date = stamp.st.bstamp.Tf;
 		} else
 			if (sID != handle->pref_sID) pref_updated = 0;
 	}
