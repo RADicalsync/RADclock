@@ -223,10 +223,32 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
     struct bidir_stamp_perf *ptuple, int sID, int NTC_id,
     struct SHM_output *SHMoutput)
 {
-	/* Test code for SA detector */
 	int SA_detected = 0;
 
+	/* Parameter access */
+	struct bidir_metaparam *metaparam = &(handle->conf->metaparam);
 	struct bidir_perfdata *perfdata = handle->perfdata;
+	int pp = handle->conf->poll_period;
+	int ps = handle->conf->metaparam.path_scale;
+
+	/* Fake SA generation */
+	static int SAdur[32] = {0};  // duration of current fake SA event (per NTC node)
+	int lower, upper;            // SA-run run distribution limits [lower,upper] [s]
+	int switchtime;              // time [s] for starvation to trigger preference to non-local server
+	int triggertime;             // base timescale [s] at which next SA-runs are set to start
+	double probshort = 0.6;      // Pr{SA-run} is small
+	static int starting = 1;     // startup verb control
+
+	//  for both OCN_{SYD,BRI}  ICN_SYD-->ICN_MEL minRTT gap ~8.6ms
+	switchtime = 8.6/1000 * metaparam->relasym_bound_global / metaparam->RateErrBOUND;
+	triggertime = MAX(switchtime, ps);  // just beyond churnscale to enable actual switching
+	triggertime = 1.5*triggertime;      // margin controlling interactions due to `crowding`
+
+	if (starting) {
+		verbose(LOG_NOTICE, "Fake SA starting:  (switchtime, triggertime, {churn,path}scale) = (%d, %d, %d) [min]",
+		    switchtime/60, triggertime/60, ps/60);
+		starting = 0;
+	}
 
 	/* Recall NTC_id mapping (see config_mgr.h) :
 	 *   TN:  0
@@ -238,7 +260,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 	 * Impacts:
 	 *   TN:  ntc status word causes TN to change PICN, no impact on OCNs
 	 *        telemetry: SAs reported in NTC Central DB for all RAD nodes (OCN+TN)
-	 *  OCN:  icn status word causes OCNs to move PICN off SA-affected servers, post unsync status
+	 *  OCN:  icn status word causes OCNs to avoiding choising SA-affected servers, post unsync status
 	 *        this may feedback to the TN to stop using as a preferred server
 	 *        telemetry: icn status reported in OCN DBs  (all the same)
 	 */
@@ -246,24 +268,96 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 		case -1:  // Undefined
 			verbose(LOG_NOTICE, "SHM: Encountered an undefined NTC_id .");
 			break;
+		// ************************************* ICNs ****************************
 		case 1:  // SYD
-			SA_detected = ((state->stamp_i % (120*60/4)) ? 0 : 1);  // min*..
+			SA_detected = ((state->stamp_i % (triggertime/pp)) ? 0 : 1);  // stamp0 marked
+			if (SA_detected) {
+				if ( rand() < RAND_MAX * probshort )
+					SAdur[NTC_id] =  0.2*switchtime/pp;
+				else
+					SAdur[NTC_id] =  2.5*switchtime/pp;
+				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+			} else
+				if (SAdur[NTC_id] > 0) {
+					SAdur[NTC_id]--;
+					SA_detected = 1;    // flag SA still active
+				}
 			break;
 		case 2:  // MEL
-			SA_detected = ((state->stamp_i % (3*120*60/4)) ? 0 : 1);
+			if (state->stamp_i > 0)  // skip first trigger
+				SA_detected = ((state->stamp_i % (3*triggertime/4/pp)) ? 0 : 1);  // periodic SA-start trigger
+			if (SA_detected) {
+				if ( rand() < RAND_MAX * probshort )
+					SAdur[NTC_id] =  0.6*switchtime/pp;    // was 0.25*ps/pp
+				else
+					SAdur[NTC_id] =  2.0*switchtime/pp;
+				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu, using switchtime %d [s]",
+				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i, switchtime);
+			} else
+				if (SAdur[NTC_id] > 0) {
+					SAdur[NTC_id]--;
+					SA_detected = 1;    // flag SA still active
+				}
 			break;
 		case 3:  // BRI
 			break;
 		case 4:  // PER
-			SA_detected = ((state->stamp_i % (160*60/4 +3)) ? 0 : 1);
+			SA_detected = (((state->stamp_i + 3) % (160*60/pp)) ? 0 : 1);
+			if (SA_detected) {
+				lower =  1*60;    // absolute time setting for simplicity
+				upper =  20*60;
+				SAdur[NTC_id] = lower/pp + rand() % ((upper-lower)/pp + 1);  // initialize SA-lifetime counter [stamps]
+				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+			} else
+				if (SAdur[NTC_id] > 0) {
+					SAdur[NTC_id]--;
+					SA_detected = 1;    // flag SA still active
+				}
 			break;
 		case 5:  // ADL
-			SA_detected = ((state->stamp_i % (180*60/4 +5)) ? 0 : 1);
+			SA_detected = (((state->stamp_i + 10*60) % (2*triggertime/pp)) ? 0 : 1);
+			if (SA_detected) {
+				if ( rand() < RAND_MAX * (0.7) )  // need short more often to allow MEL to accept ADL
+					SAdur[NTC_id] =  0.3*switchtime/pp;
+				else
+					SAdur[NTC_id] =  2.5*switchtime/pp;
+				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+			} else
+				if (SAdur[NTC_id] > 0) {
+					SAdur[NTC_id]--;
+					SA_detected = 1;    // flag SA still active
+				}
 			break;
+		// ************************************* OCNs ****************************
 		case 16:  // OCN SYD
+			SA_detected = (((state->stamp_i + 30*60) % (3*triggertime/2/pp)) ? 0 : 1);  // stamp0 marked
+			if (SA_detected) {
+				if ( rand() < RAND_MAX * probshort )
+					SAdur[NTC_id] =  0.2*switchtime/pp;
+				else
+					SAdur[NTC_id] =  2.0*switchtime/pp;
+				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+			} else
+				if (SAdur[NTC_id] > 0) {
+					SAdur[NTC_id]--;
+					SA_detected = 1;    // flag SA still active
+				}
 			break;
 		case 17:  // OCN MEL
-			SA_detected = ((state->stamp_i % (110*60/4 +5)) ? 0 : 1);
+			SA_detected = ((state->stamp_i % (110*60/pp +5)) ? 0 : 1);   // stamp0 marked
+			if (SA_detected) {
+				SAdur[NTC_id] =  1*pp/pp;    // single stamp blip
+				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+			} else
+				if (SAdur[NTC_id] > 0) {
+					SAdur[NTC_id]--;
+					SA_detected = 1;    // flag SA still active
+				}
 			break;
 		default:  // other ICN, or an OCN
 			SA_detected = 0;
@@ -276,7 +370,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 	/* Update servertrust  [ warn yourself of the SA's discovered ]
 	 * TODO: this overrides the servertrust setting - to be reviewed */
 	if (state->SA != SA_detected) {
-		handle->servertrust &= ~(1ULL << sID);     // clear bit
+		handle->servertrust &= ~(1ULL << sID);    // clear bit
 		if (SA_detected)
 			handle->servertrust |= (1ULL << sID);  // set bit
 		verbose(VERB_DEBUG, "[%llu] Change in SA detection for server with "
@@ -286,9 +380,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 
 	/* Incorporate SA update in ntc_status word
 	 * Currently the existing status is simply overwritten by the new SA value.
-	 * TODO: make available to preferred_RADclock() and write smarter logic,
-	 *       would require wait for next packet before being actioned
-	 *   Is used for SA telemetry, and for icn_status sent to OCNs inband. */
+	 * Is used for SA telemetry, and for icn_status sent to OCNs inband. */
 	if (state->SA != SA_detected && NTC_id != -1) {
 		perfdata->ntc_status &= ~(1ULL << NTC_id);    // clear bit
 		if (SA_detected)

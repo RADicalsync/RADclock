@@ -94,7 +94,7 @@
 #define DEFAULT_NTP_POLL_PERIOD  16          // 16 NTP pkts every [s]
 #define DEFAULT_PHAT_INIT        1.e-9
 #define CONFIG_PLOCAL_QUALITY    36
-#define DEFAULT_PATH_SCALE       (5*3600)    // [s] in conf, but EXCluded from conf file
+#define DEFAULT_PATH_SCALE       (3*3600)    // [s] in conf, but EXCluded from conf file
 #define DEFAULT_RELASYM_BOUND_GLOBAL 0.2     //     in conf, but EXCluded from conf file
 #define DEFAULT_ASYM_HOST        0.0         // [mus]
 #define DEFAULT_ASYM_NET         0.0         // [mus]
