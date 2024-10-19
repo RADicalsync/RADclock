@@ -217,6 +217,10 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 
 /* Process the new SHM stamp (contained within the PERFstamp).
  * On entry stamp_i is already updated to this stamp.
+ * Fake SA generation
+ *   {SYD,MEL}:  event based to orchestrate 2-level changes in {SYD,BRI}_OCN
+ *   others:  simple periodic approach with some randomness for SA–run
+ *            durations for variety
  */
 void
 SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
@@ -232,21 +236,25 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 	int ps = handle->conf->metaparam.path_scale;
 
 	/* Fake SA generation */
-	static int SAdur[32] = {0};  // duration of current fake SA event (per NTC node)
+	static int SAdur[32] = {0};  // duration of current fake SA-run event (per NTC node)
+	static int jitterevent = 0, event2 = 0;  // control jitter event sequences and inter-event scheduling
 	int lower, upper;            // SA-run run distribution limits [lower,upper] [s]
+	int churnscale = ps;         // for greater clarity of intent, even if churnscale=pathscale
 	int switchtime;              // time [s] for starvation to trigger preference to non-local server
-	int triggertime;             // base timescale [s] at which next SA-runs are set to start
-	double probshort = 0.6;      // Pr{SA-run} is small
+	double probshort = 0.6;      // bernoulli parameter: Pr{SA-run} is small
 	static int starting = 1;     // startup verb control
 
-	//  for both OCN_{SYD,BRI}  ICN_SYD-->ICN_MEL minRTT gap ~8.6ms
-	switchtime = 8.6/1000 * metaparam->relasym_bound_global / metaparam->RateErrBOUND;
-	triggertime = MAX(switchtime, ps);  // just beyond churnscale to enable actual switching
-	triggertime = 1.5*triggertime;      // margin controlling interactions due to `crowding`
+	/* switchtime calibration
+	 * Based on OCN_{SYD,BRI} where both  ICN_SYD-->ICN_MEL minRTT gap is ~8.2ms
+	 * ∆PP = ∆Pquality + ∆Pchange  must be inflated by at least 1/0.8 to combat antichurn_fac=0.8,
+	 * and by more for BRI as absolute values larger.
+	 */
+	switchtime = (0.5 + 8.2*metaparam->relasym_bound_global)/1000/0.7  // ∆PP needed to trigger switch
+	     / metaparam->RateErrBOUND;     // map ∆PP to time required
 
 	if (starting) {
-		verbose(LOG_NOTICE, "Fake SA starting:  (switchtime, triggertime, {churn,path}scale) = (%d, %d, %d) [min]",
-		    switchtime/60, triggertime/60, ps/60);
+		verbose(LOG_NOTICE, "FakeSA starting:  (switchtime, churnscale, pathscale) = (%d, %d, %d) [min]",
+		    switchtime/60, churnscale/60, ps/60);
 		starting = 0;
 	}
 
@@ -268,38 +276,59 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 		case -1:  // Undefined
 			verbose(LOG_NOTICE, "SHM: Encountered an undefined NTC_id .");
 			break;
+
 		// ************************************* ICNs ****************************
 		case 1:  // SYD
-			SA_detected = ((state->stamp_i % (triggertime/pp)) ? 0 : 1);  // stamp0 marked
-			if (SA_detected) {
-				if ( rand() < RAND_MAX * probshort )
-					SAdur[NTC_id] =  0.2*switchtime/pp;
-				else
-					SAdur[NTC_id] =  2.5*switchtime/pp;
-				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
-				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
-			} else
-				if (SAdur[NTC_id] > 0) {
-					SAdur[NTC_id]--;
-					SA_detected = 1;    // flag SA still active
+			/* Trigger new jitterevent sequence
+			 * Start is delaying to allow natural PICN to be chosen initially, avoiding antiChurn block.
+			 * Inter-sequence gap can be selected here without impacting the sequences.
+			 */
+			if ( (((state->stamp_i + (6*8-1)*ps/8/pp) % (6*ps/pp)) ? 0 : 1) )
+				jitterevent = 1;
+			/* While jitter event active, execute on event order */
+			if (jitterevent) {
+				/* Event 1:  begin SA-run to trigger switch for clients {SYD,BRI}_OCN */
+				if ( jitterevent == 1 ) {
+					SAdur[NTC_id] = switchtime/pp;
+					verbose(VERB_DEBUG, "FakeSA: Event1: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+					    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
 				}
+				/* Event 2:  begin SA-run in MEL while it is Preferred, to trigger a switch once antiC releases */
+				if ( jitterevent == (switchtime + churnscale - 5*switchtime/4)/pp )
+					event2 = 1;
+				/* Event 3:  begin SA-run to block return to SYD when antiC expires, then end jitter event */
+				if ( jitterevent == (switchtime + churnscale - switchtime/2)/pp ) {
+					SAdur[NTC_id] = 3*switchtime/4/pp;  // straddle end of antiC period
+					verbose(VERB_DEBUG, "FakeSA: Event3: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+					    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+					jitterevent = 0;  // end jitter event
+				} else
+					jitterevent++;  // advance through event sequence
+			}
+			/* Play out existing SA-run even if jitter event over */
+			if (SAdur[NTC_id] > 0) {
+				SAdur[NTC_id]--;
+				SA_detected = 1;
+			}
 			break;
+
 		case 2:  // MEL
-			if (state->stamp_i > 0)  // skip first trigger
-				SA_detected = ((state->stamp_i % (3*triggertime/4/pp)) ? 0 : 1);  // periodic SA-start trigger
-			if (SA_detected) {
-				if ( rand() < RAND_MAX * probshort )
-					SAdur[NTC_id] =  0.6*switchtime/pp;    // was 0.25*ps/pp
-				else
-					SAdur[NTC_id] =  2.0*switchtime/pp;
-				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu, using switchtime %d [s]",
-				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i, switchtime);
-			} else
-				if (SAdur[NTC_id] > 0) {
-					SAdur[NTC_id]--;
-					SA_detected = 1;    // flag SA still active
+			/* While jitter event active, execute on event order */
+			if (jitterevent)
+				/* Event 2 action: */
+				if ( event2 ) { // timing controlled by SYD stamp grid
+					SAdur[NTC_id] = 7*switchtime/4/pp;    // longer than SYD trigger to help push BRI over and ensure overlap
+					verbose(VERB_DEBUG, "FakeSA: Event2: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+					    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+					event2 = 0;
 				}
+			/* Play out existing SA-run even if jitter event over */
+			if (SAdur[NTC_id] > 0) {
+				SAdur[NTC_id]--;
+				SA_detected = 1;
+			}
 			break;
+
 		case 3:  // BRI
 			break;
 		case 4:  // PER
@@ -308,7 +337,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 				lower =  1*60;    // absolute time setting for simplicity
 				upper =  20*60;
 				SAdur[NTC_id] = lower/pp + rand() % ((upper-lower)/pp + 1);  // initialize SA-lifetime counter [stamps]
-				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				verbose(VERB_DEBUG, "FakeSA: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
 				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
 			} else
 				if (SAdur[NTC_id] > 0) {
@@ -317,13 +346,13 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 				}
 			break;
 		case 5:  // ADL
-			SA_detected = (((state->stamp_i + 10*60) % (2*triggertime/pp)) ? 0 : 1);
+			SA_detected = (((state->stamp_i + 10*60) % (3*ps/pp)) ? 0 : 1);
 			if (SA_detected) {
 				if ( rand() < RAND_MAX * (0.7) )  // need short more often to allow MEL to accept ADL
 					SAdur[NTC_id] =  0.3*switchtime/pp;
 				else
 					SAdur[NTC_id] =  2.5*switchtime/pp;
-				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				verbose(VERB_DEBUG, "FakeSA: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
 				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
 			} else
 				if (SAdur[NTC_id] > 0) {
@@ -333,13 +362,13 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 			break;
 		// ************************************* OCNs ****************************
 		case 16:  // OCN SYD
-			SA_detected = (((state->stamp_i + 30*60) % (3*triggertime/2/pp)) ? 0 : 1);  // stamp0 marked
+			SA_detected = (((state->stamp_i + 30*60) % (9*ps/4/pp)) ? 0 : 1);
 			if (SA_detected) {
 				if ( rand() < RAND_MAX * probshort )
 					SAdur[NTC_id] =  0.2*switchtime/pp;
 				else
 					SAdur[NTC_id] =  2.0*switchtime/pp;
-				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				verbose(VERB_DEBUG, "FakeSA: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
 				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
 			} else
 				if (SAdur[NTC_id] > 0) {
@@ -351,7 +380,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 			SA_detected = ((state->stamp_i % (110*60/pp +5)) ? 0 : 1);   // stamp0 marked
 			if (SA_detected) {
 				SAdur[NTC_id] =  1*pp/pp;    // single stamp blip
-				verbose(VERB_DEBUG, "SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+				verbose(VERB_DEBUG, "FakeSA: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
 				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
 			} else
 				if (SAdur[NTC_id] > 0) {
