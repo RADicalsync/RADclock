@@ -1,84 +1,237 @@
 #!/usr/bin/env bash
 
-
-# TODO: make this script smarter, more automatic with checks and options,
-#  allowing more than one usage (eg recompile or not, relaunch dag capture or not)
-#  and checks with aborts if things not good.
+## Management of the dag capture and the use of dagstamp_gen to assemble
+#  dagstamps for sending to the Trustnode
+#
+# Script begins by examining state.
+# Options indicate which of available (mutually exclusive) actions to take.
+#
 
 # TODO: currently DAG captures all pkts! filename here is inaccurate but indicates what we need.
-#     Instead could use dagsnap to get srcIP and NTP filtering done on DAG,
-#     then pipe to dagconvert, similar to dag_capture.sh
 
-# Process options
-if [[ "$1" == "-c" ]]; then
-	capture="true"
+
+function usage () {
+cat << EOF
+Usage: `basename $0` [Parameters] [Options]  # no option examines state
+Parameters:
+       -f dagfile      overide default capture file
+       -i TrustNodeIP  overide default destination for dagstamp records
+Options:
+       -c           (re)start dag capture
+       -b           rebuild    dagstamp_gen
+       -r           (re)launch dagstamp_gen
+       -t           testing only (block sending if relaunch)
+       -h           usage
+       -v           verbose  (-vv more verbose)
+EOF
+	exit 1
+}
+
+# ------------------------------------------------------------------------------
+if [ $UID -ne 0 ]; then
+	echo "You are not root, self sudoing"
+	sudo $0 $*
+	exit 0
 fi
 
-## Parameters
+which dagdetect > /dev/null
+if [ $? -ne 0 ]; then
+	echo "ERROR: DAG tools not installed, can't do anything!"
+	exit 1
+fi
+
+OS=`uname -s`
+Host=`echo $HOSTNAME |cut -d'.' -f1`
+echo "-------------------------------------------------------------------------"
+echo "You are on $Host, running $OS"
+# ------------------------------------------------------------------------------
+
+## Parameter defaults
 RawCaptureFile="/tmp/trustnode_NTP.erf"             # currently a misnomer
 TrustNodeIP="10.0.0.55"    # platypus2
+Verblevel=""
+
+## Option defaults
+testing=""
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	# parameters
+		-f)
+			if [ $# -eq 1 ]; then usage; fi; shift   # move to required arg
+			RawCaptureFile=$1;;
+		-i)
+			if [ $# -eq 1 ]; then usage; fi; shift
+			TrustNodeIP=$1
+			echo "TrustNode reset to $TrustNodeIP";;
+	# options
+		-c)
+			capture="true";;
+		-b)
+			build="true";;
+		-r)
+			run="true";;
+		-t)
+			testing="-d";;
+		-v)
+			verbose="true"
+			Verblevel="-v";;
+		-vv)
+			verbose="true"
+			Verblevel="-vvv";;
+		-h)
+			usage
+			exit 1;;
+		*)
+			echo "Unrecognised option $1"
+			usage
+			exit 1;;
+	esac
+	shift
+done
+
+# Make sure we have the right input
+#if [ -z "$RawCaptureFile" ]; then usage; fi
+# ------------------------------------------------------------------------------
+
 
 ## DAGcard preparation
-# TODO: probably move out here into a dag setup script
-# After DAG machine reboot - possibly needed to run
-# dagconfig default
-# make -C /sys/modules/dag load
+echo ">>> Examine DAG setup"
+## Ensure DAG is up and ready
+hasDAG=$(dagdetect -c)
+if [ $hasDAG -ne 1 ]; then
+	echo "Couldn't find any DAG card, attempting to reload"
+	case $OS in
+		FreeBSD)
+			kldunload dag
+			make -C /sys/modules/dag load
+			dagconfig -d0 default;;
+		Linux)
+			dagload;;      # already initializes
+	esac
+	hasDAG=$(dagdetect -c)
+	if [ $hasDAG -ne 1 ]; then
+		echo "... still no luck, aborting"
+		exit 1
+	fi
+	## Test if dag is ready for captures
+	dagconfig -s
+	dagpps
+else
+	if [ "$Verblevel" == "-vv" ]; then
+		dagconfig -s
+		dagpps
+	fi
+fi
+
+DAGtools=$(dagclock -V |cut -d'(' -f2 |cut -d' ' -f2 |cut -d ')' -f1)
+if [ "$DAGtools" == '5.5.0' ]; then
+	# /usr/local/dag/include/  has most, but not all, .h needed
+	DAGheadersDir="DAG_support_5.5.0"   #  legacy for FreeBSD 11.2 system
+else
+	DAGheadersDir="/usr/include"
+fi
+echo "Detected DAGtools version as $DAGtools, DAGheadersDir is $DAGheadersDir"
+
 
 ## Current state
-echo ">>> Initial state of things"
+echo ">>> Examine running state"
 ps -aux |grep 'DAG\|dag' |grep -v grep
-ls -l $RawCaptureFile
-ls -l /etc/radclock*
-echo
+if [[ -s "$RawCaptureFile" ]]; then
+	echo "Found non-empty capture file $RawCaptureFile"
+	ls -l -h $RawCaptureFile
+else
+	echo "Couldn't find capture file $RawCaptureFile"
+fi
+[[ -s "dagstamp_$Host.out" ]] && ls -l dagstamp_$Host.out
+echo "-------------------------------------------------------------------------"
+# ------------------------------------------------------------------------------
+
 
 ## DAG capture process
 if [ "$capture" == "true" ]; then
-	pkill dagconvert
+	#pkill dagconvert
+	pkill dagsnap
 	sleep 2
-	\mv $RawCaptureFile $RawCaptureFile_old
+	echo ">>> Backing up last raw capture before starting new [may take some time]"
+	if [[ -s "$RawCaptureFile" ]]; then
+		cp $RawCaptureFile /scratch/latestcapture_$Host.erf   # backup to mounted broadway:/scratch
+		mv $RawCaptureFile ${RawCaptureFile}_old
+	fi
+
+	## Define tight (IP,port) filter to reduce output file size.
+	# Use same filtering used by dagstamp_gen (hence all should pass its filter)
+	bpf_filter="(src host ${TrustNodeIP} and dst port 123) or (dst host ${TrustNodeIP} and src port 123)"
+	#bpf_filter="(src host ${TrustNodeIP} and dst port 123)"    # Src only, good for match testing
+	#bpf_filter="(dst host ${TrustNodeIP} and src port 123)"    # incoming only, "
+	#bpf_filter=""                                              # no filtering for robustness check
+
+	## on-DAG filtering [would be better, but complex system.. leave for now]
+	#dagfilter-loader -d0 -f dagfilter_rules      #
+
 	echo ">>> Launching a new dag raw capture to file $RawCaptureFile"
-	dagconvert -d0 -o $RawCaptureFile &   # runs DAG capture on all packets !
+	echo "    using filter: $bpf_filter"
+
+	## Options with immediate erf output
+	dagsnap -d0 -o $RawCaptureFile &                   # direct with dagsnap to file [but no filtering options]
+
+	## Options with erf output buffering issue  [buffer of 2^27 bytes internal to dagconvert]
+	#dagconvert -d0  -T dag:erf -b "$bpf_filter" -o $RawCaptureFile &                  # simple with no params
+	#dagconvert -d0  -T dag:erf -b "$bpf_filter"  > $RawCaptureFile &                  # same 2^17 byte buffer
+	#dagconvert -d0  -T dag:erf  --out "erf: -f $RawCaptureFile"  -b "$bpf_filter"  &  # if need to add params
+	#dagsnap -d0  |dagconvert  -T erf:erf --periodic-flush   -b "$bpf_filter" -o $RawCaptureFile &
+
+	## Integrated capture to dagstamp processing [not working, as dagstamp_gen doesn't process stdin correctly]
+	#  Also would have to implement erf input (and output) dump functionality to dagstamp_gen, else no erf!
+	#pkill dagstamp_gen_$Host
+	#dagsnap -d0  |./dagstamp_gen_$Host -i $TrustNodeIP $Verblevel $testing > dagstamp_$Host.out &
+
 	echo "Waiting for capture to start.. ---------------------------------------"
 	sleep 5
+	ls -l $RawCaptureFile*
 	echo "----------------------------------------------------------------------"
+	echo
 fi
 
 
 ## DAGstamp generation and delivery to TrustNode
 ##  Notes: requires auth key files be copied to /etc , available from
 ##         NTC_CommandAndControl/Configuration/NTP_keys/Key_Database/ .
-##         /usr/local/dag/include/  has most, but not all, .h needed
-if [ "$capture" != "true" ]; then
-	echo
+## Troubleshooting
+# sudo tcpdump -v port 5671    # On DAG host, monitor dag records sent to the TN
+# sudo tcpdump -v port 5671    # On TN, receiving them?
+if [ "$build" == "true" ]; then
+#	ls -l /etc/radclock*
 	echo ">>> Compiling DAGstamp generator/sender dagstamp_gen"
-	clang dagstamp_gen.c ../radclock/ntp_auth.c -o dagstamp_gen -lwolfssl -L/usr/local/lib/ \
+	clang dagstamp_gen.c ../radclock/ntp_auth.c -o dagstamp_gen_$Host -lwolfssl -L/usr/local/lib/ \
 		-I /usr/src/sys         \
 		-I /usr/local/include/  \
-		-I DAG_support_5.5.0
+		-I $DAGheadersDir
 	echo
+fi
 
+if [ "$run" == "true" ]; then
 	echo "Kill old dagstamp_gen processes before relaunch"
-	pkill dagstamp_gen
-	\mv dagstamp.out dagstamp_old.out
+	pkill dagstamp_gen_$Host
+	echo "Copying existing dagstamp_${Host}.out output"
+	\mv dagstamp_${Host}.out dagstamp_${Host}_old.out
 	echo
 
-	echo ">>> Relaunch dagstamp_gen, sending DAGstamps to TrustNode with IP: $TrustNodeIP"
-	./dagstamp_gen -f $RawCaptureFile -i $TrustNodeIP >  dagstamp.out  &
+	echo ">>> Relaunch dagstamp_gen_$Host, sending DAGstamps to TrustNode with IP: $TrustNodeIP"
+	./dagstamp_gen_$Host -f $RawCaptureFile -i $TrustNodeIP $Verblevel $testing > dagstamp_$Host.out &
+	echo
+	ls -l dagstamp_${Host}*.out
 fi
 
 
-## New state
-echo ">>> New state of things after a little wait"
-sleep 2
-ps -aux |grep 'DAG\|dag' |grep -v grep
-ls -l $RawCaptureFile*
-ls -l /etc/radclock*
-echo
+## Examine updated state
+if [[ "$capture" == "true" || "$run" == "true" ]]; then
+	ps -aux |grep 'DAG\|dag\|RAD\|radc' |grep -v grep
+fi
+echo "-------------------------------------------------------------------------"
 
 
 ## Attic
 # pkill dagstamp_gen dagconvert
 # sudo dagconvert -d0 -o /tmp/shm_dag.erf  -r 1m --fnum 2    // WIP, code doesn't support
-# Alternative capture method for possible future use, accepts a filter as argument
-# sudo dagsnap -d0 -o /tmp/shm_dag.erf
 
