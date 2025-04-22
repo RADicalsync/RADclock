@@ -104,11 +104,12 @@ struct dag_ntp_record {
 
 /* Circular buffer used to store and complete dagstamps
  * [using in-situ completion of half-dagstamps]
+ * write_id constrained in code to lie in [0,1,... size-1]
  */
-#define PKT_LIST_SIZE 512
+#define PKT_LIST_SIZE 8*2048
 struct rec_list {
 	struct dag_ntp_record *recs;
-	int write_id;
+	int write_id;    // point to where next write will occur (upon new request)
 	int size;
 };
 
@@ -182,6 +183,27 @@ struct stats_t {
 	uint64_t records_bad;
 };
 
+/* Packet level stats to track matching */
+struct matchstats_t {
+
+	/* Set within process */
+	uint64_t fromSrc;
+	uint64_t toSrc;
+	uint64_t pastfilter;    // hence passed to match_and_send
+
+	/* Set within match_and_send */
+	// counts input pkts
+	uint pastauth;   // should be ≥ 2(pastmatch + matchfail)
+	uint srcpassed;
+	// counts bidir match attempts
+	uint paststampid;
+	uint pastkey;
+	uint pastserverIP;
+	uint pastmatch;  // currently must be the same as pastserverIP
+	uint matchfail;  // auth'd non-Src pkt arrives, but no match (not there or fails a test)
+};
+
+
 /*** Guide to input parameters of dagstamp_gen ***/
 static void
 usage(void)
@@ -220,7 +242,7 @@ report(struct instream_t *istream, struct stats_t *stats)
 //	fprintf(stdout, "   File: %5lld MB  |  Read: %10"PRIu64
 //			" rec, %9.1f rec/s, %5.1f MB/s  |  Write: %10"PRIu64
 //			" rec, %9.1f rec/s  |  Bad: %3"PRIu64"\r",
-//			(in->filesize - in->read) / 1048576,
+//			(istream->filesize - istream->read) / 1048576,
 //			stats->records_in,
 //			in_rate,
 //			byte_rate / 1048576.0,
@@ -267,19 +289,24 @@ init_instream( struct instream_t *s, const char* filename )
 	/* Get file size, with LFS support, this is defined as a long long int */
 	s->read = 0;
 	s->filesize = 0;
-	if (stat(s->filename, &st) < 0) {
-		fprintf(stderr, "Stat failed on instream: %s\n", strerror(errno));
-		return 1;
-	}
-	s->filesize = (long long int)st.st_size;
-	fprintf(stderr, "Instream size is %.1f MB\n", (double)s->filesize / 1048576.0);
+	if (strcmp(s->filename, "stdin") != 0) {
+		if (stat(s->filename, &st) < 0) {
+			fprintf(stderr, "Stat failed on instream: %s\n", strerror(errno));
+			return 1;
+		}
+		s->filesize = (long long int)st.st_size;
+		fprintf(stderr, "Instream size is %.1f MiB\n", (double)s->filesize / 1048576.0);
+	} else
+		fprintf(stderr, "Instream is %s\n", s->filename);
 
 	/* Open input ERF file */
 	//s->fd = open(s->filename, O_RDONLY|O_LARGEFILE);
-	s->fd = open(filename, O_RDONLY);
-	if (s->fd == -1) {
-		fprintf(stderr, "Could not open %s for reading.\n", filename);
-		return 1;
+	if (strcmp(s->filename, "stdin") != 0) {
+		s->fd = open(filename, O_RDONLY);
+		if (s->fd == -1) {
+			fprintf(stderr, "Could not open %s for reading.\n", filename);
+			return 1;
+		}
 	}
 
 	/* Get the link type from the ERF file */
@@ -309,8 +336,9 @@ init_instream( struct instream_t *s, const char* filename )
 			s->linktype = rec.type & 0x7f;
 			break;
 		default:
-			fprintf(stderr, "ERROR: Cannot init input stream, bad linktype\n");
-			return 1;
+			fprintf(stderr, "ERROR: Cannot init input stream, missing or bad linktype, assuming TYPE_ETH\n");
+			s->linktype = TYPE_ETH;
+			//return 1;
 	}
 
 	s->pload_padding = 0;
@@ -334,7 +362,8 @@ destroy_instream ( struct instream_t *s )
 {
 	close(s->fd);
 
-	free(s->filename);
+	if (strcmp(s->filename, "stdin") != 0)
+		free(s->filename);
 	s->filename = NULL;
 
 	free(s->buffer);
@@ -481,6 +510,9 @@ get_next_erf_header(struct instream_t *istream, struct stats_t *stats,
 }
 
 
+/* Check authentication
+ * Will pass back a valid key_id if fn returns with auth_pass = 1
+ */
 int check_signature(int packet_size, struct ntp_pkt *pkt_in, char **key_data, int *auth_bytes, int *key_id)
 {
 	wc_Sha sha;
@@ -530,42 +562,55 @@ int check_signature(int packet_size, struct ntp_pkt *pkt_in, char **key_data, in
  */
 static long int
 match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct sockaddr_in tn_saddr,
-    char **key_data, long double ts, struct ip *hdr_ip, struct ntp_pkt *ntp, int isSrc, int UDPpktsize)
+    char **key_data, long double ts, struct ip *hdr_ip, struct ntp_pkt *ntp,
+    int isSrc, int UDPpktsize, struct matchstats_t *matchstats)
 {
-	int ret, auth_bytes = 0;
+	int ret = 0;
+	int searchposn;
 	struct dag_ntp_record *thisrec;
 
 	int key_id = -1;
+	int auth_bytes = 0;
 	if (check_signature(UDPpktsize, ntp, key_data, &auth_bytes, &key_id))
 	{
+		matchstats->pastauth++;
 		verbose(VERB_DEBUG, "  passed auth check\n");
-		if (isSrc) {
-			thisrec = &list->recs[list->write_id];  // current rec
+		if (isSrc) {  // insert in new location
+			thisrec = &list->recs[list->write_id];
 			memcpy(&thisrec->IPout, &hdr_ip->ip_dst, sizeof(thisrec->IPout));
 			thisrec->key_id = key_id;
+			matchstats->srcpassed++;
 			verbose(VERB_DEBUG, "   request pkt with key_id: %d inserted at %d \n", key_id, list->write_id);
 			thisrec->cap.Tout = ts;
 			thisrec->cap.stampid = ntp->xmt;
 			list->write_id = (list->write_id + 1) % list->size;
-		} else {
-			verbose(VERB_DEBUG,"   response pkt: looking for match with key = %d\n", thisrec->key_id);
+		} else {      // scan for existing location, only write (in-situ) if find it
+			verbose(VERB_DEBUG,"   response pkt: looking for match with key = %d\n", key_id);
 
 			/* Set search order  (in each case, i = attempt count)
-			 *   Original:  will find earliest first, but v-inefficient search
-			 *   Efficient: backward from last insertion, finds match v-fast, but MAy not be 1st
+			 *   Original:  naive search from posn '0' bearing no relation to last insert
+			 *   Efficient: backward from last insertion, finds match v-fast, but
+			 *     - won't be the first pkt with a match in case of copies
+			 *     - if no match, runs over full list->size [could instead stop if sees a blanked stampid]
 			 */
 			int match_id = -1;
 //			for (int i = 0; i < list->size && match_id == -1; i++) {      // Original
-//				thisrec = &list->recs[i];                                 // Original
-			for (int i = 0; i < list->write_id && match_id == -1; i++) {  // Efficient
-				thisrec = &list->recs[list->write_id - 1 - i];            // Efficient
+//				thisrec = &list->recs[i];                                  // Original
+			for (int i = 0; i < list->write_id && match_id == -1; i++) {  // Backward search
+				searchposn = list->write_id - 1 - i;
+				if (searchposn < 0)
+					searchposn += list->size;  // backward wrap into [0,size-1]
+				thisrec = &list->recs[searchposn];
 
 				if (memcmp(&ntp->org, &thisrec->cap.stampid, sizeof(ntp->org)) == 0) {
+					matchstats->paststampid++;
 					verbose(VERB_DEBUG, "    > stampid match\n");
 					if (key_id == thisrec->key_id) {
+						matchstats->pastkey++;
 						verbose(VERB_DEBUG, "    >> key_id match\n");
 						if (memcmp(&hdr_ip->ip_src, &thisrec->IPout, sizeof(hdr_ip->ip_src)) == 0) {
 							match_id = i;	// record the first match (will exit loop)
+							matchstats->pastserverIP++;
 							verbose(VERB_DEBUG, "    >>> server IP match\n");
 						} else
 							printf("   matched pkt with server IP change: sent to %s, replied with %s\n",
@@ -579,6 +624,7 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
 				thisrec->cap.Tin = ts;
 				memcpy(&thisrec->cap.ip, &hdr_ip->ip_src, sizeof(thisrec->cap.ip));
 
+				matchstats->pastmatch++;
 				verbose(LOG_INFO, "    Matched packet for %s. Auth %d\n",
 					inet_ntoa(thisrec->cap.ip), key_id);
 				if (send_to_server)
@@ -596,6 +642,7 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
 				uint64_t id;    // match RADclock's convention for recording stampid
 				id = ((uint64_t) ntohl(ntp->org.l_int)) << 32;
 				id |= (uint64_t) ntohl(ntp->org.l_fra);
+				matchstats->matchfail++;
 				printf("    Unable to find packet matching stampid %llu\n",
 					(unsigned long long) id);
 			}
@@ -615,7 +662,7 @@ match_and_send(struct rec_list *list, char *tn_ip, int socket_desc, struct socka
  * TODO:  capture matching stats, deal with error codes.
  */
 static void
-process(struct instream_t *istream, struct stats_t *stats,
+process(struct instream_t *istream, struct stats_t *stats, struct matchstats_t *matchstats,
     struct rec_list *list, char *tn_ip, int socket_desc, struct sockaddr_in tn_saddr, char **key_data)
 {
 	/* Frame oriented */
@@ -634,7 +681,8 @@ process(struct instream_t *istream, struct stats_t *stats,
 	/* Get the next frame and process it indefinitely.
 	 * When SIGHUP, SIGINT, or SIGKILL signals are received, it sets
 	 * break_process_loop. If no error, it's the only way to break the loop. */
-	while(!break_process_loop) {
+	while(!break_process_loop)
+	{
 		length = lseek(istream->fd, 0, SEEK_CUR);
 
 		/* Get the next frame from the instream */
@@ -644,12 +692,14 @@ process(struct instream_t *istream, struct stats_t *stats,
 
 			lseek(istream->fd, length, SEEK_SET);
 
-			if (stat(istream->filename, &st) < 0) {
-				fprintf(stderr, "Stat failed on instream: %s\n", strerror(errno));
-				return;
+			if (strcmp(istream->filename, "stdin") != 0) {
+				if (stat(istream->filename, &st) < 0) {
+					fprintf(stderr, "Stat failed on instream: %s\n", strerror(errno));
+					return;
+				}
+				// Why refresh/check filesize here?
+				istream->filesize = (long long int)st.st_size;
 			}
-			// Why refresh/check filesize here?
-			istream->filesize = (long long int)st.st_size;
 
 			continue;    // no frame to process, try again
 		}
@@ -672,10 +722,13 @@ process(struct instream_t *istream, struct stats_t *stats,
 		sport = GET_UDP_SRC_PORT(hdr_udp);
 		dport = GET_UDP_DST_PORT(hdr_udp);
 
-		if (strcmp(src, tn_ip) == 0)
+		if (strcmp(src, tn_ip) == 0) {
 			isSrc = 1;  // outgoing pkt send from the TN
-		else
-			isSrc = 0;  // incoming pkt destined for the TN
+			matchstats->fromSrc++;
+		} else {
+			isSrc = 0;  // incoming pkt destined for the TN (or broadcast..)
+			matchstats->toSrc++;
+		}
 		verbose(VERB_DEBUG, "Found %s (%d)-> %s (%d)  isSRc = %d\n", src, sport, dst, dport, isSrc);
 
 
@@ -683,19 +736,28 @@ process(struct instream_t *istream, struct stats_t *stats,
 		if ((sport == PORT_NTP && strcmp(dst, tn_ip) == 0) ||
 			(dport == PORT_NTP && isSrc) )
 		{
+			matchstats->pastfilter++;
 			verbose(VERB_DEBUG, "  passed (IP,port) filter\n");
 			UDPpktsize = ntohs(hdr_udp->uh_ulen);    // for auth checking
 			match_and_send(list, tn_ip, socket_desc, tn_saddr, key_data,
-			    ts_DAGtoLD(header->ts), hdr_ip, ntp, isSrc, UDPpktsize);
-	//		stats->filter_pass++;    // possible counter name
+			    ts_DAGtoLD(header->ts), hdr_ip, ntp, isSrc, UDPpktsize, matchstats);
 
 		} else {
 			//verbose(VERB_DEBUG, "  failed (IP,port) filter\n");
-	//		stats->filter_fail++;    // possible counter name
 		}
 
-		stats->records_out++;  // dont want this if match fails, need new stats
+		stats->records_out++;  // dont want this if match fails in fact
 
+		/* Track progress */
+		if ( !(stats->records_in % 40000) ) {
+			fprintf(stderr, "dagstamp_gen processed %lu records\n", stats->records_in);
+			fprintf(stderr, " pkt stats: (fromSrc,toSrc,pastfilter) = (%lu,%lu,%lu)\n",
+			   matchstats->fromSrc, matchstats->toSrc, matchstats->pastfilter);
+			fprintf(stderr, " match stats: (auth,Src,stampid,key,sIP,match,matchfail,lonely) = (%u,%u,%u,%u,%u,%u,%u,%d)\n",
+			   matchstats->pastauth, matchstats->srcpassed, matchstats->paststampid, matchstats->pastkey,
+			   matchstats->pastserverIP, matchstats->pastmatch, matchstats->matchfail,
+			   matchstats->pastauth - (2*matchstats->pastmatch + matchstats->matchfail));
+		}
 	}
 }
 
@@ -735,7 +797,7 @@ main(int argc, char *argv[])
 	char tn_ip[STRSIZE] = "\0";
 
 	/* Instream related information */
-	char filename_in[STRSIZE] = "\0";
+	char filename_in[STRSIZE] = "stdin";  // "\0";
 	struct instream_t instream;
 
 	/* File name where the packets to be sent to the Trust Node are dumped.
@@ -745,7 +807,9 @@ main(int argc, char *argv[])
 
 	/* Statistics structure */
 	struct stats_t stats;
-	stats.records_out = 0;
+	struct matchstats_t matchstats;
+	memset(&stats, 0, sizeof(struct stats_t));
+	memset(&matchstats, 0, sizeof(struct matchstats_t));
 
 	/* Circular buffer structure */
 	struct rec_list list;
@@ -842,7 +906,15 @@ main(int argc, char *argv[])
 
 	/* Process dag records until forced to exit */
 	if (!err)
-		process(&instream, &stats, &list, tn_ip, socket_desc, tn_saddr, key_data);
+		process(&instream, &stats, &matchstats, &list, tn_ip, socket_desc, tn_saddr, key_data);
+
+	fprintf(stderr, "dagstamp_gen Terminating after processing %lu records\n", stats.records_in);
+	fprintf(stderr, " pkt stats: (fromSrc,toSrc,pastfilter) = (%lu,%lu,%lu)\n",
+		matchstats.fromSrc, matchstats.toSrc, matchstats.pastfilter);
+		fprintf(stderr, " match stats: (auth,Src,stampid,key,sIP,match,matchfail,lonely) = (%u,%u,%u,%u,%u,%u,%u,%d)\n",
+		    matchstats.pastauth, matchstats.srcpassed, matchstats.paststampid, matchstats.pastkey,
+		    matchstats.pastserverIP, matchstats.pastmatch, matchstats.matchfail,
+		    matchstats.pastauth - (2*matchstats.pastmatch + matchstats.matchfail));
 
 	/* Shutdown */
 	destroy_instream(&instream);

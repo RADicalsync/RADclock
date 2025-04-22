@@ -150,11 +150,11 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 	 *  - something new in RADbuffer since last draining (works best with single time_server)
 	 * Other hack variables to remove: last_next0
 	 */
-	static index_t last_next0 = 0;  // fake DAG support
+	static index_t last_next0 = 0;  // fake DAG support, and get_fullstamp_ efficiency
 	struct stamp_t RADstamp;
 	struct radclock_error *rad_error;
 
-	if ( got_dag_msg == 0 && next0 != last_next0 && handle->last_sID != -1)
+	if (0)  // ( got_dag_msg == 0 && next0 != last_next0 && handle->last_sID != -1)
 	{
 		/* Obtain the last accepted RADstamp using the last_sID hack */
 		RADstamp = ((struct bidir_algodata*)handle->algodata)->laststamp[handle->last_sID];
@@ -204,7 +204,7 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 	} else
 		fullerr = 1;
 
-	last_next0 = next0;    // fake DAG support
+	last_next0 = next0;    // fake DAG support, and get_fullstamp_ efficiency
 
 	/* If no stamp available, nothing to process, just look again */
 	if (fullerr == 1)
