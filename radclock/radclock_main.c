@@ -371,7 +371,28 @@ signal_handler(int sig)
 		// This signal should be executed via ansible C&C - (sudo killall -31 radclock)
 		verbose(LOG_NOTICE, "SIGUSR2 received (light config reload)");
 		light_config_parse(clock_handle->conf, &param_mask, clock_handle->is_daemon, &clock_handle->nservers);
-		break;
+		/* Public serving switching */
+		 // nothing to do, server code reacts directly to any change in conf->server_ntp
+
+		/* Asymmetry Calibration control */
+		switch (clock_handle->calibrate) {
+			case 0:
+				if (clock_handle->conf->calibrate_asym == 1) {
+					create_calib(clock_handle);
+					clock_handle->calibrate = 1;
+					verbose(LOG_NOTICE, "Calibration activated");
+				}  // else nth to do, already off
+				break;
+			case 1:
+				if (clock_handle->conf->calibrate_asym == 0) {
+					clock_handle->calibrate = 2;
+					verbose(LOG_NOTICE, "Calibration signalled to finalize");
+				}  // else nth to do, already on
+				break;
+			case 2:
+				verbose(LOG_ERR, "Calibration on, and already set to finalize");
+		}
+
 	}
 }
 
@@ -632,7 +653,8 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Initialize all servers to trusted. */
 	handle->servertrust = 0;
 
-	/* OCN calibration */
+	/* OCN calibration: caldata not set until calibration activation */
+	handle->caldata = NULL;
 	handle->calibrate = 0;
 
 	return (handle);
@@ -720,6 +742,44 @@ destroy_perf(struct radclock_handle *handle)
 		destroy_stamp_queue(perfdata);
 		free(perfdata);
 		handle->perfdata = NULL;
+	}
+}
+
+/* Create state for asym calibration, for all servers */
+void
+create_calib(struct radclock_handle *handle)
+{
+	struct bidir_caldata* caldata;
+
+	caldata = malloc(sizeof *caldata);
+	caldata->state = calloc(handle->nservers,sizeof(struct bidir_calibstate));
+
+	for (int s=0; s<handle->nservers; s++) {
+		caldata->state[s].sID = s;
+		caldata->state[s].stamp_i = -1;  // signal no calibstamps processed yet
+	}
+	handle->caldata = (void*) caldata;  // enduring copy of ptr to caldata
+}
+
+/* Destroy state for asym calibration, for all servers */
+void
+destroy_calib(struct radclock_handle *handle)
+{
+	struct bidir_caldata *caldata;
+	struct bidir_calibstate *state;
+
+	if (handle->caldata) {
+		caldata = handle->caldata;
+		for (int s=0; s<handle->nservers; s++) {
+			state = &caldata->state[s];
+			history_free(&state->Df_state.data_hist);
+			history_free(&state->Db_state.data_hist);
+			history_free(&state->Df_state.BL_hist);
+			history_free(&state->Db_state.BL_hist);
+		}
+		free(caldata->state);
+		free(caldata);
+		handle->caldata = NULL;
 	}
 }
 
@@ -1670,6 +1730,12 @@ main(int argc, char *argv[])
 
 	// destroy perfdata if needed
 	destroy_perf(handle);
+
+	// destroy calibdata if needed
+	if (handle->calibrate) {
+		destroy_calib(handle);
+		verbose(LOG_ERR, "Calibration still running at shutdown, results lost");
+	}
 
 	free(handle);
 	handle = NULL;

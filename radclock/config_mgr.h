@@ -86,6 +86,7 @@
 #define DEFAULT_SERVER_TELEMETRY BOOL_OFF    // Creates telemetry cache files in /radclock
 #define DEFAULT_SERVER_EXTREF    BOOL_OFF    // Defines if EXTREF is active
 #define DEFAULT_SERVER_NTP       BOOL_OFF    // Don't act as a server
+#define DEFAULT_CALIBRATE_ASYM   BOOL_OFF    // Calibration a special rare event!
 #define DEFAULT_SERVER_VM_UDP    BOOL_OFF    // Don't Start VM servers
 #define DEFAULT_SERVER_XEN       BOOL_OFF
 #define DEFAULT_SERVER_VMWARE    BOOL_OFF
@@ -165,7 +166,8 @@
 #define CONFIG_IS_TN           71
 /* NTP serving type */
 #define CONFIG_PUBLIC_NTP      80
-
+/* Asym Calibration */
+#define CONFIG_CALIBRATE_ASYM  81
 
 /*
  * Pre-defined description of temperature environment quality
@@ -215,6 +217,7 @@
 #define UPDMASK_IS_OCN          0x80000000
 #define UPDMASK_IS_TN           0x100000000
 #define UPDMASK_PUBLIC_NTP      0x200000000
+#define UPDMASK_CALIBRATE_ASYM  0x400000000
 
 #define HAS_UPDATE(val,mask)   ((val & mask) == mask)
 #define SET_UPDATE(val,mask)   (val |= mask)
@@ -260,6 +263,7 @@ struct radclock_config {
 	int server_telemetry;              // Boolean
 	int server_extref;                 // Boolean
 	int server_ntp;                    // Boolean
+	int calibrate_asym;                // Boolean
 	int server_vm_udp;                 // Boolean
 	int server_xen;                    // Boolean
 	int server_vmware;                 // Boolean

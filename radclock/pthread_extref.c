@@ -365,20 +365,20 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 				}
 			break;
 		// ************************************* OCNs ****************************
-		case 16:  // OCN SYD
-			SA_detected = (((state->stamp_i + 30*60) % (9*ps/4/pp)) ? 0 : 1);
-			if (SA_detected) {
-				if ( rand() < RAND_MAX * probshort )
-					SAdur[NTC_id] =  0.2*switchtime/pp;
-				else
-					SAdur[NTC_id] =  2.0*switchtime/pp;
-				verbose(VERB_DEBUG, "FakeSA: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
-				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
-			} else
-				if (SAdur[NTC_id] > 0) {
-					SAdur[NTC_id]--;
-					SA_detected = 1;    // flag SA still active
-				}
+//		case 16:  // OCN SYD
+//			SA_detected = (((state->stamp_i + 30*60) % (9*ps/4/pp)) ? 0 : 1);
+//			if (SA_detected) {
+//				if ( rand() < RAND_MAX * probshort )
+//					SAdur[NTC_id] =  0.2*switchtime/pp;
+//				else
+//					SAdur[NTC_id] =  2.0*switchtime/pp;
+//				verbose(VERB_DEBUG, "FakeSA: SA-run for NTC node %d reset to %d stamps [%d min] at stamp %llu",
+//				    NTC_id, SAdur[NTC_id], SAdur[NTC_id]*pp/60, state->stamp_i);
+//			} else
+//				if (SAdur[NTC_id] > 0) {
+//					SAdur[NTC_id]--;
+//					SA_detected = 1;    // flag SA still active
+//				}
 			break;
 		case 17:  // OCN MEL
 			SA_detected = ((state->stamp_i % (110*60/pp +5)) ? 0 : 1);   // stamp0 marked
@@ -402,7 +402,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 
 	/* Update servertrust  [ warn yourself of the SA's discovered ]
 	 * TODO: this overrides the servertrust setting - to be reviewed */
-	if (state->SA != SA_detected ) {
+	if (state->SA != SA_detected && NTC_id > 15) {  // dirty hack to block SAs on ICNs
 		handle->servertrust &= ~(1ULL << sID);    // clear bit
 		if (SA_detected)
 			handle->servertrust |= (1ULL << sID);  // set bit

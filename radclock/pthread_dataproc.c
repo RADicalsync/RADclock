@@ -916,6 +916,7 @@ process_stamp(struct radclock_handle *handle)
 	struct stamp_t *laststamp;    // access last stamp (with original Te,Tf)
 	struct bidir_algooutput *output;
 	struct bidir_algostate *state;
+	struct bidir_calibstate *calstate;
 	int pref_updated;
 	int pref_sID_new;
 
@@ -992,6 +993,35 @@ process_stamp(struct radclock_handle *handle)
 			}
 		}
 	}
+
+
+	/* Asymmetry Calibration management
+	 * Signal all servers to finalize, by replaying their last stamp.
+	 * This guarantees finishing now, regardless of starvation status.
+	 * Any extra jump caused by the replay (unlikely) will not impact the result.
+	 */
+	if (handle->calibrate == CALIB_FINALIZE) {
+		struct stamp_t *replaystamp;
+		for (s=0; s < handle->nservers; s++) {
+			replaystamp = &algodata->laststamp[s];
+			calstate = &((struct bidir_caldata *)handle->caldata)->state[s];
+			state   = &algodata->state[s];
+			verbose(VERB_SYNC, "Calibration results for server %d (started at %lu):", s,calstate->stamp_start);
+			asym_calibration(calstate, &replaystamp->st.bstamp, &replaystamp->IntRef, 1);
+
+			/* If calibration succeeds, update RADclock algo asym state */
+			  //insert value into conf params asym_{host,net} somehow.. */
+			if (calstate->N_best > 0) {
+				index_t asymset_i = calstate->posn_best + calstate->stamp_start;
+			}
+			state->Asymhat = calstate->uA_best;    // reset asym used by algo, but how to backdate to asymset_i??
+		}
+		handle->calibrate = 0;
+		destroy_calib(handle);
+		verbose(LOG_NOTICE, "Calibration complete");
+	}
+
+
 
 	/* Generic call for creating stamps depending on the type of input source */
 	// Need to differentiate ascii input from pcap input
@@ -1132,6 +1162,37 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Manage the leapsecond state variables held in output */
 	manage_leapseconds(handle, &stamp, rad_data, output, sID);
+
+
+	/* Calibration switch on initialization  (stamp based control testing hack) */
+//	int switchon = 0;
+//	if (handle->calibrate == 0 && state->stamp_i == -1 )  // switch on once only
+//		switchon = 1;
+//
+//	if (state->stamp_i == 383167 -1  && handle->calibrate == 1) { // finalize once only // 12501-1
+//		handle->calibrate = CALIB_FINALIZE;
+//		verbose(LOG_NOTICE, "Calibration finalizing (set by server %d)", sID);
+//	}
+//
+//	if (switchon) {
+//		handle->calibrate = 1;
+//		/* Create and initialize the caldata handle, and all its internal variables and structures */
+//		create_calib(handle);
+//		caldata = handle->caldata;
+//		verbose(LOG_NOTICE, "Calibration activated (by server %d) ", sID);
+//		switchon = 0;
+//	}
+
+	/* Process asym calibration using IntRef data */
+	if (handle->calibrate) {
+		calstate = &((struct bidir_caldata *)handle->caldata)->state[sID];
+		/* Record activation using stamp label matching the sync algo */
+		if (calstate->stamp_i == -1)
+			calstate->stamp_start == state->stamp_i + 1;  // algo not yet run
+
+		asym_calibration(calstate, &stamp.st.bstamp, &stamp.IntRef, 0);
+	}
+
 
 	/* Run the RADclock algorithm to update radclock parameters with new stamp.
 	 * Pass it server timestamps which have had leapseconds removed, so algo sees

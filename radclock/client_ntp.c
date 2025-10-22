@@ -144,7 +144,7 @@ ntp_client_init(struct radclock_handle *handle)
 
 		ntpclient_period[s] = MIN(BURST_DELAY,poll_period);
 		domain = handle->conf->time_server + s*MAXLINE;
-		
+
 		/* Build server infos */
 		client->s_to.sin_family = PF_INET;
 		client->s_to.sin_port = ntohs(handle->conf->ntp_upstream_port);
@@ -409,12 +409,16 @@ ntp_client(struct radclock_handle *handle)
 	 */
 	int key_id = -1;
 	char * ntp_key = NULL;
+	int OCN_id;
 	if (handle->conf->is_tn) {
 		int NTC_id = handle->conf->time_server_ntc_mapping[sID];
-		int OCN_id = OCN_ID(NTC_id);
+		OCN_id = OCN_ID(NTC_id);
 
 		uint64_t ntc_status = ((struct bidir_perfdata *)handle->perfdata)->ntc_status;
-		verbose(VERB_DEBUG, "Sending to server with (sID, NTC_id, OCN_ID) = (%d, %d, %d),"
+		/* SHM suppression (hack to stop fake SAs to operational OCNs, fix below also! */
+		if (OCN_id == 1 || OCN_id == 5 )
+			ntc_status = 0x0;
+		verbose(VERB_DEBUG, "Sending to server with (sID, NTC_id, OCN_id) = (%d, %d, %d),"
 		    "  {ntc,icn}_status = {0x%08llX, 0x%08llX} (ICN_MASK= 0x%llX)",
 		    sID, NTC_id, OCN_id, ntc_status, ntc_status & ICN_MASK, ICN_MASK);
 
@@ -491,9 +495,15 @@ ntp_client(struct radclock_handle *handle)
 	retry = maxattempts;
 	int auth_bytes = 0;
 	while (retry > 0) {
-		
+
+		// SHM suppression (hack to stop fake SAs to operational OCNs, fix above also!)
+		uint64_t ntc_status_save = ((struct bidir_perfdata *)handle->perfdata)->ntc_status;
+		if (OCN_id == 1 || OCN_id == 5)
+			((struct bidir_perfdata *)handle->perfdata)->ntc_status = 0;
+
 		/* Create and send an NTP packet */
 		ret = create_ntp_request(handle, &spkt, &tv, ntp_key, key_id, &auth_bytes);
+		((struct bidir_perfdata *)handle->perfdata)->ntc_status = ntc_status_save; // reverse hack
 		if (ret)
 			continue;	// retry never decremented ==> inf loop if create always fails!
 

@@ -378,6 +378,73 @@ struct bidir_algostate {
 #define	ALGO_ERROR(x) (&(x->algo_err))
 
 
+/* State for BL tracking of scalar timeseries (ie RTT, Df or Db) */
+struct BLtrack_state {
+
+	/* Time Series Histories */
+	history data_hist;
+	history BL_hist;   // current BL estimate (values can be backdated)
+
+	/* *** Detection parameters ****/
+	/* Local */
+	int ctrigger;
+	int DHwin, UHwin;
+	int Dinitwin, Uinitwin;
+	/* Window */
+	int Wwin;                 // shared window for now
+	double DWthres, UWthres;  // (D,U) jump size threshold [s]
+
+	/* Output Detection state */
+	double BL;              // [s] Estimate of BL at current time
+
+	/* Local Detection internal state */
+	int Dpause, Upause;
+	double local_ref;       // [s] sliding min ref level over Uinitwin
+	index_t local_ref_end;  // record oldest point in window (init of 0 good)
+	index_t first_lUdetect;
+	index_t last_lUdetect;
+	int bufferedU;
+
+	/* Window Detection internal state */
+	int DWpause, UWpause;
+	double winmin;        // [s] sliding min over Wwin
+	index_t winmin_end;   // record oldest point in window (init of 0 good)
+
+};
+
+/* State and parameters for the asymmetry calibration algo.
+ * Calibration's stamp index stamp_i is relative to calibration start.
+ * This variable is also used to manage stamp identity in BLtrack, as
+ * BLtrack_state does not have a stamp counter member.
+ * This follows the same convention as the RADclock algo, where bidir_algostate
+ * hold the stamp_i member used, but not advanced by, all sub-algos.
+ */
+struct bidir_calibstate {
+
+	int sID;    // my server ID
+
+	index_t stamp_start;  // external stamp when calib activated
+	index_t stamp_i;      // last stamp (relative to calib-start) processed
+
+	double Df, Db;    // current values
+	struct BLtrack_state Df_state, Db_state;
+
+	/* Calibration parameters */
+	int trim;        // safe distance from detections to avoid PE
+	int minlength;   // short acceptable trimmed length for uA estimation
+
+	/* Internal state */
+	index_t lastICP;    // index of last ICP found so far
+	double mDf, mDb;    // online min over next candidate ICZ
+
+	/* Output state [details of best ICZ] */
+	double Df_best, Db_best, uA_best;  // reference minimum/underlying values
+	int N_best;
+	index_t posn_best;  //
+
+};
+
+
 /* Unified state for SHM and RADperf assessment.
  * Although separate tasks requiring different data, some state is inherently
  * shared (eg stamp_i) and input PERFstamps are synchronous.
@@ -451,6 +518,12 @@ struct bidir_algodata {
 	struct stamp_t *laststamp;
 	struct bidir_algostate *state;
 	struct bidir_algooutput *output;
+};
+
+/* Structure containing asym calibration per-server state.
+ */
+struct bidir_caldata {
+	struct bidir_calibstate *state;
 };
 
 

@@ -196,9 +196,16 @@ struct radclock_handle {
 	uint64_t prior_ntp_sent, prior_ntp_rejected;
 
 	/* Asymmetry Calibration */
+	/* Points to an array of caldata, one per server */
+	void *caldata;
+	/* OCN calibration {off,on,finalize} = {0,1,2} */
+	#define CALIB_FINALIZE   2
 	int calibrate;
 };
 
+/* Asymmetry Calibration creation */
+void create_calib(struct radclock_handle *handle);
+void destroy_calib(struct radclock_handle *handle);
 
 /* These macros facilitate access to the data for the s-th server.
  *    SMACRO(h,s,..)    macro where the s the ID of the desired server

@@ -73,6 +73,7 @@ static struct _key keys[] = {
 	{ "shm_dag_client",        CONFIG_CLIENT_EXTREF}, // remove? (see ext_ref.h)
 	{ "ntp_server",            CONFIG_SERVER_NTP},
 	{ "public_ntp",            CONFIG_PUBLIC_NTP},
+	{ "asym_calibrate",        CONFIG_CALIBRATE_ASYM},
 	{ "vm_udp_server",         CONFIG_SERVER_VM_UDP},
 	{ "xen_server",            CONFIG_SERVER_XEN},
 	{ "vmware_server",         CONFIG_SERVER_VMWARE},
@@ -151,6 +152,7 @@ config_init(struct radclock_config *conf)
 	conf->adjust_FBclock    = DEFAULT_ADJUST_FBCLOCK;
 	conf->server_extref     = DEFAULT_SERVER_EXTREF;
 	conf->public_ntp        = DEFAULT_PUBLIC_NTP;
+	conf->calibrate_asym    = DEFAULT_CALIBRATE_ASYM;
 
 	strcpy(conf->client_extref, "");
 
@@ -389,7 +391,17 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_PUBLIC_NTP),
 				labels_bool[conf->public_ntp]);
 
-
+	/* Defines if the asymmetry calibration activated */
+	fprintf(fd, "# Asymmetry Calibration.\n");
+	fprintf(fd, "# Defines if asymmetry calibration should be active.\n");
+	fprintf(fd, "#\ton : Start service - Signals calibration to begin\n");
+	fprintf(fd, "#\toff: Stop service  - Signals calibration to shutdown\n");
+	if (conf == NULL)
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_CALIBRATE_ASYM),
+				labels_bool[DEFAULT_CALIBRATE_ASYM]);
+	else
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_CALIBRATE_ASYM),
+				labels_bool[conf->calibrate_asym]);
 
 
 	/* Defines if this server is an OCN */
@@ -807,8 +819,9 @@ update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *va
 		return 0;
 	}
 
-	// Currently the only light update option is the CONFIG_PUBLIC_NTP
-	if ( light_update && codekey != CONFIG_PUBLIC_NTP) {
+	/* Light update: ignore all parameters except those of light type listed here
+	 * TODO: make this list more visible (macro?) or move to light_config_parse? */
+	if ( light_update && codekey != CONFIG_PUBLIC_NTP && codekey != CONFIG_CALIBRATE_ASYM) {
 		return 0;
 	}
 
@@ -886,6 +899,23 @@ switch (codekey) {
 		}
 		else
 			conf->public_ntp = ival;
+		break;
+
+	case CONFIG_CALIBRATE_ASYM:
+		// If value specified on the command line
+		if ( HAS_UPDATE(*mask, UPDMASK_CALIBRATE_ASYM ) )
+			break;
+		ival = check_valid_option(value, labels_bool, 2);
+		// Indicate changed value
+		if ( conf->calibrate_asym != ival )
+			SET_UPDATE(*mask, UPDMASK_CALIBRATE_ASYM);
+		if ( ival < 0)
+		{
+			verbose(LOG_WARNING, "asym_calibrate value incorrect. Fall back to default.");
+			conf->calibrate_asym = DEFAULT_CALIBRATE_ASYM;
+		}
+		else
+			conf->calibrate_asym = ival;
 		break;
 
 	case CONFIG_IS_OCN:
@@ -1710,6 +1740,7 @@ void config_print(int level, struct radclock_config *conf, int ns)
 	verbose(level, "Server EXTREF        : %s", labels_bool[conf->server_extref]);
 	verbose(level, "ExtRef Client        : %s", conf->client_extref);
 	verbose(level, "Server NTP           : %s", labels_bool[conf->server_ntp]);
+	verbose(level, "Calibrate Asymmetry  : %s", labels_bool[conf->calibrate_asym]);
 	verbose(level, "Server VM_UDP        : %s", labels_bool[conf->server_vm_udp]);
 	verbose(level, "Server XEN           : %s", labels_bool[conf->server_xen]);
 	verbose(level, "Server VMWARE        : %s", labels_bool[conf->server_vmware]);

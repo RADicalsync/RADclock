@@ -286,8 +286,12 @@ index_t history_min_dbl(history *hist, index_t j, index_t i)
  * The window slides by 1:  old element j is dropped in favor of new element at
  * i+1, that is assumed to already be held in the history.
  * All indicies are unique time-series indicies that never wrap, they are
- * circularly mapped into the array of finite length. It is up to the calling
- * function to ensure that the values needed are still in the array.
+ * circularly mapped into the array of finite length.
+ *
+ * It is up to the calling function to ensure that the values needed are still
+ * in the array, however note the common case:
+ *  Sliding min over Win requires a history depth of at least Win+1, as it must
+ *  fit both the current window, and the new value being slid to.
  *
  * The point of sliding functions is efficiency: to reduce computation when
  * possible, only using brute force searching (using history_min) when essential.

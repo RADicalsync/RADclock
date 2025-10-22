@@ -553,7 +553,7 @@ init_algos(struct radclock_config *conf, struct bidir_algostate *state,
 	output->best_Tf = stamp->Tf;  // other local output fields are zero/unavailable
 
 	/* pathpenalty measurement */
-	output->pathpenalty = RTT * state->phat;
+	output->pathpenalty = RTT * state->phat * conf->metaparam.relasym_bound_global;
 }
 
 
@@ -882,6 +882,475 @@ void print_stats_state(struct bidir_algostate *state)
 	state->stats_sd[1] = 0;
 	state->stats_sd[2] = 0;
 }
+
+
+/* =============================================================================
+ * OWD BL Tracking
+ * ============================================================================*/
+
+/* Aims to detect a Downward level shift, a "D", by hunting over a recent hunt
+ * window for a characteristic pattern of local raw drops (d), relative to an
+ * current local level estimated over a preceding initialisation window:
+ *                     [<---------------  initwin -------------->][<--Hwin-->]
+ * relative hunt index                                            1         Hwin
+ * external hunt index                                            i-Hwin+1  i
+ * Drops are relative to the traditional Forward timeseries order, ie new
+ * data appear on the right, at relative index Hwin, and a drop means a
+ * lower value than older data on the left.
+ * In this version initwin is not given directly, instead the refLevel measured
+ * over it is passed in.
+ *
+ * The fn can be used for Up detection by traversing the data in reverse order.
+ * However, there are inherent differences in its use in the two orders in a
+ * online setting, due to the fact that in forward order the first drop found in
+ * a cluster is the one we want and subsequent ones are to be avoided,
+ * whereas in reverse order the opposite is true. Additional order-asymmetric
+ * code is needed to manage this externally to this function.
+ *
+ * Internally, indices are relative to the Hwin window over j in [1,Hwin]
+ * "order" denotes traversal direction of the window;
+ *   1: traditional forward order, set si to  newest  data pt calib_i
+ *   0:    reverse/backward order, set si to "oldest" data at calib_i-Uinitwin-Hwin+1
+ *
+ * ctrigger: threshold parameter for the number of raw drops below refLevel
+ *           needed to trigger a detection
+ */
+int LocalDjumpDetect(history *data, index_t si, int order, double refLevel, int ctrigger, int Hwin)
+{
+	int j, firstdrop_ind;  // indices relative to Hwin
+	int detect_ind = 0;    // Drop posn estimate (relative index) if D detected
+	double *D;             // history pointer for data extraction
+
+	/* Initialize drop hunt parameters */
+	int rdcount = 0;                // number of raw drops found over Hwin so far
+	long double hlevel = refLevel;  // min level over Hwin given drops found so far
+
+	/* Scan huntwin zone until detect criteria met */
+	for (j=1; j<=Hwin; j++) {
+
+		/* Extract j-th relative data value within Hwin */
+		if (order == 1)    // forward order
+			D = history_find(data, si-Hwin+j);
+		else               // backward order
+			D = history_find(data, si+Hwin-j);
+		/* Track any rdrops below reference */
+		if ( *D < refLevel ) {
+			if (rdcount == 0)
+				firstdrop_ind = j;
+			rdcount++;
+			hlevel = MIN(hlevel,*D);
+
+			// Detection
+			if (rdcount == ctrigger) {
+				detect_ind = firstdrop_ind;  // obvious but effective posn estimate
+				if ( VERB_LEVEL>2 )
+					verbose(VERB_DEBUG, "i=%lu: [%d] LocalDetect at j=%d (rdrop = %d), inferred Djump at j=%d"
+					    " (delay = %d),  total drop of Delta = %4.3lf [ms] wrt %4.3lf",
+					    si, order, j, rdcount, detect_ind, j-detect_ind, 1000*(refLevel-hlevel), 1000*refLevel);
+			}
+		}
+	}
+
+	return detect_ind;
+}
+
+
+/* Parameter setting and state variable initialization (beyond null init
+ * performed by create_calib) for BL_track.
+ *
+ * History window depths are mainly calculated internally according to the needs
+ * of BL_track, but min_datawin allows the caller to specify a minimum width for
+ * data history.
+ */
+void
+BL_track_init(struct BLtrack_state *state, int datawin)
+{
+	/* *** Detection parameters ****/
+	state->ctrigger = 6;
+	state->DHwin    = state->UHwin = 19;
+	state->Dinitwin = state->Uinitwin = 96 - state->DHwin;
+	state->Wwin = 1500;
+	state->DWthres = state->UWthres = 150e-6;
+
+	/* Ensure variables holding minima not trapped below true min */
+	state->BL = state->local_ref = state->winmin = 10;
+
+	/* Set initial local pauses to allow full Local search windows, essential! */
+	state->Dpause = state->DHwin + state->Dinitwin - 1;  // win-1 ==> start at i=win
+	state->Upause = state->UHwin + state->Uinitwin - 1;
+	/* Set initial window pauses to allow full window, to avoid FPs */
+	state->DWpause = state->Wwin - 1;
+	state->UWpause = state->Wwin - 1;
+
+	/* Create sufficient storage in needed per-stamp histories */
+	datawin = MAX(datawin,state->Wwin);
+	datawin = MAX(datawin,state->DHwin+state->Dinitwin);
+	datawin = MAX(datawin,state->UHwin+state->Uinitwin);
+	history_init(&state->data_hist, datawin+1, sizeof(double) ); // supports sliding
+	history_init(&state->BL_hist, state->Wwin, sizeof(double) ); // no sliding
+}
+
+
+/* Process a single new data value, with index si, looking for D or U in
+ * the given scalar timeseries obeying a piecewise constant BaseLine model.
+ *
+ * Two types of detectors are used to capture Down and Up change points:
+ *  - local, a new approach whose core is implemented by LocalDjumpDetect()
+ *  - sliding min-window based  (as in RADclock’s RTT Upshift tracking)
+ * but applies each in both forward and backward ‘order’, resulting in four
+ * detectors:  D, WD, U, WU, applied in this order, with (almost no)
+ * coupling between them.
+ * The result is a detector of change in either direction (Up/Down) with
+ * good FP and FN performance, capable of detecting short duration holes
+ * like fast packets.
+ *
+ * When a detection is made using D, U, or WU on a stamp si, the inferred
+ * position (stamp) where the change actually occurred is Before si.
+ * The argument detections: returns the indices of the inferred detection
+ * point as a 4-vector [D WD U WU] detections, where a zero denotes no
+ * detection.  Multiple detections scenarios (at the same or different
+ * positions, detected at the same or different si) must be dealt with
+ * by the calling program.
+ */
+int
+BL_track(struct BLtrack_state *state, double *d, index_t si, index_t detections[])
+{
+	/* History conveniences */
+	history *data = &state->data_hist;
+	history *BL   = &state->BL_hist;
+
+	double *D;    // double history pointer for data extraction
+	int H, j;
+
+	/* Local D variables */
+	index_t new_Ddetect;
+	/* Local U variables */
+	double ref_level;
+	index_t this_detect;
+	/* Window D variables */
+	/* Window U variables */
+	index_t UWdetect;
+	int swin;    // = serarchwin = initwin + Hwin
+
+	/* Record new data point in history */
+	history_add(data, si, d);
+
+	/* Global Dshift adaptation */
+	//newD = history_find(data, si);     // ptr to new data point
+	state->BL = MIN(state->BL, *d);
+	history_add(BL, si, &state->BL);
+
+	/* Global-Local D detection (global since feed current BL as reference) */
+	H = state->DHwin;
+	if (state->Dpause)
+		state->Dpause--;
+	else {
+		D = history_find(BL, si - H);  // ptr to global BL used as reference
+		//ref_ind = si-DHwin;
+		new_Ddetect = LocalDjumpDetect(data, si, 1, *D, state->ctrigger, H);
+		if (new_Ddetect) {
+			new_Ddetect = si - H + new_Ddetect;  // convert relative posn to absolute
+			verbose(VERB_SYNC, "i=%lu: D Detection inferred Djump at i=%lu (delay = %ld)",
+			    si, new_Ddetect, si-new_Ddetect);
+			// Avoid guaranteed repeat detections on the same trigger point
+			state->Dpause = H;
+			// Try to avoid aftershock detections within tail of cluster
+			state->Dpause += H;
+			detections[0] = new_Ddetect;
+		}
+	}
+
+	/* Window based D detection */
+	if (state->DWpause)
+		state->DWpause--;
+	else  // prior to winmin update, pertains to window ending at si-1, as reqd here
+		if (state->winmin > state->BL + state->DWthres) {
+			verbose(VERB_SYNC, "i=%lu: DW Detection (delay = 0), of Delta = %4.3lf [ms]",
+			    si, 1000*(state->winmin - state->BL));
+			// Avoid possible after-shock detections due to multiple d`s over DWthres
+			state->DWpause = state->DHwin;
+			detections[1] = si;
+		}
+
+
+	/* Local U detection */
+	H = state->UHwin;
+	swin = H + state->Uinitwin;
+
+	/* Update reference level over searchwin */
+	if ( si < state->local_ref_end + state->Uinitwin )
+		ref_level = MIN(state->local_ref,*d);  // window not full, don't slide
+	else {
+		ref_level = history_min_slide_value_dbl(data, state->local_ref, state->local_ref_end, si-1);
+		state->local_ref_end++;
+	}
+	state->local_ref = ref_level;
+
+	if (state->Upause)
+		state->Upause--;
+	else {
+		this_detect = LocalDjumpDetect(data, si-swin+1, 0, ref_level, state->ctrigger, H);
+
+		/* Buffer detections believed to be from the same cluster ( from aftershock end) */
+		if (this_detect) {
+			this_detect = si - (state->Uinitwin-1) - this_detect;  // convert relative posn to absolute
+			if (state->bufferedU == 0) {  // new cluster
+				state->first_lUdetect = this_detect;    // index of first detection (cluster tail end)
+				state->last_lUdetect  = this_detect;    // index of last detection found (closest to U end)
+				state->bufferedU = 1;                   // start counting detections in this cluster
+				verbose(VERB_DEBUG, "i=%lu: BUFFering local U Detection #%d, inferred Ujump at i=%d ***",
+				    si, state->bufferedU, this_detect+1);
+			}
+			// Skip repeat detections, only buffer and report distinct ones
+			if (this_detect != state->last_lUdetect) {  // new detection
+				state->last_lUdetect = this_detect;
+				state->bufferedU += 1;
+				verbose(VERB_DEBUG, "i=%lu: BUFFering local U Detection #%d, inferred Ujump at i=%d",
+				    si, state->bufferedU, this_detect+1);
+			}
+		}
+
+		/* Finalize detection for this cluster, using the last one found
+		 * Based on when the last detection is beyond the expected cluster width
+		 */
+		if (state->bufferedU > 0 && si - state->first_lUdetect > swin + H) {
+			state->last_lUdetect += 1;  // CP convention: is 1st pt After change in forward order
+			verbose(VERB_SYNC, "i=%lu: U Detection, inferred Ujump at i=%d "
+			    "(delay = %d) [%d buffered detections]", si, state->last_lUdetect,
+			    si - state->last_lUdetect, state->bufferedU);
+			// Reset for next cluster
+			state->bufferedU = 0;
+
+			/* Backdate global BL following U detect by imposing ref_level
+			 * This may miss D's within Uwinitwin, and therefore be trapped low
+			 * before them. */
+//			for (j=state->last_lUdetect; j<=si; j++) {
+//				D = history_find(BL, j);
+//				*D = ref_level;
+//			}
+//			state->BL = ref_level;
+
+			/* Backdate global BL following U detect by trimmed online
+			 * WIP   This avoids immediate nbhd of U in case of -ve PE */
+//			for (j=state->last_lUdetect+1; j<=last_lUdetect+5; j++) {
+//				D = history_find(BL, j);
+//				*D = ref_level;
+//			}
+			// Update to current stamp
+//			for (j=state->last_lUdetect+6; j<=si; j++) {
+//			}
+//			state->BL = lastBL;
+
+			/* Backdate BL history following U detect using online restart
+			 * This approach will capture any D's over Uwinitwin and up to detection point */
+			double *BLh;
+			double lastBL;
+			// Initialize to data at detection point
+			D   = history_find(data, state->last_lUdetect);
+			BLh = history_find(BL,   state->last_lUdetect);
+			*BLh = *D;
+			// Initialize to ref_level at detection point [match matlab version]
+//			BLh = history_find(BL, state->last_lUdetect);
+//			*BLh = ref_level;
+			// Update to current stamp
+			lastBL = *BLh;
+			for (j=state->last_lUdetect+1; j<=si; j++) {
+				D = history_find(data, j);
+				BLh = history_find(BL, j);
+				*BLh = MIN(lastBL,*D);
+				lastBL = *BLh;
+			}
+			state->BL = lastBL;
+
+			detections[2] = state->last_lUdetect;
+		}
+	}
+
+
+	/* Update winmin over Wwin for UW, and next DW */
+	if ( si < state->winmin_end + state->Wwin )
+		ref_level = MIN(state->winmin,*d);  // window not full, don't slide
+	else {
+		ref_level = history_min_slide_value_dbl(data, state->winmin, state->winmin_end, si-1);
+		state->winmin_end++;
+	}
+	state->winmin = ref_level;
+
+	/* Window based U detection */
+	if (state->UWpause)
+		state->UWpause--;
+	else
+		if (state->winmin > state->BL + state->UWthres) {
+			UWdetect = si - state->Wwin + 1;
+			verbose(VERB_SYNC, "i=%lu: UW Detection inferred Ujump at i=%lu (delay = %d),"
+			    " of Delta = %4.3lf [ms]",
+			    si, UWdetect, si-UWdetect, 1000*(state->winmin - state->BL));
+			detections[3] = UWdetect;
+
+			/* Backdate global BL following U detect [traditional approach] */
+			state->BL = ref_level;
+			for (j=UWdetect; j<=si; j++) {
+				D = history_find(BL, j);
+				*D = ref_level;
+			}
+		}
+}
+
+
+/* Online asymmetry calibration algorithm, build on top of U/D detections
+ * from BL_track in each of Df and Db separately. Detections from either
+ * series are processed as they are found to form a set of candidate
+ * Inferred Clear Zones (ICZs) designed to be free of dangerous regions
+ * where CP detection is difficult, and/or congestion serious, as well as
+ * free from position errors in CP detections by the use of a trimming
+ * parameter. The minimum (Df,Db) baselines, and hence uA is calculated
+ * and details of the best (longest) one is stored.
+ * Initialization (beyond null init performed by create_calib) performed
+ * internally. The algorithm represents the the unification of two scalar
+ * detections into a genuine 2-vector detection algorithm.
+ */
+void
+asym_calibration(struct bidir_calibstate *state, struct bidir_stamp *bstamp,
+    struct bidir_refstamp *rstamp, int finalize)
+{
+
+	/* Now processing calibration stamp i {0,1,2,...) */
+	state->stamp_i++;   // initialized to -1 (no stamps processed)
+
+	index_t si = state->stamp_i;  // convenience
+
+	/* First stamp (stamp 0): perform basic state initialization beyond null */
+	if (si == 0) {
+		state->trim = 100;
+		state->minlength = 1000;
+		/* Ensure sliding window minima not trapped below true min */
+		state->mDf = state->mDb = 10;
+		/* BLtrack init, including history init (of data size at least trim) */
+		BL_track_init(&state->Df_state, 1 + state->trim);
+		BL_track_init(&state->Db_state, 1 + state->trim);
+	}
+
+
+	double Df, Db, uA;
+	double *D;    // double history pointer for data extraction
+
+	/* Calibration variables */
+ 	index_t newICP, ICPsafe;
+	index_t L, R, N;
+	index_t maxj = 0, minj = -1;    // since unsigned, -1 sets to maxint
+
+//verbose(VERB_SYNC, "[%d] i=%lu: detections min max: [%lu %lu]",state->sID, si,minj,maxj);
+
+	/* Extract new OWDs */
+	Df =   bstamp->Tb - rstamp->Tout;
+	Db = -(bstamp->Te - rstamp->Tin);
+	state->Df = Df;
+	state->Db = Db;
+
+	/* Detect CPs in each dimension */
+	index_t detectionsDf[4] = {0,0,0,0};
+	index_t detectionsDb[4] = {0,0,0,0};
+
+	//D = history_find(&state->Df_state.data_hist, si - 1);  // get previous point
+	BL_track(&state->Df_state, &Df, si, detectionsDf);
+	if (detectionsDf[0] || detectionsDf[1] || detectionsDf[2] || detectionsDf[3])
+		verbose(VERB_SYNC, "[%d] i=%lu: Df detections: [%lu %lu %lu %lu], (BL,Df) = (%4.4lf,%4.4lf) [ms]",
+		    state->sID, si, detectionsDf[0], detectionsDf[1], detectionsDf[2], detectionsDf[3],
+		    1000*state->Df_state.BL, 1000*Df);
+
+	//D = history_find(&state->Db_state.data_hist, si - 1);  // get previous point
+	BL_track(&state->Db_state, &Db, si, detectionsDb);
+	if (detectionsDb[0] || detectionsDb[1] || detectionsDb[2] || detectionsDb[3])
+		verbose(VERB_SYNC, "[%d] i=%lu: Db detections: [%lu %lu %lu %lu], (BL,Db) = (%4.4lf,%4.4lf) [ms]",
+		    state->sID, si, detectionsDb[0], detectionsDb[1], detectionsDb[2], detectionsDb[3],
+		    1000*state->Db_state.BL, 1000*Db);
+
+	/* Determine jump scenario */
+	for (int k=0; k<4; k++) {
+		if (detectionsDf[k] != 0) {  // ignore non-detections
+			maxj = MAX(maxj,detectionsDf[k]);
+			minj = MIN(minj,detectionsDf[k]);
+		}
+		if (detectionsDb[k] != 0) {  // ignore non-detections
+			maxj = MAX(maxj,detectionsDb[k]);
+			minj = MIN(minj,detectionsDb[k]);
+		}
+	}
+	// Add fake CP if needed to trigger final ICZ aligned at end of data
+	if ( finalize && maxj == 0) {
+		maxj = si + 1 + state->trim;
+		minj = maxj;
+	}
+//verbose(VERB_SYNC, "[%d] i=%lu: detections min max: [%lu %lu]",state->sID, si,minj,maxj);
+
+	/* If detection(s), process the candidate ICZ */
+	if (maxj > 0) {
+		newICP = maxj;    // will be used as lastICP for the next ICZ
+		ICPsafe = minj;   // used to avoid trouble for this ICZ only
+
+		/* Record new ICZ if passes quality check based on length */
+		if (state->lastICP > ICPsafe) {
+			N = state->lastICP - ICPsafe;
+			// in multiple detection case, All detections ignored
+			verbose(VERB_SYNC, "[%d] i=%lu: predates last detection by %lu, ignoring", state->sID, si, N);
+		} else if (state->lastICP == ICPsafe) {
+			verbose(VERB_SYNC, "[%d] i=%lu: coincides with last detection, no new ICZ to process", state->sID, si);
+		} else {
+			N = ICPsafe - state->lastICP;        // length of [lastICP, ICPsafe-1]
+			if (N > 2*state->trim + state->minlength) {
+				// Candidate ICZ passed, collect needed stats
+				L = state->lastICP + state->trim;    // start index of trimmed ICZ
+				R = ICPsafe - 1 - state->trim;       //   end index of trimmed ICZ
+				N = R - L + 1;                       //      length of trimmed ICZ
+				uA = state->mDf - state->mDb;
+
+				/* Record if best so far */
+				if (N >= state->N_best) {
+					state->N_best = N;
+					state->Df_best = state->mDf;
+					state->Db_best = state->mDb;
+					state->uA_best = uA;
+					state->posn_best = R;
+				}
+
+				verbose(VERB_SYNC, "[%d] i=%lu: ** Viable ICZ found at [%lu,%lu], results from trimmed ICZ"
+				    " over [%lu,%lu] (len %lu): [mDf,mDb] = [%4.3lf, %4.3lf],  asym = %4.3lf [ms]",
+				    state->sID, si, state->lastICP, ICPsafe - 1, L, R, N,
+				    1000*state->mDf, 1000*state->mDb, 1000*uA);
+			} else
+				verbose(VERB_SYNC, "[%d] i=%lu:  Candidate raw ICZ at [%lu,%lu] too short "
+				    " ((raw,trim) = (%lu,%d)), skipping",
+				    state->sID, si, state->lastICP, ICPsafe-1, N, N - 2*state->trim);
+		}
+
+		/* Detection(s) processed, reset lastICP to safe value if needed */
+		if (newICP > state->lastICP) {
+			state->lastICP = newICP;
+			state->mDf = 10;
+			state->mDb = 10;
+		}
+	} else
+		/* Track OWD minima over next potential (trimmed) ICZ */
+		if ( si >= state->lastICP + 2*state->trim) {  // if trimmed length > 0
+			D = history_find(&state->Df_state.data_hist, si - state->trim);
+			state->mDf = MIN(state->mDf,*D);
+			D = history_find(&state->Db_state.data_hist, si - state->trim);
+			state->mDb = MIN(state->mDb,*D);
+		}
+
+	/* Calibration Exit report */
+	if (finalize) {
+		if (state->N_best > 0)
+			verbose(VERB_SYNC, "[%d] cal_i=%lu: Calibration success: ICZ at [%lu,%lu] selected"
+			    " (len=%lu), [mDf,mDb] = [%4.lf, %4.3lf],  asym = %4.3lf [ms]",
+			    state->sID, si, state->posn_best - state->N_best + 1, state->posn_best, state->N_best,
+			    1000*state->Df_best , 1000*state->Db_best , 1000*state->uA_best);
+		else
+			verbose(VERB_SYNC, "[%d] cal_i=%lu: Calibration failure: no acceptable ICZ found"
+			    " respecting (trim,minlen) = (%d,%d)\n", state->sID, si, state->trim, state->minlength);
+	}
+}
+
 
 
 

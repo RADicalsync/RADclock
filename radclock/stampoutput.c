@@ -235,6 +235,20 @@ print_out_syncline(struct radclock_handle *handle, struct stamp_t *stamp, int sI
 			  (long long unsigned)BST(stamp)->Tf, stamp->IntRef.Tout, stamp->IntRef.Tin,
 			  stamp->ExtRef.Tout, stamp->ExtRef.Tin,
 			  sID);
+		  // Troubleshooting hack to export Df,Db (for verification) and un-backtracked BL
+//			struct bidir_caldata *caldata;
+//			struct bidir_calibstate *calstate;
+//			double Df, Db, BLf, BLb;
+//			if (handle->calibrate) {
+//				caldata = handle->caldata;
+//				calstate = &caldata->state[sID];
+//				Df = calstate->Df;
+//				Db = calstate->Db;
+//				BLf = calstate->Df_state.BL;
+//				BLb = calstate->Db_state.BL;
+//			} else
+//				Df = Db = BLf = BLb = 0;
+//			err = fprintf(handle->stampout_fd,"%.9lf %.9lf %.9lf %.9lf %d\n", Df, Db, BLf, BLb, sID);
 		}
 	else                           // RADstamp
 		if (handle->nservers == 1)
