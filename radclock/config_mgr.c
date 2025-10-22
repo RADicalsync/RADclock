@@ -59,46 +59,49 @@ struct _key {
 
 
 
-/* Definition of the keys used in the conf file */
+/* Definition of the keys used in the conf file
+ * Note: <service>_server services are denoted internally with
+ * SERVER_<service> variables.
+ */
 static struct _key keys[] = {
-	{ "radclock_version",		CONFIG_RADCLOCK_VERSION},
-	{ "verbose_level",			CONFIG_VERBOSE},
-	{ "synchronization_type",	CONFIG_SYNCHRO_TYPE},
-	{ "ipc_server",				CONFIG_SERVER_IPC},
-	{ "telemetry_server",		CONFIG_SERVER_TELEMETRY},
-	{ "shm_server",				CONFIG_SERVER_SHM},
-	{ "shm_dag_client",			CONFIG_SHM_DAG_CLIENT},
-	{ "ntp_server",				CONFIG_SERVER_NTP},
-	{ "public_ntp",				CONFIG_PUBLIC_NTP},
-	{ "vm_udp_server",			CONFIG_SERVER_VM_UDP},
-	{ "xen_server",				CONFIG_SERVER_XEN},
-	{ "vmware_server",			CONFIG_SERVER_VMWARE},
-	{ "adjust_FFclock",			CONFIG_ADJUST_FFCLOCK},
-	{ "adjust_FBclock",			CONFIG_ADJUST_FBCLOCK},
-	{ "polling_period",			CONFIG_POLLPERIOD},
-	{ "temperature_quality", 	CONFIG_TEMPQUALITY},
-	{ "ts_limit",				CONFIG_TSLIMIT},
-	{ "skm_scale",				CONFIG_SKM_SCALE},
-	{ "rate_error_bound",		CONFIG_RATE_ERR_BOUND},
-	{ "best_skm_rate",			CONFIG_BEST_SKM_RATE},
-	{ "offset_ratio",			CONFIG_OFFSET_RATIO},
-	{ "plocal_quality",			CONFIG_PLOCAL_QUALITY},
-	{ "init_period_estimate",	CONFIG_PHAT_INIT},
-	{ "host_asymmetry",			CONFIG_ASYM_HOST},
-	{ "network_asymmetry",		CONFIG_ASYM_NET},
-	{ "hostname",				CONFIG_HOSTNAME},
-	{ "time_server",			CONFIG_TIME_SERVER},
-	{ "network_device",			CONFIG_NETWORKDEV},
-	{ "sync_input_pcap",		CONFIG_SYNC_IN_PCAP},
-	{ "sync_input_ascii",		CONFIG_SYNC_IN_ASCII},
-	{ "sync_output_pcap",		CONFIG_SYNC_OUT_PCAP},
-	{ "sync_output_ascii",		CONFIG_SYNC_OUT_ASCII},
-	{ "clock_output_ascii",		CONFIG_CLOCK_OUT_ASCII},
-	{ "vm_udp_list",			CONFIG_VM_UDP_LIST},
-	{ "ntc",					CONFIG_NTC},
-	{ "is_ocn",					CONFIG_IS_OCN},
-	{ "is_tn",					CONFIG_IS_TN},
-	{ "",			 			CONFIG_UNKNOWN} // Must be the last one
+	{ "radclock_version",      CONFIG_RADCLOCK_VERSION},
+	{ "verbose_level",         CONFIG_VERBOSE},
+	{ "synchronization_type",  CONFIG_SYNCHRO_TYPE},
+	{ "ipc_server",            CONFIG_SERVER_IPC},
+	{ "telemetry_server",      CONFIG_SERVER_TELEMETRY},
+	{ "shm_server",            CONFIG_SERVER_EXTREF},
+	{ "shm_dag_client",        CONFIG_CLIENT_EXTREF}, // remove? (see ext_ref.h)
+	{ "ntp_server",            CONFIG_SERVER_NTP},
+	{ "public_ntp",            CONFIG_PUBLIC_NTP},
+	{ "vm_udp_server",         CONFIG_SERVER_VM_UDP},
+	{ "xen_server",            CONFIG_SERVER_XEN},
+	{ "vmware_server",         CONFIG_SERVER_VMWARE},
+	{ "adjust_FFclock",        CONFIG_ADJUST_FFCLOCK},
+	{ "adjust_FBclock",        CONFIG_ADJUST_FBCLOCK},
+	{ "polling_period",        CONFIG_POLLPERIOD},
+	{ "temperature_quality",   CONFIG_TEMPQUALITY},
+	{ "ts_limit",              CONFIG_TSLIMIT},
+	{ "skm_scale",             CONFIG_SKM_SCALE},
+	{ "rate_error_bound",      CONFIG_RATE_ERR_BOUND},
+	{ "best_skm_rate",         CONFIG_BEST_SKM_RATE},
+	{ "offset_ratio",          CONFIG_OFFSET_RATIO},
+	{ "plocal_quality",        CONFIG_PLOCAL_QUALITY},
+	{ "init_period_estimate",  CONFIG_PHAT_INIT},
+	{ "host_asymmetry",        CONFIG_ASYM_HOST},
+	{ "network_asymmetry",     CONFIG_ASYM_NET},
+	{ "hostname",              CONFIG_HOSTNAME},
+	{ "time_server",           CONFIG_TIME_SERVER},
+	{ "network_device",        CONFIG_NETWORKDEV},
+	{ "sync_input_pcap",       CONFIG_SYNC_IN_PCAP},
+	{ "sync_input_ascii",      CONFIG_SYNC_IN_ASCII},
+	{ "sync_output_pcap",      CONFIG_SYNC_OUT_PCAP},
+	{ "sync_output_ascii",     CONFIG_SYNC_OUT_ASCII},
+	{ "clock_output_ascii",    CONFIG_CLOCK_OUT_ASCII},
+	{ "vm_udp_list",           CONFIG_VM_UDP_LIST},
+	{ "ntc",                   CONFIG_NTC},
+	{ "is_ocn",                CONFIG_IS_OCN},
+	{ "is_tn",                 CONFIG_IS_TN},
+	{ "",                      CONFIG_UNKNOWN}  // Must be the last one
 };
 
 /* Definition of the options labels
@@ -146,10 +149,10 @@ config_init(struct radclock_config *conf)
 	conf->server_ntp        = DEFAULT_SERVER_NTP;
 	conf->adjust_FFclock    = DEFAULT_ADJUST_FFCLOCK;
 	conf->adjust_FBclock    = DEFAULT_ADJUST_FBCLOCK;
-	conf->server_shm        = DEFAULT_SERVER_SHM;
+	conf->server_extref     = DEFAULT_SERVER_EXTREF;
 	conf->public_ntp        = DEFAULT_PUBLIC_NTP;
 
-	strcpy(conf->shm_dag_client, "");
+	strcpy(conf->client_extref, "");
 
 	
 	
@@ -193,7 +196,7 @@ config_init(struct radclock_config *conf)
 	conf->time_server_ntc_mapping = 0; // Flag mapping as uninitialised
 	conf->time_server_ntc_count = 0;
 
-	// Clear all NTC server data
+	/* Clear all NTC server data */
 	for (int i =0; i < MAX_NTC; i++)
 	{
 		conf->ntc[i].id = -1;
@@ -376,7 +379,7 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 
 	/* Defines if this server is serving public NTP requests */
 	fprintf(fd, "# Public NTP server.\n");
-	fprintf(fd, "# Defines if this server is serving public NTP requests .\n");
+	fprintf(fd, "# Defines if this server is serving public NTP requests.\n");
 	fprintf(fd, "#\ton : Start service - Replies to public NTP requests\n");
 	fprintf(fd, "#\toff: Stop service  - Refuses public NTP requests\n");
 	if (conf == NULL)
@@ -420,21 +423,21 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 	fprintf(fd, "#\ton : Start service - Runs SHM module\n");
 	fprintf(fd, "#\toff: Stop service  - Deactivates SHM module\n");
 	if (conf == NULL)
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_SHM),
-				labels_bool[DEFAULT_SERVER_SHM]);
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_EXTREF),
+		    labels_bool[DEFAULT_SERVER_EXTREF]);
 	else
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_SHM),
-				labels_bool[conf->server_shm]);
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SERVER_EXTREF),
+		    labels_bool[conf->server_extref]);
 
-	/* Define SHM DAG Client IP */
-	fprintf(fd, "# SHM DAG Client IP.\n");
+	/* Define ExtRef Client IP */
+	fprintf(fd, "# ExtRef Client IP.\n");
 	fprintf(fd, "# Requires that DAG packets can only be received by this IP .\n");
 	if (conf == NULL)
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SHM_DAG_CLIENT),
-				DEFAULT_SHM_DAG_CLIENT);
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_CLIENT_EXTREF),
+		    DEFAULT_CLIENT_EXTREF);
 	else
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_SHM_DAG_CLIENT),
-				conf->shm_dag_client);
+		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_CLIENT_EXTREF),
+		    conf->client_extref);
 
 
 	/* *
@@ -920,30 +923,30 @@ switch (codekey) {
 			conf->is_tn = ival;
 		break;
 
-	case CONFIG_SERVER_SHM:
+	case CONFIG_SERVER_EXTREF:
 		// If value specified on the command line
-		if ( HAS_UPDATE(*mask, UPDMASK_SERVER_SHM) ) 
+		if ( HAS_UPDATE(*mask, UPDMASK_SERVER_EXTREF) )
 			break;
 		ival = check_valid_option(value, labels_bool, 2);
 		// Indicate changed value
-		if ( conf->server_shm != ival )
-			SET_UPDATE(*mask, UPDMASK_SERVER_SHM);
+		if ( conf->server_extref != ival )
+			SET_UPDATE(*mask, UPDMASK_SERVER_EXTREF);
 		if ( ival < 0)
 		{
 			verbose(LOG_WARNING, "shm_server value incorrect. Fall back to default.");
-			conf->server_shm = DEFAULT_SERVER_SHM;
+			conf->server_extref = DEFAULT_SERVER_EXTREF;
 		}
 		else
-			conf->server_shm = ival;
+			conf->server_extref = ival;
 		break;
 
-	case CONFIG_SHM_DAG_CLIENT:
+	case CONFIG_CLIENT_EXTREF:
 		// If value specified on the command line
-		if ( HAS_UPDATE(*mask, UPDMASK_SHM_DAG_CLIENT) ) 
+		if ( HAS_UPDATE(*mask, UPDMASK_CLIENT_EXTREF) )
 			break;
-		if ( strcmp(conf->shm_dag_client, value) != 0 )
-			SET_UPDATE(*mask, UPDMASK_SHM_DAG_CLIENT);
-		strcpy(conf->shm_dag_client, value);
+		if ( strcmp(conf->client_extref, value) != 0 )
+			SET_UPDATE(*mask, UPDMASK_CLIENT_EXTREF);
+		strcpy(conf->client_extref, value);
 
 		break;
 
@@ -1704,8 +1707,8 @@ void config_print(int level, struct radclock_config *conf, int ns)
 	verbose(level, "Client sync          : %s", labels_sync[conf->synchro_type]);
 	verbose(level, "Server IPC           : %s", labels_bool[conf->server_ipc]);
 	verbose(level, "Server Telemetry     : %s", labels_bool[conf->server_telemetry]);
-	verbose(level, "Server SHM           : %s", labels_bool[conf->server_shm]);
-	verbose(level, "SHM DAG Client       : %s", conf->shm_dag_client);
+	verbose(level, "Server EXTREF        : %s", labels_bool[conf->server_extref]);
+	verbose(level, "ExtRef Client        : %s", conf->client_extref);
 	verbose(level, "Server NTP           : %s", labels_bool[conf->server_ntp]);
 	verbose(level, "Server VM_UDP        : %s", labels_bool[conf->server_vm_udp]);
 	verbose(level, "Server XEN           : %s", labels_bool[conf->server_xen]);

@@ -281,10 +281,10 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	
 	UTCld_to_timeval(&time, xmt_tval);			// need to pass back a timeval
 
-   /* If we are the TN, push the ICN status word to all OCNs inband */
+	/* If we are the TN, push the ICN status word to all OCNs inband */
 	if (handle->conf->is_tn) {
 		if (ntp_key && IS_PRIVATE_KEY(key_id)) {
-			uint64_t icn_status;			// status of ICN i recorded in (i-1)th LSBit
+			uint64_t icn_status;    // status of ICN i recorded in (i-1)th LSBit
 			icn_status = ((struct bidir_perfdata *)handle->perfdata)->ntc_status & ICN_MASK;
 			//verbose(VERB_DEBUG, "icn_status = 0x%16llX", icn_status);
 			pkt->refid = htonl((uint32_t)icn_status);

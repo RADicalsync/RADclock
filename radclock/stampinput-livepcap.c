@@ -695,7 +695,7 @@ livepcapstamp_init(struct radclock_handle *handle, struct stampsource *source)
 	 * TODO:  set pktcap_tsmode up as conf param, if need to change ever arises.
 	 */
 	err = pktcap_set_tsmode(handle->clock, LIVEPCAP_DATA(source)->live_input,
-			PKTCAP_TSMODE_FFNATIVECLOCK, 0);
+	    PKTCAP_TSMODE_INTREF, 0);
 	if (err) {
 		verbose(LOG_WARNING, "Could not set requested pkt capture timestamping mode");
 		return (-1);

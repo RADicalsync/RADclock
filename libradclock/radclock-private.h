@@ -225,10 +225,10 @@ read_RADabs_UTC(struct radclock_data *rad_data, vcounter_t *vcount,
 		last  = rad_data->last_changed;
 		*time = *vcount * (long double)rad_data->phat + rad_data->ca;
 		if ( useplocal == 1 && (rad_data->phat != rad_data->phat_local) ) {
-			fprintf(stdout, "** read_RADabs_UTC:  without: %LF, ", *time);
+			//fprintf(stdout, "** read_RADabs_UTC:  without: %LF, ", *time);
 			*time += ((long double)*vcount - (long double)last) *
 						 (long double)(rad_data->phat_local - rad_data->phat);
-			fprintf(stdout, "*** with:  %Lf (plocal = %d)\n", *time, useplocal);
+			//fprintf(stdout, "*** with:  %Lf (plocal = %d)\n", *time, useplocal);
 		}
 	} while (last != rad_data->last_changed);
 	

@@ -28,7 +28,7 @@
 #define EXT_REF
 
 /* Definitions forming an API between the external DAGstamp generator running
- * on the DAGhost, and the SHM thread running in the TrustNode.
+ * on the DAGhost, and the EXTREF thread running in the TrustNode.
  */
 
 #define DAG_PORT 5671       // used for DAGhost --> TrustNode passing of DAGstamps

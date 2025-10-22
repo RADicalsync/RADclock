@@ -195,6 +195,8 @@ struct radclock_handle {
 	/* For telemetry - tracking delta in packet passing metrics */
 	uint64_t prior_ntp_sent, prior_ntp_rejected;
 
+	/* Asymmetry Calibration */
+	int calibrate;
 };
 
 

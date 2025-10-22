@@ -102,10 +102,14 @@ struct bidir_metaparam {
 typedef enum {
 	STAMP_UNKNOWN,
 	STAMP_SPY,
-	STAMP_NTP,         /* Handed by libpcap */
-	STAMP_NTP_PERF,    // bidir_stamp augmented with authoritative timestamps
+	STAMP_NTP,        // bidir_stamp
+	STAMP_NTP_INT,    // augmented with INTernal authoritative ts pair
+	STAMP_NTP_PERF,   // augmented with authoritative Int and/or Ext ts pairs
 	STAMP_PPS,
 } stamp_type_t;
+
+/* bidir_stamp augmented with authoritative timestamps */
+//#define STAMP_NTP_PERF(x) ((x)->type == STAMP_NTP_INT || (x)->type == STAMP_NTP_EXT)
 
 
 struct unidir_stamp {
@@ -120,6 +124,12 @@ struct bidir_stamp {
 	vcounter_t  Tf;    // vcount timestamp [counter value] of pkt returning to client
 };
 
+/* Authoritative client-side reference timestamp pair */
+struct bidir_refstamp {
+	long double Tout;  // [sec] outgoing packet (corresponding to Ta)
+	long double Tin;   // [sec] incoming packet (corresponding to Tf)
+};
+
 /* This structure augments bidir_stamp with additional authoritative timestamps
  * enabling independent validation, or SHM.  The traditional example is external
  * timestamps taken by a DAG card tapping packets passing in or out of the host.
@@ -127,10 +137,15 @@ struct bidir_stamp {
 struct bidir_stamp_perf
 {
 	struct bidir_stamp bstamp;
-	/* Authoritative client-side timestamps */
-	long double Tout;  // [sec] outgoing packet (corresponding to Ta)
-	long double Tin;   // [sec] incoming packet (corresponding to Tf)
+	/* Authoritative client-side timestamp pairs */
+	struct bidir_refstamp IntRef;    // internal reference/comparison
+	struct bidir_refstamp ExtRef;    // external reference
+	//long double Tout;  // [sec] outgoing packet (corresponding to Ta)
+	//long double Tin;   // [sec] incoming packet (corresponding to Tf)
 };
+
+
+
 
 
  /*  TODO: relocate stamp_t, bidir_perfdata, bidir_stamp_perf,...  to other files,
@@ -153,18 +168,20 @@ struct stamp_t {
 	union stamp_u {
 		struct unidir_stamp     ustamp;
 		struct bidir_stamp      bstamp;
-		struct bidir_stamp_perf pstamp;
+		//struct bidir_stamp_perf pstamp;
 	} st;
+	struct bidir_refstamp IntRef;    // internal reference/comparison
+	struct bidir_refstamp ExtRef;    // external reference
 };
 
 /* Macros to help directly access the relevant tuple in the union
  * Here x is a pointer to a stamp_t, returns a pointer to the tuple */
 #define UST(x)  (&((x)->st.ustamp))
 #define BST(x)  (&((x)->st.bstamp))
-#define PST(x)  (&((x)->st.pstamp))
-#define PSTB(x) (&((x)->st.pstamp.bstamp))
+//#define PST(x)  (&((x)->st.pstamp))
+//#define PSTB(x) (&((x)->st.pstamp.bstamp))
 // Extract the RADstamp 4tuple from the right place regardless of stamp type
-#define BD_TUPLE(x) ( ((x)->type == STAMP_NTP_PERF) ? PSTB(x) : BST(x) )
+//#define BD_TUPLE(x) ( ((x)->type == STAMP_NTP_PERF) ? PSTB(x) : BST(x) )
 
 //#define BD_TUPLE(res,x)              \
 //do {                                 \
@@ -365,7 +382,7 @@ struct bidir_algostate {
  * Although separate tasks requiring different data, some state is inherently
  * shared (eg stamp_i) and input PERFstamps are synchronous.
  * Terminology:
- *    PERF: pertains to the 6tuple PERF timestamp format jointly used
+ *    PERF: pertains to the 8tuple PERF timestamp format jointly used
  * RADperf: pertains to using Ref timestamps to judge RADclock performance
  */
 struct bidir_perfstate {
@@ -408,15 +425,14 @@ struct bidir_perfstate {
 
 };
 
-/* SHM variables needed to be visible outside the SHM thread */
+/* SHM variables needed to be visible outside the EXTREF thread */
 struct SHM_output {
 	/* Per-stamp SHM output */
 	double auRTT;    // RTT measured using authoritative timestamps
 	int SA;
-
 };
 
-/* RADclock perf variables needed to be visible outside the SHM thread */
+/* RADclock perf variables needed to be visible outside the EXTREF thread */
 struct RADperf_output {
 	/* Per-stamp PERF output */
 	double RADerror;
@@ -437,7 +453,8 @@ struct bidir_algodata {
 	struct bidir_algooutput *output;
 };
 
-/* RADclock perf data, holding 6-tuple input and processing enabling :
+
+/* RADclock perf data, holding 8-tuple input and processing enabling :
  *  - SHM of RADclock's server [using the authoritative timestamps]
  *  - analysis of RADclock performance [assuming a trusted server]
  *  - needed queues to perform matching

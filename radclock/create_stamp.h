@@ -68,10 +68,10 @@
 
 /* Matching modes for PERFstamps used in matching queue based on stamp_t :
  *  MODE_RAD : RAD stamps                [ `client' side in matching ]
- *  MODE_DAG : authoritative timestamps  [ `server' side in matching ]
+ *  MODE_EXT : authoritative timestamps  [ `server' side in matching ]
  */
 #define MODE_RAD (MODE_PRIVATE+1)    // ensures is above standard NTP modes
-#define MODE_DAG (MODE_PRIVATE+2)
+#define MODE_EXT (MODE_PRIVATE+2)
 
 /* 
  * store simple stats in incoming reference time information. Extensible.

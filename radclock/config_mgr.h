@@ -84,7 +84,7 @@
 #define DEFAULT_IS_OCN           BOOL_OFF    // Defines if this server is an OCN
 #define DEFAULT_IS_TN            BOOL_OFF    // Defines if this server is an TN
 #define DEFAULT_SERVER_TELEMETRY BOOL_OFF    // Creates telemetry cache files in /radclock
-#define DEFAULT_SERVER_SHM       BOOL_OFF    // Defines if SHM is active
+#define DEFAULT_SERVER_EXTREF    BOOL_OFF    // Defines if EXTREF is active
 #define DEFAULT_SERVER_NTP       BOOL_OFF    // Don't act as a server
 #define DEFAULT_SERVER_VM_UDP    BOOL_OFF    // Don't Start VM servers
 #define DEFAULT_SERVER_XEN       BOOL_OFF
@@ -106,7 +106,7 @@
 #define DEFAULT_SYNC_OUT_PCAP    "/etc/sync_output.pcap"
 #define DEFAULT_SYNC_OUT_ASCII   "/etc/sync_output.ascii"
 #define DEFAULT_CLOCK_OUT_ASCII  "/etc/clock_output.ascii"
-#define DEFAULT_SHM_DAG_CLIENT   "10.0.0.3"
+#define DEFAULT_CLIENT_EXTREF    "10.0.0.3"
 #define DEFAULT_VM_UDP_LIST      "vm_udp_list"
 #define DEFAULT_PUBLIC_NTP       BOOL_OFF
 #define DEFAULT_PUBLIC_NTP_LIMIT  50  // public response limit over a DEFAULT_PUBLIC_NTP_PERIOD
@@ -128,8 +128,8 @@
 #define CONFIG_SERVER_NTP      14
 #define CONFIG_ADJUST_FFCLOCK  15
 #define CONFIG_ADJUST_FBCLOCK  16
-#define CONFIG_SERVER_SHM      17
-#define CONFIG_SHM_DAG_CLIENT  18
+#define CONFIG_SERVER_EXTREF   17
+#define CONFIG_CLIENT_EXTREF   18
 /* Clock parameters */
 #define CONFIG_POLLPERIOD      20
 //#define CONFIG_            21
@@ -210,8 +210,8 @@
 #define UPD_NTP_DOWNSTREAM_PORT 0x2000000
 #define UPDMASK_SERVER_TELEMETRY 0x4000000
 #define UPDMASK_NTC             0x8000000
-#define UPDMASK_SERVER_SHM      0x20000000
-#define UPDMASK_SHM_DAG_CLIENT  0x40000000
+#define UPDMASK_SERVER_EXTREF   0x20000000
+#define UPDMASK_CLIENT_EXTREF   0x40000000
 #define UPDMASK_IS_OCN          0x80000000
 #define UPDMASK_IS_TN           0x100000000
 #define UPDMASK_PUBLIC_NTP      0x200000000
@@ -258,7 +258,7 @@ struct radclock_config {
 	int synchro_type;                  // multi-choice depending on client-side protocol
 	int server_ipc;                    // Boolean
 	int server_telemetry;              // Boolean
-	int server_shm;                    // Boolean
+	int server_extref;                 // Boolean
 	int server_ntp;                    // Boolean
 	int server_vm_udp;                 // Boolean
 	int server_xen;                    // Boolean
@@ -286,7 +286,7 @@ struct radclock_config {
 	char sync_out_ascii[MAXLINE];      // output processed stamp file
 	char clock_out_ascii[MAXLINE];     // output matlab requirements
 	char vm_udp_list[MAXLINE];         // File containing list of udp VM's
-	char shm_dag_client[MAXLINE];      // IP address of SHM DAG client
+	char client_extref[MAXLINE];       // IP address of ExtRef client (eg DAG) // remove? (see ext_ref.h)
 	struct NTC_Config ntc[MAX_NTC];    // NTC definition
 };
 

@@ -366,11 +366,10 @@ signal_handler(int sig)
 		}
 		break;
 
-	/* user signal 2 */
-
+	/* User signal 2 */
 	case SIGUSR2:
 		// This signal should be executed via ansible C&C - (sudo killall -31 radclock)
-		verbose(LOG_NOTICE, "SIGUSR2 received, light recheck of config - check public serving.");
+		verbose(LOG_NOTICE, "SIGUSR2 received (light config reload)");
 		light_config_parse(clock_handle->conf, &param_mask, clock_handle->is_daemon, &clock_handle->nservers);
 		break;
 	}
@@ -561,6 +560,7 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Multiple server management */
 	handle->nservers = 0;
 	handle->pref_sID = 0;
+	handle->last_sID = 0;
 	handle->pref_date = 0;
 
 	handle->run_mode = RADCLOCK_SYNC_NOTSET;
@@ -632,6 +632,9 @@ create_handle(struct radclock_config *conf, int is_daemon)
 	/* Initialize all servers to trusted. */
 	handle->servertrust = 0;
 
+	/* OCN calibration */
+	handle->calibrate = 0;
+
 	return (handle);
 }
 
@@ -696,7 +699,29 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	return;
 }
 
+/* Destroy state for perf calibration if existing, for all servers */
+void
+destroy_perf(struct radclock_handle *handle)
+{
+	struct bidir_perfdata *perfdata;
+	struct bidir_perfstate *state;
 
+	if (handle->perfdata) {
+		perfdata = handle->perfdata;
+		free(perfdata->RADbuff);
+		free(perfdata->laststamp);
+		free(perfdata->SHMoutput);
+		free(perfdata->RPoutput);
+		for (int s=0; s<handle->nservers; s++) {
+			state = &perfdata->state[s];
+			history_free(&state->stamp_hist);
+		}
+		free(perfdata->state);
+		destroy_stamp_queue(perfdata);
+		free(perfdata);
+		handle->perfdata = NULL;
+	}
+}
 
 
 static int
@@ -935,13 +960,17 @@ init_handle(struct radclock_handle *handle)
 	open_output_matlab(handle);
 
 	/* Open ascii sync output file (ie matched stamp timestamps)
-	 * Output PERFstamps if SHM thread running, or if reading them from input.
+	 * Output PERFstamps if EXTREF thread running, or if reading them from input.
 	 */
-	if (handle->conf->server_shm == BOOL_ON || (strlen(handle->conf->sync_in_ascii) > 0 &&
+	if (handle->conf->is_tn == BOOL_ON || handle->conf->is_ocn == BOOL_ON
+	    ||(strlen(handle->conf->sync_in_ascii) > 0 &&
 	    ((struct ascii_data*)(stamp_source->priv_data))->stamptype == STAMP_NTP_PERF) )
 		open_output_stamp(handle, STAMP_NTP_PERF);
 	else
 		open_output_stamp(handle, STAMP_NTP);
+
+	/* Asym calibration for OCNs */
+	handle->calibrate = 0;
 
 	return (0);
 }
@@ -1018,10 +1047,10 @@ start_live(struct radclock_handle *handle)
 		break;
 	}
 
-	/* SHM */
-	switch (handle->conf->server_shm) {
+	/* EXTREF */
+	switch (handle->conf->server_extref) {
 	case BOOL_ON:
-		err = start_thread_SHM(handle);
+		err = start_thread_EXTREF(handle);
 		if (err < 0)
 			return (1);
 		break;
@@ -1109,9 +1138,9 @@ start_live(struct radclock_handle *handle)
 		verbose(LOG_NOTICE, "Telemetry server thread is dead.");
 	}
 
-	if (handle->conf->server_shm == BOOL_ON) {
-		pthread_join(handle->threads[PTH_SHM_CON], &thread_status);
-		verbose(LOG_NOTICE, "SHM thread is dead.");
+	if (handle->conf->server_extref == BOOL_ON) {
+		pthread_join(handle->threads[PTH_EXTREF_CON], &thread_status);
+		verbose(LOG_NOTICE, "EXTREF thread is dead.");
 	}
 
 	pthread_join(handle->threads[PTH_TRIGGER], &thread_status);
@@ -1444,33 +1473,31 @@ main(int argc, char *argv[])
 	/* Need to know if we are replaying data or not. If not, no need to create
 	 * shared global data on the system or open a BPF. This define input to the
 	 * init of the radclock handle
-	 * TODO:  add new mode:  RADCLOCK_SYNC_DEAD_WITHSHM to is_live_source checking for DAG file
+	 * TODO:  add new mode:  RADCLOCK_SYNC_DEAD_WITHEXTREF to is_live_source checking for DAG file
 	 */
 	if (!is_live_source(handle))
 		handle->run_mode = RADCLOCK_SYNC_DEAD;
 	else
 		handle->run_mode = RADCLOCK_SYNC_LIVE;
 
-	/* Check compatibility for SHM thread
-	 * TODO: not a `server', better module_shm ?
+	/* Check compatibility for running dead */
+	if (handle->run_mode == RADCLOCK_SYNC_DEAD) {
+		if (conf->server_telemetry == BOOL_ON) {
+			verbose(LOG_ERR, "Configuration error. Disabling server_telemetry "
+			    "(must be running live and an NTC node).");
+			conf->server_telemetry = BOOL_OFF;
+		}
+	}
+
+	/* Check compatibility for EXTREF thread
 	 * TODO: these checks better centralised within create_source? (ditto those above)
 	 */
-	if (handle->conf->server_shm == BOOL_ON)
-	{
+	if (conf->server_extref == BOOL_ON) {
 		if (handle->run_mode == RADCLOCK_SYNC_LIVE && !handle->conf->is_tn ||
 		    handle->run_mode == RADCLOCK_SYNC_DEAD) {
-			verbose(LOG_ERR, "Configuration error. Disabling server_shm "
+			verbose(LOG_ERR, "Configuration error. Disabling server_extref "
 			    "(must be running live and an NTC Trust Node).");
-			handle->conf->server_shm = BOOL_OFF;
-		}
-
-		// Probably scrap this, since have probably decided to only have MAIN in
-		// any DEAD mode anyway.
-		if (handle->run_mode != RADCLOCK_SYNC_DEAD &&	// must be 'RADCLOCK_SYNC_DEAD_WITHSHM'
-			 handle->run_mode != RADCLOCK_SYNC_LIVE) {	// hack: must be false currently
-			verbose(LOG_ERR, "Configuration error. Disabling server_shm "
-				"(incompatible with running dead if DAG input not available).");
-			handle->conf->server_shm = BOOL_OFF;
+			conf->server_extref = BOOL_OFF;
 		}
 	}
 
@@ -1504,12 +1531,12 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Start SHM thread (could be alive or dead)
+	/* Start EXTREF thread (could be alive or dead)
 	 * From startlive:
 	 */
-//	switch (handle->conf->server_shm) {
+//	switch (handle->conf->server_extref) {
 //	case BOOL_ON:
-//		err = start_thread_SHM(handle);
+//		err = start_thread_EXTREF(handle);
 //		if (err < 0)
 //			return (1);
 //		break;
@@ -1518,9 +1545,9 @@ main(int argc, char *argv[])
 //		break;
 //	}
 
-//	if (handle->conf->server_shm == BOOL_ON) {
-//		pthread_join(handle->threads[PTH_SHM_CON], &thread_status);
-//		verbose(LOG_NOTICE, "SHM module thread is dead.");
+//	if (handle->conf->server_extref == BOOL_ON) {
+//		pthread_join(handle->threads[PTH_EXTREF_CON], &thread_status);
+//		verbose(LOG_NOTICE, "EXTREF module thread is dead.");
 //	}
 
 
@@ -1601,10 +1628,6 @@ main(int argc, char *argv[])
 
 	/* Free the clock handle members and itself. */
 	free(handle->conf->time_server);
-	free(handle->rad_data);
-	free(handle->rad_error);
-	free(handle->ntp_client);
-	free(handle->ntp_server);
 
 	/* Free memory allocated for NTP key database, if any. */
 	if (handle->ntp_keys)
@@ -1620,6 +1643,13 @@ main(int argc, char *argv[])
 	free(handle->pcap_queue);
 	free(handle->ieee1588eq_queue);
 
+	/* destroy the mRADclocks */
+	free(handle->rad_data);
+	free(handle->rad_error);
+	free(handle->ntp_client);
+	free(handle->ntp_server);
+
+	// destroy algodata
 	struct bidir_algodata *algodata = handle->algodata;
 	free(algodata->laststamp);
 	free(algodata->output);
@@ -1637,6 +1667,9 @@ main(int argc, char *argv[])
 	}
 	free(algodata->state);
 	destroy_stamp_queue((struct bidir_algodata*)handle->algodata);
+
+	// destroy perfdata if needed
+	destroy_perf(handle);
 
 	free(handle);
 	handle = NULL;

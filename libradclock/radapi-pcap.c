@@ -77,6 +77,9 @@ pktcap_set_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t mode
 		case PKTCAP_TSMODE_RADCLOCK:
 			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_RADCLOCK");
 			break;
+		case PKTCAP_TSMODE_INTREF:
+			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_INTREF");
+			break;
 		case PKTCAP_TSMODE_CUSTOM:
 			logger(RADLOG_NOTICE, "Requesting pkt timestamping mode PKTCAP_TSMODE_CUSTOM");
 			break;
@@ -129,6 +132,9 @@ pktcap_get_tsmode(struct radclock *clock, pcap_t *p_handle, pktcap_tsmode_t *mod
 		break;
 	case PKTCAP_TSMODE_RADCLOCK:
 		logger(RADLOG_NOTICE, "Capture mode consistent with PKTCAP_TSMODE_RADCLOCK");
+		break;
+	case PKTCAP_TSMODE_INTREF:
+		logger(RADLOG_NOTICE, "Capture mode consistent with INTREF");
 		break;
 	default:
 		logger(RADLOG_ERR, "Capture mode not a recognized preset, custom I hope!");

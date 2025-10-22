@@ -368,6 +368,8 @@ int radclock_get_status(struct radclock *clock, unsigned int *status);
  *		  read RADclock (native abs clock) in userland, based off kernel raw ts.
  *      Also useful in KV=2 when have no choice but to create a ts in the daemon.
  *      This option requires extra code to actually perform the RADCLOCK read.
+ *   PKTCAP_TSMODE_INTREF:  nanotime version of _FBclock for detailed comparison,
+ *      or use as an Internal Reference when the FB clock is a stratum-1
  *   PKTCAP_TSMODE_CUSTOM:  signal that a customized tsmode will be defined and
  *		  passed.
  */
@@ -379,6 +381,7 @@ enum pktcap_tsmode {
 	PKTCAP_TSMODE_FFNATIVECLOCK = 4,	//                "                    FFclock (native)
 	PKTCAP_TSMODE_FFDIFFCLOCK = 5,	//                "                    FF difference clock
 	PKTCAP_TSMODE_RADCLOCK = 6,		//    "   , plus RADclock timestamp (userland)
+	PKTCAP_TSMODE_INTREF = 7,        // like FBCLOCK, but with NANOTIME
 	PKTCAP_TSMODE_CUSTOM = 100			// adopt the customised tsmode
 };
 

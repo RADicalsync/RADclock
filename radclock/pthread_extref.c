@@ -84,7 +84,7 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 
 
 	/* Empty RAD halfstamp buffer into the perf matching queue (ie, take a
-	 * batch of RAD arrivals from PROC and put under SHM control).
+	 * batch of RAD arrivals from PROC and put under EXTREF control).
 	 * Each halfstamp successfully read is marked as read by zeroing the id.
 	 * Reads proceed backward in time until no unread stamps are left, or until
 	 * the (potentially advancing) write head position is encountered
@@ -110,7 +110,7 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 			 * the copy of the old value at r%N is still good. */
 			st_r->id = 0;
 			if ( perfdata->RADbuff_next - r >= N ) {
-				verbose(LOG_ERR, "SHM: halfstamp corrupted during RADstamp buffer"
+				verbose(LOG_ERR, "EXTREF: halfstamp corrupted during RADstamp buffer"
 				    " emptying, up to %d PERFstamps may have been lost", next0 - r + 1);
 				insertandmatch_halfstamp(perfdata->q, &copy, MODE_RAD);
 				break;
@@ -152,22 +152,27 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 	 */
 	static index_t last_next0 = 0;  // fake DAG support, and get_fullstamp_ efficiency
 	struct stamp_t RADstamp;
+	struct stamp_t *stampPTR;
 	struct radclock_error *rad_error;
 
 	if (0)  // ( got_dag_msg == 0 && next0 != last_next0 && handle->last_sID != -1)
 	{
+		//verbose(VERB_DEBUG, "Enter fake, last_sID = %d", handle->last_sID);
 		/* Obtain the last accepted RADstamp using the last_sID hack */
-		RADstamp = ((struct bidir_algodata*)handle->algodata)->laststamp[handle->last_sID];
-		rad_error = &handle->rad_error[handle->last_sID];
+		stampPTR = &((struct bidir_algodata*)handle->algodata)->laststamp[handle->last_sID];
+		if (stampPTR) {
+			RADstamp = *stampPTR;
+			rad_error = &handle->rad_error[handle->last_sID];
 
-		/* Construct fake DAG message to match RADstamp */
-		/* id field uint64_t --> l_fp conversion */
-		dag_msg.stampid.l_int = htonl(RADstamp.id >> 32);
-		dag_msg.stampid.l_fra = htonl((RADstamp.id << 32) >> 32);
-		inet_aton(RADstamp.server_ipaddr, &dag_msg.ip);
-		dag_msg.Tout = RADstamp.st.bstamp.Tb - rad_error->min_RTT/2 + 0.3e-3;
-		dag_msg.Tin  = RADstamp.st.bstamp.Te + rad_error->min_RTT/2 - 0.3e-3;
-
+			/* Construct fake DAG message to match RADstamp */
+			/* id field uint64_t --> l_fp conversion */
+			dag_msg.stampid.l_int = htonl(RADstamp.id >> 32);
+			dag_msg.stampid.l_fra = htonl((RADstamp.id << 32) >> 32);
+			inet_aton(RADstamp.server_ipaddr, &dag_msg.ip);
+			dag_msg.Tout = RADstamp.st.bstamp.Tb - rad_error->min_RTT/2 + 0.3e-3;
+			dag_msg.Tin  = RADstamp.st.bstamp.Te + rad_error->min_RTT/2 - 0.3e-3;
+		}
+ 		//verbose(VERB_DEBUG, "exit fake");
 		got_dag_msg = 1;
 	}
 
@@ -180,16 +185,15 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 		DAGstamp.id = ((uint64_t) ntohl(dag_msg.stampid.l_int)) << 32;
 		DAGstamp.id |= (uint64_t) ntohl(dag_msg.stampid.l_fra);
 		strcpy(DAGstamp.server_ipaddr, inet_ntoa(dag_msg.ip));
-		DAGstamp.st.pstamp.Tout = dag_msg.Tout;
-		DAGstamp.st.pstamp.Tin  = dag_msg.Tin;
+		DAGstamp.ExtRef.Tout = dag_msg.Tout;
+		DAGstamp.ExtRef.Tin  = dag_msg.Tin;
 
 		/* Corrupt DAG halfstamp inputs for testing */
 		//if (next0 % 3 == 0)	DAGstamp.id +=1;                  // corrupt some ids
 		//if (next0 % 2 == 0)	DAGstamp.server_ipaddr[0] = "9";  // corrupt some IPs
-
 		/* Insert DAG perf halfstamp into the PERFstamp matching queue */
 		//verbose(LOG_DEBUG, " ||| trying to insert a DAG halfstamp");
-		insertandmatch_halfstamp(perfdata->q, &DAGstamp, MODE_DAG);
+		insertandmatch_halfstamp(perfdata->q, &DAGstamp, MODE_EXT);
 	}
 
 
@@ -215,7 +219,7 @@ assemble_next_perfstamp(struct radclock_handle *handle, struct stamp_t *PERFstam
 }
 
 
-/* Process the new SHM stamp (contained within the PERFstamp).
+/* Process the new EXTREF stamp (contained within the PERFstamp).
  * On entry stamp_i is already updated to this stamp.
  * Fake SA generation
  *   {SYD,MEL}:  event based to orchestrate 2-level changes in {SYD,BRI}_OCN
@@ -261,7 +265,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 	/* Recall NTC_id mapping (see config_mgr.h) :
 	 *   TN:  0
 	 *  ICN:  (1,2,3,4,5) = (SYD,MEL,BRI,PER,ADL)
-	 *  OCN:  (1,2,3,4)   = (SYD,MEL,BRI,PER)  and +15 for ntc_id:  (16,17,18,19)
+	 *  OCN:  (1,2,3,4,5) = (SYD,MEL,BRI,PER,SYD_2)  and +15 for ntc_id:  (16,17,18,19)
 	 * Mapping convention into status words:
 	 *   - same as for sID into servertrust
 	 *   - ie value i mapped to (i+1)-th bit ,  thus the TN is the 1st bit
@@ -388,7 +392,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 					SA_detected = 1;    // flag SA still active
 				}
 			break;
-		default:  // other ICN, or an OCN
+		default:
 			SA_detected = 0;
 			break;
 	}
@@ -398,7 +402,7 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
 
 	/* Update servertrust  [ warn yourself of the SA's discovered ]
 	 * TODO: this overrides the servertrust setting - to be reviewed */
-	if (state->SA != SA_detected) {
+	if (state->SA != SA_detected ) {
 		handle->servertrust &= ~(1ULL << sID);    // clear bit
 		if (SA_detected)
 			handle->servertrust |= (1ULL << sID);  // set bit
@@ -432,8 +436,8 @@ SHMalgo(struct radclock_handle *handle, struct bidir_perfstate *state,
  * On entry stamp_i is already updated to this stamp.
  */
 void
-RADperfeval(struct radclock_handle *handle, struct bidir_perfstate *state,
-    struct bidir_stamp_perf *ptuple, struct radclock_data *rad_data,
+RADperfeval(struct radclock_handle *handle,
+    struct stamp_t *PERFstamp, struct radclock_data *rad_data,
     struct RADperf_output *RPoutput)
 {
 	long double time;
@@ -442,18 +446,25 @@ RADperfeval(struct radclock_handle *handle, struct bidir_perfstate *state,
 	/* Output a measure of clock error for this stamp by comparing midpoints
 	 *  clockerr = ( ( rAd(Ta) + rAd(Tf) ) - ( Tout + Tin ) / 2
 	 */
-	read_RADabs_UTC(rad_data, &ptuple->bstamp.Ta, &time, 1);
+	read_RADabs_UTC(rad_data, &BST(PERFstamp)->Ta, &time, 1);
 	clockerr = time;
-	read_RADabs_UTC(rad_data, &ptuple->bstamp.Tf, &time, 1);
+	read_RADabs_UTC(rad_data, &BST(PERFstamp)->Tf, &time, 1);
 	clockerr += time;
-	clockerr = ( clockerr - (ptuple->Tout + ptuple->Tin) ) / 2;
-	verbose(VERB_QUALITY, "Error in this rAdclock on this stamp is %4.2lf [ms]", 1000*clockerr);
+	/* If both references available, use Ext */
+	if (PERFstamp->type == STAMP_NTP_PERF) {
+		clockerr = ( clockerr - (PERFstamp->ExtRef.Tout + PERFstamp->ExtRef.Tin) ) / 2;
+		verbose(VERB_QUALITY, "Error in this rAdclock (using ExtRef) on this stamp is %4.2lf [ms]", 1000*clockerr);
+	}
+	if (PERFstamp->type == STAMP_NTP_INT) {
+		clockerr = ( clockerr - (PERFstamp->IntRef.Tout + PERFstamp->IntRef.Tin) ) / 2;
+		verbose(VERB_QUALITY, "Error in this rAdclock (using IntRef) on this stamp is %4.2lf [ms]", 1000*clockerr);
+	}
 
 	/* Update state */
-	state->RADerror = clockerr;
+	//state->RADerror = clockerr;    // perf state no longer passed
 
 	/* Update outputs */
-	RPoutput->RADerror = state->RADerror;
+	RPoutput->RADerror = clockerr;
 }
 
 
@@ -496,44 +507,60 @@ process_perfstamp(struct radclock_handle *handle)
 	}
 
 	verbose(VERB_DEBUG, "Popped a PERFstamp from server %d: [%llu]  "
-	    "%"VC_FMT" %"VC_FMT" %.6Lf %.6Lf    %.6Lf %.6Lf", sID,
+	    "%"VC_FMT" %"VC_FMT" %.6Lf %.6Lf   %.6Lf %.6Lf  %.6Lf %.6Lf", sID,
 	    (long long unsigned) PERFstamp.id,
-	    (long long unsigned) PSTB(&PERFstamp)->Ta,
-	    (long long unsigned) PSTB(&PERFstamp)->Tf,
-	    PSTB(&PERFstamp)->Tb, PSTB(&PERFstamp)->Te,
-	    PST(&PERFstamp)->Tin, PST(&PERFstamp)->Tout);
+	    (long long unsigned) BST(&PERFstamp)->Ta,
+	    (long long unsigned) BST(&PERFstamp)->Tf,
+	    BST(&PERFstamp)->Tb, BST(&PERFstamp)->Te,
+	    PERFstamp.IntRef.Tout, PERFstamp.IntRef.Tin,
+	    PERFstamp.ExtRef.Tout, PERFstamp.ExtRef.Tin);
 
 	if (sID < 0) {
 		verbose(LOG_WARNING, "Unrecognized PERFstamp popped, skipping it");
 		return 1;
 	}
 
-	/* Set pointers to data for this server */
+	/* Set pointers to data for this server. perfdata only defined for ICNs */
 	rad_data = &handle->rad_data[sID];
-	state     = &perfdata->state[sID];
-	SHMoutput = &perfdata->SHMoutput[sID];
-	RPoutput  = &perfdata->RPoutput[sID];
 	NTC_id = handle->conf->time_server_ntc_mapping[sID];
 
-	/* Now processing PERFstamp i {0,1,2,...) */
-	state->stamp_i++;   // initialized to -1 (no stamps processed)
-	// TODO: pass a noleap stamp instead
 	/* Process through the SHM algo */
-	SHMalgo(handle, state, &PERFstamp.st.pstamp, sID, NTC_id, SHMoutput);
+	// Currently SAs are all fake.   Need to disable when running dead to avoid
+	// trust failure from blocking passage of untrusted stamps to the algo and output
+	if (handle->conf->is_tn) {
+		state     = &perfdata->state[sID];
+		SHMoutput = &perfdata->SHMoutput[sID];
+		RPoutput  = &perfdata->RPoutput[sID];
+		/* Now processing PERFstamp i {0,1,2,...) */
+		state->stamp_i++;   // initialized to -1 (no stamps processed)
+
+		// TODO: pass a noleap stamp instead
+		if (handle->run_mode == RADCLOCK_SYNC_LIVE)
+			SHMalgo(handle, state, &PERFstamp, sID, NTC_id, SHMoutput);
+	}
+
+
 	/* Process through the RADclock performance evaluation */
-	RADperfeval(handle, state, &PERFstamp.st.pstamp, rad_data, RPoutput);
+	struct RADperf_output RPout;
+	if (handle->conf->is_ocn)
+		PERFstamp.type = STAMP_NTP_INT;    // hack, not even used at present
+	RADperfeval(handle, &PERFstamp, rad_data, &RPout);
+	if (handle->conf->is_tn) {
+		RPoutput->RADerror = RPout.RADerror;
+		state->RADerror    = RPout.RADerror;
+	}
 
 	/* Write ascii output line for this stamp to file if open */
 	print_out_syncline(handle, &PERFstamp, sID);
 
 	/* Telemetry
-	 * SHM thread telemetry triggering dealt with in PROC:process_stamp .
-	 * Here just document SHM and Perf variables sent over telemetry.
+	 * EXTREF thread telemetry triggering dealt with in PROC:process_stamp .
+	 * Here just document EXTREF and Perf variables sent over telemetry.
 	 * For each of these, state->stamp_i can be used to detect during trigger
 	 * checking if a perfstamp output has been missed by PROC.
 	 * Both are based on NTC_ids, with grafana manually separating into ICNs and OCNs. */
 
-	/* SHM */
+	/* EXTREF */
 		// NTC Central DB:  perfdata->ntc_status
 	/* Perf */
 		// TN DB:        state->RADerror for clock sID

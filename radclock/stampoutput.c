@@ -89,13 +89,13 @@ open_output_stamp(struct radclock_handle *handle, stamp_type_t type)
 		/* TODO: turn off buffering? */
 		setvbuf(handle->stampout_fd, (char *)NULL, _IONBF, 0);
 		fprintf(handle->stampout_fd, "%% BEGIN_HEADER\n");
-		if (type == STAMP_NTP_PERF) {
-			verbose(LOG_NOTICE, "Writing NTP_PERF (6tuple) stamp lines to file %s", out);
+		if (type == STAMP_NTP_PERF || type == STAMP_NTP_INT) {
+			verbose(LOG_NOTICE, "Writing NTP_PERF (8tuple) stamp lines to file %s", out);
 			fprintf(handle->stampout_fd, "%% description: radclock local vcounter "
 			    "NTP server, and reference timestamps\n");
 			fprintf(handle->stampout_fd, "%% type: NTP_PERF\n");
-			fprintf(handle->stampout_fd, "%% version: 1\n");
-			fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf RefIn RefOut [sID]\n");
+			fprintf(handle->stampout_fd, "%% version: 2\n");
+			fprintf(handle->stampout_fd, "%% fields: Ta Tb Te Tf IntRefOut IntRefIn ExtRefOut ExtRefIn [sID]\n");
 		} else {
 			verbose(LOG_NOTICE, "Writing NTP (4tuple) stamp lines to file %s", out);
 			fprintf(handle->stampout_fd, "%% description: radclock local vcounter "
@@ -199,7 +199,7 @@ close_output_matlab(struct radclock_handle *handle)
  * RADstamp case  [ 4tuple input for RADclock, and nonce for offline matching ]
  *  4tuple + nonce [+ sID]
  * PERFstamp case [ 4tuple input for RADclock, and 2tuple Reference timestamps
- *                  required for SHM/PERF evaluation ]
+ *                  required for EXTREF/PERF evaluation ]
  *  4tuple + {RefIn RefOut} [+ sID]  [ traditional order for backward compat ]
  *
  * Outputs one ascii line per stamp regardless of originating server, with
@@ -219,26 +219,30 @@ print_out_syncline(struct radclock_handle *handle, struct stamp_t *stamp, int sI
 	if (handle->stampout_fd == NULL)
 		return;
 
-	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_NTP_PERF) && (stamp->type != STAMP_SPY))
+	if ((stamp->type != STAMP_NTP)     && (stamp->type != STAMP_NTP_PERF) &&
+		 (stamp->type != STAMP_NTP_INT) && (stamp->type != STAMP_SPY))
 		verbose(LOG_ERR, "Do not know how to print a stamp of type %d", stamp->type);
 
-	if (stamp->type == STAMP_NTP_PERF)  // PERFstamp
+	if (stamp->type != STAMP_NTP)  // PERFstamp
 		if (handle->nservers == 1)  // omit last column with serverID
-			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf\n",
-			  (long long unsigned)PSTB(stamp)->Ta, PSTB(stamp)->Tb, PSTB(stamp)->Te,
-			  (long long unsigned)PSTB(stamp)->Tf, PST(stamp)->Tin, PST(stamp)->Tout);
-		 else                       // include serverID in last column
-			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %d\n",
-			  (long long unsigned)PSTB(stamp)->Ta, PSTB(stamp)->Tb, PSTB(stamp)->Te,
-			  (long long unsigned)PSTB(stamp)->Tf, PST(stamp)->Tin, PST(stamp)->Tout,
+			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %.9Lf %.9Lf\n",
+			  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+			  (long long unsigned)BST(stamp)->Tf, stamp->IntRef.Tout, stamp->IntRef.Tin,
+			  stamp->ExtRef.Tout, stamp->ExtRef.Tin);
+		else {                       // include serverID in last column
+			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %.9Lf %.9Lf %d\n",
+			  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+			  (long long unsigned)BST(stamp)->Tf, stamp->IntRef.Tout, stamp->IntRef.Tin,
+			  stamp->ExtRef.Tout, stamp->ExtRef.Tin,
 			  sID);
-	else                                 // RADstamp
-		 if (handle->nservers == 1)
+		}
+	else                           // RADstamp
+		if (handle->nservers == 1)
 			err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %llu\n",
 			  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
 			  (long long unsigned)BST(stamp)->Tf,
 			  (long long unsigned)stamp->id);
-		 else
+		else
 			/* Fake PERFstamp generation in multiple server case */
 			//err = fprintf(handle->stampout_fd,"%"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %d\n",
 			//  (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
@@ -269,13 +273,14 @@ print_out_clockline(struct radclock_handle *handle, struct stamp_t *stamp,
 	if (handle->matout_fd == NULL)
 		return;
 
-	if ((stamp->type != STAMP_NTP) && (stamp->type != STAMP_NTP_PERF) && (stamp->type != STAMP_SPY))
+	if ((stamp->type != STAMP_NTP)     && (stamp->type != STAMP_NTP_PERF) &&
+	    (stamp->type != STAMP_NTP_INT) && (stamp->type != STAMP_SPY))
 		verbose(LOG_ERR, "Do not know how to print a stamp of type %d", stamp->type);
 
 	/* ld since must hold [s] since timescale origin, and at least 1mus precision */
 	long double currtime_out, currtime_in;
-	currtime_out = (long double)(BD_TUPLE(stamp)->Ta * output->phat) + output->K;
-	currtime_in  = (long double)(BD_TUPLE(stamp)->Tf * output->phat) + output->K;
+	currtime_out = (long double)(BST(stamp)->Ta * output->phat) + output->K;
+	currtime_in  = (long double)(BST(stamp)->Tf * output->phat) + output->K;
 
 	char *buf;
 	buf = (char *) malloc(500 * sizeof(char));  // must be big enuf for single disk access
@@ -286,8 +291,8 @@ print_out_clockline(struct radclock_handle *handle, struct stamp_t *stamp,
 		"%"VC_FMT" %"VC_FMT" %"VC_FMT" %.9lg %.9lg %.9lg %.11Lf "
 		"%.11Lf %.10lf %.10lf %.6lg %.6lg %.6lg %"VC_FMT" %u "
 		"%.9lg %.9lg %.9lg",    // pathpenalty metrics
-		BD_TUPLE(stamp)->Tb,
-		(unsigned long long)BD_TUPLE(stamp)->Tf,
+		BST(stamp)->Tb,
+		(unsigned long long)BST(stamp)->Tf,
 		(unsigned long long)output->RTT,
 		output->phat,
 		output->plocal,

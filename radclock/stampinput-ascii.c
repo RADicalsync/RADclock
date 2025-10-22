@@ -103,7 +103,7 @@ open_stampfile(char* in, stamp_type_t *stamptype)
 		verbose(LOG_WARNING,"Stored ascii stamp file %s seems to be data free", in);
 	else
 		if (*stamptype == STAMP_NTP_PERF)
-			verbose(LOG_NOTICE, "Reading from ascii file %s (detected as NTP_PERF 6tuple)", in);
+			verbose(LOG_NOTICE, "Reading from ascii file %s (detected as NTP_PERF 8tuple)", in);
 		else
 			verbose(LOG_NOTICE, "Reading from ascii file %s (detected as NTP 4tuple)", in);
 
@@ -136,9 +136,11 @@ asciistamp_init(struct radclock_handle *handle, struct stampsource *source)
 /* Reads in a line of input from an ascii input file holding the timestamp tuple.
  * Different versions of the ascii input format are supported:
  *  NTP_PERF stamps:   [ auto-detected ]
- *   Version 1:   fields are Ta Tb Te Tf RefIn RefOut [sID]  (modern 6col file)
+ *   Version 1:   fields are Ta Tb Te Tf RefIn RefOut [sID]  **no longer supported**
+ *   Version 2:   fields are Ta Tb Te Tf IntRefOut IntRefIn ExtRefOut ExtRefin [sID] (8tuple)
  *    Here the Ref inputs are read into a NTP_PERF stamp_t
  *  NTP stamps:   [ auto-detected ]
+ *
  *   Unversioned: fields are Ta Tb Te Tf [RefIn [RefOut]]  ("4col 5col 6col" file)
  *   Version 3:   fields are Ta Tb Te Tf nonce
  *   Version 4:   fields are Ta Tb Te Tf nonce [sID]
@@ -155,7 +157,10 @@ asciistamp_init(struct radclock_handle *handle, struct stampsource *source)
  * is used on dead replay as in ascii data generation, the replay sID's need not
  * match the input sID's, as these are allocated in stamp arrival order
  * (see serverIPtoID). This is unimportant as the sID<-->IP mapping is arbitrary,
- * but can be confusing when externally visualising the output.
+ * but can be confusing when externally visualising the output. In particular
+ * any originally unavailable servers implicitly end up corresponding to the
+ * largest new sIDs, and so never appear in the new processing/output, not even
+ * as starved servers (meaningless when dead).
  *
  * TODO:  increase robustness to possible variations in import format
  *  Currently traditional 6col (and 5col) are "working" by fluke, sID read fails, so get
@@ -180,10 +185,21 @@ asciistamp_get_next(struct radclock_handle *handle, struct stampsource *source,
 	if (ASCII_DATA(source)->stamptype == STAMP_NTP_PERF) {
 		stamp->type = STAMP_NTP_PERF;
 		// verbose(LOG_NOTICE, "Getting next NTP_PERF 6tuple");
-		ncols = sscanf(line, "%"VC_FMT" %Lf %Lf %"VC_FMT" %Lf %Lf %d",
-		    &(PSTB(stamp)->Ta), &(PSTB(stamp)->Tb),
-		    &(PSTB(stamp)->Te), &(PSTB(stamp)->Tf),
-		    &(PST(stamp)->Tin), &(PST(stamp)->Tout), &input_sID);
+		ncols = sscanf(line, "%"VC_FMT" %Lf %Lf %"VC_FMT" %Lf %Lf %Lf %Lf %d",
+		    &(BST(stamp)->Ta), &(BST(stamp)->Tb),
+		    &(BST(stamp)->Te), &(BST(stamp)->Tf),
+		    &(stamp->IntRef.Tout), &(stamp->IntRef.Tin),
+		    &(stamp->ExtRef.Tout), &(stamp->ExtRef.Tin), &input_sID);
+// Version 1 input --> Version 2  hack setting IntRef = ExtRef ------------
+//		ncols = sscanf(line, "%"VC_FMT" %Lf %Lf %"VC_FMT" %Lf %Lf %d",
+//		    &(BST(stamp)->Ta), &(BST(stamp)->Tb),
+//		    &(BST(stamp)->Te), &(BST(stamp)->Tf),
+//		    &(stamp->ExtRef.Tin), &(stamp->ExtRef.Tout), &input_sID);
+//		stamp->IntRef.Tout = stamp->ExtRef.Tout;
+//		stamp->IntRef.Tin  = stamp->ExtRef.Tin;
+//		if (ncols != EOF)
+//			ncols = 9;
+// ---------------- end V1 hack --------------------------------------------
 	} else {
 		stamp->type = STAMP_NTP;
 		// verbose(LOG_NOTICE, "Getting next NTP 4tuple");
@@ -193,6 +209,9 @@ asciistamp_get_next(struct radclock_handle *handle, struct stampsource *source,
 		    &stamp->id, &input_sID);
 	}
 	free(line); line = NULL;  // clean slate for next line
+
+	/* Needed fields absent from ascii input */
+	stamp->refid = "FAKE";
 
 	if (ncols == EOF) {
 		verbose(LOG_NOTICE, "Got EOF on ascii input file.");
@@ -204,11 +223,12 @@ asciistamp_get_next(struct radclock_handle *handle, struct stampsource *source,
 		verbose(LOG_NOTICE, "Found %d columns in ascii input file", ncols);
 		/* Stamp read check */
 		if (stamp->type == STAMP_NTP_PERF) {
-			verbose(VERB_DEBUG,"read check: %"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %d",
-			    (long long unsigned)PSTB(stamp)->Ta, PSTB(stamp)->Tb, PSTB(stamp)->Te,
-			    (long long unsigned)PSTB(stamp)->Tf,
-			    PST(stamp)->Tin, PST(stamp)->Tout, input_sID);
-			if (ncols > 6)
+			verbose(VERB_DEBUG,"read check: %"VC_FMT" %.9Lf %.9Lf %"VC_FMT" %.9Lf %.9Lf %.9Lf %.9Lf %d",
+			    (long long unsigned)BST(stamp)->Ta, BST(stamp)->Tb, BST(stamp)->Te,
+			    (long long unsigned)BST(stamp)->Tf,
+			    stamp->IntRef.Tout, stamp->IntRef.Tin,
+			    stamp->ExtRef.Tout, stamp->ExtRef.Tin, input_sID);
+			if (ncols > 8)
 				verbose(LOG_NOTICE, "Assuming multiple servers, will assign fake "
 				    "IP's as 10.0.0.input_sID in first-seen order");
 		} else {

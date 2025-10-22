@@ -269,6 +269,7 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 		switch (*mode) {
 			case PKTCAP_TSMODE_SYSCLOCK:
 			case PKTCAP_TSMODE_FBCLOCK:
+			case PKTCAP_TSMODE_INTREF:
 			case PKTCAP_TSMODE_FFCLOCK:
 			case PKTCAP_TSMODE_FFNATIVECLOCK:
 			case PKTCAP_TSMODE_FFDIFFCLOCK:
@@ -297,7 +298,7 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 //			logger(RADLOG_ERR, "Getting initial timestamping mode failed: %s", strerror(errno));
 //		decode_bpf_tsflags_KV3(bd_tstamp);
 
-		/* Set FORMAT, FFC, and FLAG type components */
+		/* Set FORMAT, FFC, and FLAG type components to defaults */
 		bd_tstamp = BPF_T_MICROTIME | BPF_T_FFC | BPF_T_NORMAL;
 		/* Set CLOCK type component*/
 		switch (*mode) {
@@ -305,6 +306,11 @@ descriptor_set_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode, u_in
 				bd_tstamp |= BPF_T_SYSCLOCK;
 				break;
 			case PKTCAP_TSMODE_FBCLOCK:
+				bd_tstamp |= BPF_T_FBCLOCK;
+				break;
+			case PKTCAP_TSMODE_INTREF:
+				bd_tstamp ^= BPF_T_MICROTIME;   // delete BPF_T_MICROTIME
+				bd_tstamp |= BPF_T_NANOTIME;    // override with nano
 				bd_tstamp |= BPF_T_FBCLOCK;
 				break;
 			case PKTCAP_TSMODE_FFCLOCK:
@@ -394,7 +400,10 @@ descriptor_get_tsmode(struct radclock *handle, pcap_t *p_handle, int *mode)
 			*mode = PKTCAP_TSMODE_SYSCLOCK;
 			break;
 		case BPF_T_FBCLOCK:
-			*mode = PKTCAP_TSMODE_FBCLOCK;
+			if (bd_tstamp & BPF_T_NANOTIME)
+				*mode = PKTCAP_TSMODE_INTREF;
+			else
+				*mode = PKTCAP_TSMODE_FBCLOCK;
 			break;
 		case BPF_T_FFCLOCK:
 			*mode = PKTCAP_TSMODE_FFCLOCK;
@@ -971,7 +980,7 @@ extract_vcount_stamp(struct radclock *clock, pcap_t *p_handle,
 void
 ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
 {
-	static int limit = 0;					// limit verbosity to once-only
+	static int limit = 0;    // limit verbosity to once-only
 	//long double two32 = 4294967296.0;	// 2^32
 	//long double timetest;
 
@@ -979,15 +988,15 @@ ts_format_to_double(struct timeval *pcapts, int tstype, long double *timestamp)
 
 	switch (BPF_T_FORMAT(tstype)) {
 	case BPF_T_MICROTIME:
-		if (!limit) fprintf(stdout, "converting microtime\n");
+		if (!limit) logger(RADLOG_NOTICE, "converting microtime");
 		*timestamp += 1e-6 * pcapts->tv_usec;
 		break;
 	case BPF_T_NANOTIME:
-		if (!limit) fprintf(stdout, "converting nanotime\n");
+		if (!limit) logger(RADLOG_NOTICE, "converting nanotime");
 		*timestamp += 1e-9 * pcapts->tv_usec;
 		break;
 	case BPF_T_BINTIME:
-		if (!limit) fprintf(stdout, "converting bintime\n");
+		if (!limit) logger(RADLOG_NOTICE, "converting bintime");
 		if (sizeof(struct timeval) < 16)
 			fprintf(stderr, "Looks like timeval frac field is only 32 bits, ignoring!\n");
 		else {

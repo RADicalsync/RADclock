@@ -208,7 +208,7 @@ thread_data_processing(void *c_handle)
 
 
 void *
-thread_shm(void *c_handle)
+thread_extref(void *c_handle)
 {
 	struct radclock_handle *handle;
 	int err;
@@ -227,7 +227,7 @@ thread_shm(void *c_handle)
 	socket_desc = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 	if (socket_desc == -1) {
 		perror("socket");
-		verbose(LOG_ERR, "SHM: Could not create socket");
+		verbose(LOG_ERR, "EXTREF: Could not create socket");
 		pthread_exit(NULL);
 	}
 	handle->ref_source = socket_desc;
@@ -244,12 +244,12 @@ thread_shm(void *c_handle)
 
 	/* Bind socket */
 	if ( bind(socket_desc, (struct sockaddr *)&server, sizeof(server)) == -1 ) {
-		verbose(LOG_ERR, "SHM: Socket bind() error. Killing thread: %s", strerror(errno));
+		verbose(LOG_ERR, "EXTREF: Socket bind() error. Killing thread: %s", strerror(errno));
 		pthread_exit(NULL);
 	}
-	verbose(LOG_NOTICE, "SHM: now listening for DAG messages on port %d", DAG_PORT);
+	verbose(LOG_NOTICE, "EXTREF: now listening for DAG messages on port %d", DAG_PORT);
 
-	while ((handle->pthread_flag_stop & PTH_SHM_CON_STOP) != PTH_SHM_CON_STOP)
+	while ((handle->pthread_flag_stop & PTH_EXTREF_CON_STOP) != PTH_EXTREF_CON_STOP)
 	{
 		err = process_perfstamp(handle);
 		// TODO: add sleeping in here?
@@ -260,7 +260,7 @@ thread_shm(void *c_handle)
 	handle->ref_source = 0;
 
 	/* Thread exit */
-	verbose(LOG_NOTICE, "Thread shm is terminating.");
+	verbose(LOG_NOTICE, "Thread EXTREF is terminating.");
 	pthread_exit(NULL);
 }
 
@@ -411,16 +411,16 @@ start_thread_TELEMETRY_CON(struct radclock_handle *handle)
 }
 
 int
-start_thread_SHM(struct radclock_handle *handle)
+start_thread_EXTREF(struct radclock_handle *handle)
 {
 	int err;
 	pthread_attr_t thread_attr;
 	pthread_attr_init(&thread_attr);
 	pthread_attr_setdetachstate(&thread_attr, PTHREAD_CREATE_JOINABLE);
 
-	verbose(LOG_NOTICE, "Starting SHM thread");
-	err = pthread_create(&(handle->threads[PTH_SHM_CON]), &thread_attr,
-			thread_shm, (void *)(handle));
+	verbose(LOG_NOTICE, "Starting EXTREF thread");
+	err = pthread_create(&(handle->threads[PTH_EXTREF_CON]), &thread_attr,
+			thread_extref, (void *)(handle));
 	if (err)
 		verbose(LOG_ERR, "pthread_create() returned error number %d", err);
 	 return (err);
