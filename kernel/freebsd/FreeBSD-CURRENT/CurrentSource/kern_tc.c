@@ -1329,7 +1329,7 @@ sysclock_snap2bintime(struct sysclock_snap *cs, struct bintime *bt,
 		*bt = cs->fb_info.tick_time;
 
 		/* If snapshot was created with !fast, delta will be >0. */
-		if (flags & FBCLOCK_FAST && cs->delta > 0)
+		if (!(flags & FBCLOCK_FAST) && cs->delta > 0)
 			bintime_addx(bt, cs->fb_info.th_scale * cs->delta);
 
 		if ((flags & FBCLOCK_UPTIME) == 0) {

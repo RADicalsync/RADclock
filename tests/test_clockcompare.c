@@ -1,5 +1,5 @@
 /*
- * test_FFclocks -i ens33 -o test.out  -v	-f icmp
+ * test_clockcompare -i ens33 -o test.out  -v	-f icmp
  *
  * This file is part of the radclock program.
  *
@@ -261,30 +261,32 @@ main (int argc, char *argv[])
 	 * The default value of custom, 0x3012, is similar to FFNATIVECLOCK, except
 	 * the timestamp format is upped to bintime, giving maximum resolution.
 	 * Alternative values can be set on the command line using -c .
+	 * Remember a clock with FAST returns a smaller value, hence  fast - !fast is -ve
 	 */
 	u_int cus[nc];
 	// FreeBSD choice
 	cus[0] = 0x3012;			// FFnative; UTC !FAST; bintime
-	cus[1] = 0x2012;			// FFmono;   UTC !FAST; bintime
-	cus[2] = 0x0012;			// SYSclock; UTC !FAST; bintime
+	cus[1] = 0x2112;			// FFmono;   UTC  FAST; bintime  allows FAST/notFAST to be compared given FFnative&FFmono often the same otherwise
+	cus[2] = 0x0112;			// SYSclock; UTC  FAST; bintime  enables FB FAST/notFAST compare via SYSclock vs FBclock
 	cus[3] = 0x1012;			// FBclock;  UTC !FAST; bintime
 	cus[4] = 0x2212;			// FFmono;   Upt !FAST; bintime
 	cus[5] = 0x1212;			// FBclock;  Upt !FAST; bintime
-	// Linux choice
-	cus[0] = 0x3011;			// FFnative; UTC !FAST; nanotime
-	cus[1] = 0x2011;			// FFmono;   UTC !FAST;    "
-	cus[2] = 0x0011;			// SYSclock; UTC !FAST;    "
-	cus[3] = 0x1011;			// FBclock;  UTC !FAST;    "
-	cus[4] = 0x2211;			// FFmono;   Upt !FAST;    "
-	cus[5] = 0x1211;			// FBclock;  Upt !FAST;    "
+	// Linux choice  [ comment out if you don't want ! ]
+//	cus[0] = 0x3011;			// FFnative; UTC !FAST; nanotime
+//	cus[1] = 0x2011;			// FFmono;   UTC !FAST;    "
+//	cus[2] = 0x0011;			// SYSclock; UTC !FAST;    "
+//	cus[3] = 0x1011;			// FBclock;  UTC !FAST;    "
+//	cus[4] = 0x2211;			// FFmono;   Upt !FAST;    "
+//	cus[5] = 0x1211;			// FBclock;  Upt !FAST;    "
 
 
 	printf("------------------- Setting the packet tsmodes ------------------\n");
 	for (i=0; i<nc; i++)	{
 		pktcap_set_tsmode(c[i], ph[i], PKTCAP_TSMODE_CUSTOM, cus[i]);
-//		printf("------------------- Checking what it was finally set to ---------\n");
-//		pktcap_get_tsmode(c[i], ph[i], &tsm[i]);
-//		printf("----------------------------------------------------------------\n");
+		printf("------------------- Checking what it was finally set to ---------\n");
+		pktcap_tsmode_t tsm[nc];
+		pktcap_get_tsmode(c[i], ph[i], &tsm[i]);
+		printf("----------------------------------------------------------------\n");
 	}
 
 
@@ -330,7 +332,7 @@ main (int argc, char *argv[])
 	//vi = v[0];
 
 	printf("-------------------------------------------------------\n");
-	fprintf(stdout, " (raw)\t\t   UTC:  FF     FFmono SYS    FB     (FFmono-FF SYS-FF FB-FF) \t   UP:  FFmono  FB  (FB-FFmono) \n");
+	fprintf(stdout, " (raw)\t\t   UTC:  FF     FFmono SYS    FB     (FFmono-FF   SYS-FF   FB-FF) \t     UP:  FFmono  FB  (FB-SYS) \n");
 	printf("-------------------------------------------------------\n");
 
 	while (1) {
@@ -357,9 +359,9 @@ main (int argc, char *argv[])
 		fflush(output_fd);
 
 		if (verbose_flag || count_pkt < 2)
-			fprintf(stdout, " [%llu] \t %3.4Lf %3.4Lf %3.4Lf %3.4Lf (%3.3Lf [ms] %3.4Lf %3.4Lf) \t"
+			fprintf(stdout, " [%llu] \t %3.4Lf %3.4Lf %3.4Lf %3.4Lf (%3.3Lf[ms] %3.4Lf %3.4Lf[ms]) \t"
 			    " | %3.4Lf %3.4Lf (%3.5Lf)\n",
-			    (long long unsigned)(v[0]),	t[0], t[1], t[2], t[3], 1000*(t[1]-t[0]), t[2]-t[0], t[3]-t[0],
+			    (long long unsigned)(v[0]),	t[0], t[1], t[2], t[3], 1000*(t[1]-t[0]), t[2]-t[0], 1000*(t[3]-t[2]),
 			                                t[4], t[5], t[5]-t[4] );
 		
 		
