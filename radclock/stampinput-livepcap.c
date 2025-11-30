@@ -505,7 +505,7 @@ build_BPFfilter(struct radclock_handle *handle, char *fltstr, int maxsize, char 
 		return (-1);
 	}
 
-	if (strlen(handle->conf->time_server) == 0) {
+	if (strlen(handle->conf->time_server[0].domain) == 0) {
 		verbose(LOG_WARNING, "No NTP server specified, BPF filter not tight enough !!");
 		strsize = snprintf(fltstr, maxsize,
 			"(src host %s and dst port %d) or "
@@ -516,7 +516,7 @@ build_BPFfilter(struct radclock_handle *handle, char *fltstr, int maxsize, char 
 	} else {
 		strcpy(s_filter, "");
 		for (s=0; s<handle->nservers; s++) {
-			this_s = handle->conf->time_server + s*MAXLINE;
+			this_s = handle->conf->time_server[s].domain;
 			/* Write a complete filter for server s */
 			strsize = snprintf(s_filter, MAXLINE,
 					"(src host %s and dst port %d and dst host %s) or "

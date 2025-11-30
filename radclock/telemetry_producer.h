@@ -181,7 +181,7 @@ push_telemetry(struct radclock_handle *handle, int sID)
 		if (is_sID_NTC) {
 			struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
 			handle->telemetry_data.prior_data[sID].prior_status = handle->rad_data[sID].status;
-			handle->telemetry_data.prior_data[sID].prior_uA = state->Asymhat;;
+			handle->telemetry_data.prior_data[sID].prior_uA = state->Asymhat + state->base_asym;  // visualize first cut of base_asym + ∆asym
 			handle->telemetry_data.prior_data[sID].prior_leapsec_total = handle->rad_data[sID].leapsec_total;
 			handle->telemetry_data.prior_data[sID].prior_minRTT = handle->ntp_server[sID].minRTT;
 
@@ -253,7 +253,7 @@ push_telemetry_batch(int packetId, int *ring_write_pos, void * shared_memory_han
 				int NTC_id = handle->conf->time_server_ntc_mapping[sID];
 
 				struct bidir_algostate *state = &((struct bidir_algodata*)handle->algodata)->state[sID];
-				double uA = state->Asymhat; // (float)(rand()%1000) * 0.001;
+				double uA = state->Asymhat + state->base_asym;  // visualize first cut of base_asym + ∆asym
 				double err_bound = handle->rad_error[sID].error_bound;
 				double min_RTT   = handle->rad_error[sID].min_RTT;    // ;handle->ntp_server[sID].minRTT;
 

@@ -668,7 +668,7 @@ serverIPtoID(struct radclock_handle *handle, char *server_ipaddr)
 		client = &handle->ntp_client[s];
 //		verbose(LOG_NOTICE, "  Comparing stamp IP %s against client sID=%d (%s)",
 //			server_ipaddr, s, inet_ntoa(client->s_to.sin_addr) );
-		
+
 		/* Assign s to server IP addresses in order of first appearance in input */
 		if (handle->run_mode == RADCLOCK_SYNC_DEAD) {
 //			if (strcmp("", inet_ntoa(client->s_to.sin_addr)) == 0)
@@ -1009,16 +1009,17 @@ process_stamp(struct radclock_handle *handle)
 			verbose(VERB_SYNC, "Calibration results for server %d (started at %lu):", s,calstate->stamp_start);
 			asym_calibration(calstate, &replaystamp->st.bstamp, &replaystamp->IntRef, 1);
 
-			/* If calibration succeeds, update RADclock algo asym state */
-			  //insert value into conf params asym_{host,net} somehow.. */
+			/* If calibration succeeds, update algo asym state, and record in conf */
 			if (calstate->N_best > 0) {
 				index_t asymset_i = calstate->posn_best + calstate->stamp_start;
 			}
-			state->Asymhat = calstate->uA_best;    // reset asym used by algo, but how to backdate to asymset_i??
+			state->base_asym = calstate->uA_best;    // reset asym used by algo, but how to backdate to asymset_i??
+			handle->conf->time_server[s].asym = calstate->uA_best;
 		}
 		handle->calibrate = 0;
 		destroy_calib(handle);
 		verbose(LOG_NOTICE, "Calibration complete");
+		update_config_asym(handle->conf);
 	}
 
 
@@ -1166,10 +1167,10 @@ process_stamp(struct radclock_handle *handle)
 
 	/* Calibration switch on initialization  (stamp based control testing hack) */
 //	int switchon = 0;
-//	if (handle->calibrate == 0 && state->stamp_i == -1 )  // switch on once only
+//	if (handle->calibrate == 0 && state->stamp_i == -1)  // switch on once only
 //		switchon = 1;
 //
-//	if (state->stamp_i == 383167 -1  && handle->calibrate == 1) { // finalize once only // 12501-1
+//	if (state->stamp_i == 1000000 -1  && handle->calibrate == 1) { // finalize once only // 12501-1
 //		handle->calibrate = CALIB_FINALIZE;
 //		verbose(LOG_NOTICE, "Calibration finalizing (set by server %d)", sID);
 //	}
@@ -1178,7 +1179,6 @@ process_stamp(struct radclock_handle *handle)
 //		handle->calibrate = 1;
 //		/* Create and initialize the caldata handle, and all its internal variables and structures */
 //		create_calib(handle);
-//		caldata = handle->caldata;
 //		verbose(LOG_NOTICE, "Calibration activated (by server %d) ", sID);
 //		switchon = 0;
 //	}

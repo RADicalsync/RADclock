@@ -89,7 +89,7 @@ static struct _key keys[] = {
 	{ "plocal_quality",        CONFIG_PLOCAL_QUALITY},
 	{ "init_period_estimate",  CONFIG_PHAT_INIT},
 	{ "host_asymmetry",        CONFIG_ASYM_HOST},
-	{ "network_asymmetry",     CONFIG_ASYM_NET},
+//	{ "network_asymmetry",     CONFIG_ASYM_NET},
 	{ "hostname",              CONFIG_HOSTNAME},
 	{ "time_server",           CONFIG_TIME_SERVER},
 	{ "network_device",        CONFIG_NETWORKDEV},
@@ -175,11 +175,11 @@ config_init(struct radclock_config *conf)
 	conf->metaparam.relasym_bound_global = DEFAULT_RELASYM_BOUND_GLOBAL; // "
 	conf->phat_init                = DEFAULT_PHAT_INIT;
 	conf->asym_host                = DEFAULT_ASYM_HOST;
-	conf->asym_net                 = DEFAULT_ASYM_NET;
+//	conf->asym_net                 = DEFAULT_ASYM_NET;
 
 	/* Network level */
 	strcpy(conf->hostname, "");
-	conf->time_server = calloc(1,MAXLINE);  // always need at least one string
+	conf->time_server = calloc(1,MAXTSLINE);  // always need at least one string
 	conf->ntp_upstream_port	  = DEFAULT_NTP_PORT;
 	conf->ntp_downstream_port = DEFAULT_NTP_PORT;
 
@@ -199,8 +199,7 @@ config_init(struct radclock_config *conf)
 	conf->time_server_ntc_count = 0;
 
 	/* Clear all NTC server data */
-	for (int i =0; i < MAX_NTC; i++)
-	{
+	for (int i =0; i < MAX_NTC; i++) {
 		conf->ntc[i].id = -1;
 		conf->ntc[i].domain[0] = 0;
 	}
@@ -337,14 +336,16 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 
 
 	/* NTP server */
-	fprintf(fd, "# Time server answering the requests from this client.\n");
+	fprintf(fd, "# Time server answering the requests from this client, and known path asymmetry [s].\n");
 	fprintf(fd, "# Can be a host name or an IP address (uses lookup name resolution).\n");
-	if ( (conf) && (strlen(conf->time_server) > 0) )
+	if ( conf && (strlen(conf->time_server[0].domain) > 0) )
 		for (int s=0; s<ns; s++)
-			fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER),
-				conf->time_server + s*MAXLINE );
+			fprintf(fd, "%s = %s %lf\n", find_key_label(keys, CONFIG_TIME_SERVER),
+			    conf->time_server[s].domain, conf->time_server[s].asym );
 	else
-		fprintf(fd, "%s = %s\n\n", find_key_label(keys, CONFIG_TIME_SERVER), DEFAULT_TIME_SERVER);
+		fprintf(fd, "%s = %s %lf\n", find_key_label(keys, CONFIG_TIME_SERVER),
+		    DEFAULT_TIME_SERVER, DEFAULT_ASYM_NET);
+
 
 
 	fprintf(fd, "\n\n\n");
@@ -638,13 +639,6 @@ write_config_file(FILE *fd, struct _key *keys, struct radclock_config *conf, int
 	else
 		fprintf(fd, "%s = %lf\n\n", find_key_label(keys, CONFIG_ASYM_HOST), conf->asym_host);
 
-	/* Delta Network */
-	fprintf(fd, "# Estimation of the network asym (in seconds). \n"	);
-	if (conf == NULL)
-		fprintf(fd, "%s = %lf\n\n", find_key_label(keys, CONFIG_ASYM_NET), DEFAULT_ASYM_NET);
-	else
-		fprintf(fd, "%s = %lf\n\n", find_key_label(keys, CONFIG_ASYM_NET), conf->asym_net);
-
 
 
 	fprintf(fd, "\n\n\n");
@@ -821,7 +815,10 @@ update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *va
 
 	/* Light update: ignore all parameters except those of light type listed here
 	 * TODO: make this list more visible (macro?) or move to light_config_parse? */
-	if ( light_update && codekey != CONFIG_PUBLIC_NTP && codekey != CONFIG_CALIBRATE_ASYM) {
+	if (light_update
+	    && codekey != CONFIG_PUBLIC_NTP
+	    && codekey != CONFIG_TIME_SERVER    // for changing of asym member only
+	    && codekey != CONFIG_CALIBRATE_ASYM) {
 		return 0;
 	}
 
@@ -1304,25 +1301,6 @@ switch (codekey) {
 		}
 		break;
 
-
-	case CONFIG_ASYM_NET:
-		// If value specified on the command line
-		if ( HAS_UPDATE(*mask, UPDMASK_ASYM_NET) ) 
-			break;
-		dval = strtod(value, NULL);
-		// Indicate changed value
-		if ( conf->asym_net != dval )
-			SET_UPDATE(*mask, UPDMASK_ASYM_NET);
-		if ( (dval<0) || (dval>1)) {
-			verbose(LOG_WARNING, "Using network_asymmetry value out of range (%f). Falling back to default.", dval);
-			conf->asym_net = DEFAULT_ASYM_NET;
-		}
-		else {
-			conf->asym_net = dval;
-		}
-		break;
-
-
 	case CONFIG_HOSTNAME:
 		// If value specified on the command line
 		if ( HAS_UPDATE(*mask, UPDMASK_HOSTNAME) ) 
@@ -1342,8 +1320,7 @@ switch (codekey) {
 	 * last time (or ns=0 when starting).
 	 */
 	case CONFIG_TIME_SERVER:
-
-		verbose(VERB_DEBUG, "found server nf = %d (ns = %d)", *nf, ns);
+		//verbose(VERB_DEBUG, "found server nf = %d (ns = %d)", *nf, ns);
 
 		// If value specified on the command line, replace first server in config
 		if ( *nf == 0 && HAS_UPDATE(*mask, UPDMASK_TIME_SERVER) ) {
@@ -1352,50 +1329,77 @@ switch (codekey) {
 			break;
 		}
 
+		/* Config line can accept one or two arguments (can optionally exclude id) */
+		iqual = sscanf(value, "%s %lf", sval, &dval);
+		if (iqual == 1)
+			dval = 0;
+
 		// From file, process potentially multiple lines
-		char *this_s;		// start address of string for this server
-		if (*nf < ns) {	// if storage already there 
-			this_s = conf->time_server + (*nf)*MAXLINE;
-			if ( strcmp(this_s, value) != 0 )
+		struct time_server_Config *this_s;
+		if (*nf < ns) { // if storage already there
+//			this_s = conf->time_server + (*nf)*MAXLINE;
+			this_s = &conf->time_server[*nf];
+			if ( strcmp(&this_s->domain, sval) != 0 || this_s->asym != dval)
 				SET_UPDATE(*mask, UPDMASK_TIME_SERVER);
-		} else {			// must extend allocation, and record new origin
-			conf->time_server = realloc(conf->time_server,(*nf+1)*MAXLINE);
-			this_s = conf->time_server + (*nf)*MAXLINE;
+		} else {        // must extend allocation, and record new origin
+			conf->time_server = realloc(conf->time_server,(*nf+1)*MAXTSLINE);
+			this_s = &conf->time_server[*nf];
 			SET_UPDATE(*mask, UPDMASK_TIME_SERVER);
 		}
-		strcpy(this_s, value);
-		for (int s=0; s<*nf; s++)
-			verbose(LOG_WARNING, "Time server          : %d %s", s, conf->time_server + s*MAXLINE);
-		//verbose(LOG_DEBUG, " Adopting %s as server nf = %d (ns = %d)", this_s, *nf, ns);
+		strcpy(&this_s->domain, sval);
+		this_s->asym = dval;
+		//verbose(LOG_DEBUG, " Adopting %s as server nf = %d (ns = %d)", &this_s->domain, *nf, ns);
 		(*nf)++;
+//		for (int s=0; s<*nf; s++)
+//			verbose(LOG_INFO, "Time server          : %d %s \t%lf", s, conf->time_server[s].domain, conf->time_server[s].asym);
+//			//verbose(LOG_INFO, "Time server          : %d %s", s, conf->time_server + s*MAXLINE);
 		break;
+
+
+//	/* Hack: */
+//	case CONFIG_ASYM_NET:
+//		// If value specified on the command line
+//		if ( HAS_UPDATE(*mask, UPDMASK_ASYM_NET) )
+//			break;
+//		dval = strtod(value, NULL);
+//		// Indicate changed value
+//		if ( conf->asym_net != dval )
+//			SET_UPDATE(*mask, UPDMASK_ASYM_NET);
+//		if ( (dval<0) || (dval>1)) {
+//			verbose(LOG_WARNING, "Using network_asymmetry value out of range (%f). Falling back to default.", dval);
+//			conf->asym_net = DEFAULT_ASYM_NET;
+//		}
+//		else {
+//			conf->asym_net = dval;
+//		}
+//		break;
 
 
 	case CONFIG_NTC:
 		// If value specified on the command line
 
-		// Config line can accept one or two arguements (can optionally exclude id)
+		/* Config line can accept one or two arguments (can optionally exclude id) */
 		iqual = sscanf(value, "%s %d", sval, &ival);
+		// If a 2-arg case but id invalid, set up to skip this input completely
 		if (! (iqual == 2 && ival >= 0 && ival < MAX_NTC ) )
 			ival = -1;
-		if (iqual == 1)
-		{
+		// If id not provided for this n-th input, set it to n-1
+		if (iqual == 1) {
 			ival = 0;
 			for (iqual =0; iqual< MAX_NTC; iqual++)
-				if (conf->ntc[iqual].domain[0] == 0)
-				{
+				if (conf->ntc[iqual].domain[0] == 0) {
 					ival = iqual;
 					break;
 				}
 		}
-
-		if (0 <= ival && ival < MAX_NTC)
-		{
+		// Insert the domain and id in-situ in the id-th array position
+		if (0 <= ival && ival < MAX_NTC) {
 			SET_UPDATE(*mask, UPDMASK_NTC);
 			strcpy(conf->ntc[ival].domain, sval);
 			conf->ntc[ival].id = ival;
 		}
 		break;
+
 
 	case CONFIG_NETWORKDEV:
 		// If value specified on the command line
@@ -1475,16 +1479,15 @@ return 1;
 
 
 /*
- * Reads config file line by line, retrieve (key,value) and update global data\
- * Only parses select inforation from config. Doesn't attempt to reread all data
- * This allows avoids the need to shutdown and resetup running threads.
- * This should be allowed to run without interferring with live radclock running threads
+ * Reads config file line by line, retrieve (key,value) and update conf data,
+ * but only for selected config fields.
+ * This avoids unnecessary shutdown and relaunch of threads.
  */
 int light_config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns)
 {
 	struct _key *pkey = keys;
 	int codekey=0;
-	int nf;		// count time servers found
+	int nf;    // count time servers found
 	char *c;
 	char line[MAXLINE];
 	char key[MAXLINE];
@@ -1498,31 +1501,30 @@ int light_config_parse(struct radclock_config *conf, u_int32_t *mask, int is_dae
 	}
 	
 	/* Config and log files */
-	if (strlen(conf->conffile) == 0)
-	{
+	if (strlen(conf->conffile) == 0) {
 		if ( is_daemon )
 			strcpy(conf->conffile, DAEMON_CONFIG_FILE);
 		else
 			strcpy(conf->conffile, BIN_CONFIG_FILE);
 	}
 
-	if (strlen(conf->logfile) == 0)
-	{
+	if (strlen(conf->logfile) == 0) {
 		if ( is_daemon )
 			strcpy(conf->logfile, DAEMON_LOG_FILE);
 		else
 			strcpy(conf->logfile, BIN_LOG_FILE);
 	}
 
-	/* The file can't be opened. Ether it doesn't exist yet or I/O error.
-	 */
+	/* The file can't be opened. Ether it doesn't exist yet or I/O error. */
 	fd = fopen(conf->conffile, "r");
 	if (!fd) {
 		verbose(LOG_ERR, "Configuration file doesn't exist upon light config reparse.");
 		return 0;
 	}
 
-	while ((c=fgets(line, MAXLINE, fd))!=NULL) {
+	// The configuration file exists, parse it and update default values
+	nf = 0;
+	while ((c=fgets(line, MAXLINE, fd)) != NULL) {
 
 		// Start with a reset of the value to avoid mistakes
 		strcpy(value, "");
@@ -1530,7 +1532,7 @@ int light_config_parse(struct radclock_config *conf, u_int32_t *mask, int is_dae
 		// Extract key and values from the conf file
 		if ( !(extract_key_value(c, key, value) ))
 			continue;
-	
+
 		// Identify the key and update config values
 		codekey = match_key(pkey, key);
 
@@ -1546,6 +1548,90 @@ int light_config_parse(struct radclock_config *conf, u_int32_t *mask, int is_dae
 
 	return 1;
 }
+
+
+
+/* Parse the config file to locate the time_server lines, and update the
+ * asym member according to the current data in conf->time_server.
+ * Applies to all servers though often only 1 will have been updated.
+ * Works by writing a temporary file, then copying it over when done.
+ */
+void
+update_config_asym(struct radclock_config *conf)
+{
+	struct _key *pkey = keys;
+	int codekey=0;
+	int sID = 0;    // will equal sID of time_server line found
+	char *c;
+	char line[MAXLINE];
+	char key[MAXLINE];
+	char value[MAXLINE];
+	double dval = 0.0;
+	char sval[MAXLINE];
+	FILE* fd = NULL;
+	FILE* fdnew = NULL;
+
+	fd = fopen(conf->conffile, "r");
+	if (!fd) {
+		verbose(LOG_ERR, "update_config_asym: configuration file can't be opened");
+		return 0;
+	}
+	fdnew = fopen("conftemp.txt", "w");
+	if (!fd) {
+		verbose(LOG_ERR, "update_config_asym: conftemp file can't be opened");
+		return 0;
+	}
+
+	/* Line by line: scan current file line and construct new one */
+	while ((c=fgets(line, MAXLINE, fd)) != NULL)
+	{
+		/* Echo non-config lines (comments or empty lines) */
+		if ((*c=='#') || (*c=='\n') || (*c=='\0')) {
+			fprintf(fdnew, "%s", line);
+			continue;
+		}
+
+		/* Extract config line and identify type */
+		strcpy(value, "");
+		if ( !(extract_key_value(c, key, value) ))
+			continue;
+		codekey = match_key(pkey, key);
+
+		/* Echo non-time_server lines */
+		if (codekey != CONFIG_TIME_SERVER) {
+			fprintf(fdnew, "%s\n", line);
+			continue;
+		}
+
+		/* Found a time_server line, will be for server sID: update it */
+		//verbose(LOG_DEBUG, " Found this %d-th time_server asym line on conffile: %s", sID, value);
+		int iqual = sscanf(value, "%s %lf", sval, &dval);
+		if (iqual == 1)
+			dval = 0;
+
+		verbose(LOG_INFO, "Updating base asymmetry for server %d (%s) \t from %4.4lf to %4.4lf [ms]",
+		    sID, sval, 1000*dval, 1000*conf->time_server[sID].asym);
+		fprintf(fdnew, "%s = %s %lf\n", find_key_label(keys, CONFIG_TIME_SERVER),
+		    conf->time_server[sID].domain, conf->time_server[sID].asym );
+
+		sID++;
+	}
+
+	fclose(fd);
+	fclose(fdnew);
+
+	/* Replace conf file with updated version */
+	if (remove(conf->conffile) != 0) {
+		perror("update_config_asym: couldn't remove current conf file");
+		return;
+	}
+	if (rename("conftemp.txt", conf->conffile) != 0)
+		perror("update_config_asym: error updating conf file");
+
+	return 1;
+}
+
+
 
 
 /*
@@ -1643,7 +1729,7 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 	/* Trim any memory containing old servers, and update handle
 	   TODO: works in rehash case when must remember former ns value, and also servers? to remap databases? */
 	if (nf < *ns)
-		conf->time_server = realloc(conf->time_server, nf*MAXLINE);
+		conf->time_server = realloc(conf->time_server, nf*MAXTSLINE);
 	*ns = nf;
 
 
@@ -1652,22 +1738,24 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 	 * we just parsed the configuration, we can produce an up-to-date version.
 	 */
 	if ( strcmp(conf->radclock_version, PACKAGE_VERSION) != 0 ) {
+		verbose(LOG_WARNING, "Configuration file version %s differs from package %s",
+		    conf->radclock_version, PACKAGE_VERSION);
 
-		// Modify umask so that the file can be read by all after being written
-		umask(022);
-		fd = fopen(conf->conffile, "w");
-		if ( !fd ) {
-			verbose(LOG_ERR, "Cannot update configuration file: %s.", conf->conffile);
-			umask(027);
-			return 0;
-		}
-		write_config_file(fd, keys, conf, *ns);
-		fclose(fd);
-		umask(027);
-
-		// Adjust version
-		strcpy(conf->radclock_version, PACKAGE_VERSION);
-		verbose(LOG_NOTICE, "Updated the configuration file to the current package version");
+//		// Modify umask so that the file can be read by all after being written
+//		umask(022);
+//		fd = fopen(conf->conffile, "w");
+//		if ( !fd ) {
+//			verbose(LOG_ERR, "Cannot update configuration file: %s.", conf->conffile);
+//			umask(027);
+//			return 0;
+//		}
+//		write_config_file(fd, keys, conf, *ns);
+//		fclose(fd);
+//		umask(027);
+//
+//		// Adjust version
+//		strcpy(conf->radclock_version, PACKAGE_VERSION);
+//		verbose(LOG_NOTICE, "Updated the configuration file to the current package version");
 	}
 
 	/* Check command line arguments and config file for exclusion. 
@@ -1686,10 +1774,8 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 		exit(1);
 	}
 
-	/* Set the mapping between time_server index and NTC server ids
-	 * Mapping value is -1 if there is no match
-	 */
-
+	/* Set the mappings between time_server index and NTC ids (-1 if no match).
+	 * Start from scratch as server list may have changed */
 	if (conf->time_server_ntc_mapping) {
 		free(conf->time_server_ntc_mapping);
 		free(conf->time_server_ntc_indexes);
@@ -1699,20 +1785,21 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
 
 	conf->time_server_ntc_mapping = malloc(sizeof(int)*(*ns));
 	conf->time_server_ntc_count = 0;
-	// Match time_servers with NTCs, Non matches get a value of -1
-	for (int time_server_id = 0; time_server_id < *ns; time_server_id++)
+	// Match time_servers with NTCs, non matches get a value of -1
+	for (int sID=0; sID<*ns; sID++)
 	{
-		conf->time_server_ntc_mapping[time_server_id] = -1; // Set mapping initially to -1
-		char *this_s = conf->time_server + time_server_id * MAXLINE;
-		for (int NTC_id = 0; NTC_id < MAX_NTC; NTC_id ++)
+		conf->time_server_ntc_mapping[sID] = -1;
+		char *this_s = conf->time_server[sID].domain;
+		for (int NTC_id=0; NTC_id<MAX_NTC; NTC_id++)
 		{
-			if (strcmp(conf->ntc[NTC_id].domain, this_s) == 0) { // If match is found set the NTC id
-				conf->time_server_ntc_mapping[time_server_id] = conf->ntc[NTC_id].id;
+			if (strcmp(conf->ntc[NTC_id].domain, this_s) == 0) {  // if match found set the NTC id
+				conf->time_server_ntc_mapping[sID] = conf->ntc[NTC_id].id;
 				conf->time_server_ntc_count += 1;
-				conf->time_server_ntc_indexes = realloc(conf->time_server_ntc_indexes, sizeof(int)*conf->time_server_ntc_count);
-				conf->time_server_ntc_indexes[conf->time_server_ntc_count -1] = time_server_id;
-				verbose(LOG_INFO, "Configuration matched time_server:%s mapping for NTC:%d",
-				    this_s, conf->ntc[NTC_id].id);
+				conf->time_server_ntc_indexes =
+				    realloc(conf->time_server_ntc_indexes, sizeof(int)*conf->time_server_ntc_count);
+				conf->time_server_ntc_indexes[conf->time_server_ntc_count -1] = sID;
+				//verbose(LOG_INFO, "Config matched time_server %s \t to NTC:%d",
+				//    this_s, conf->ntc[NTC_id].id);
 			}
 		}
 	}
@@ -1758,10 +1845,11 @@ void config_print(int level, struct radclock_config *conf, int ns)
 	verbose(level, "path_scale           : %.9lf", conf->metaparam.path_scale);
 	verbose(level, "Initial phat         : %lg", conf->phat_init);
 	verbose(level, "Host asymmetry       : %lf", conf->asym_host);
-	verbose(level, "Network asymmetry    : %lf", conf->asym_net);
+	//verbose(level, "Network asymmetry    : %lf", conf->asym_net);
 	verbose(level, "Host name            : %s", conf->hostname);
 	for (int s=0; s<ns; s++)
-		verbose(level, "Time server          : %d %s", s, conf->time_server + s*MAXLINE);
+		verbose(level, "Time server          : %d %s \t Asym: %4.4lf [ms]", s,
+		    conf->time_server[s].domain, 1e3*conf->time_server[s].asym);
 	verbose(level, "Interface            : %s", conf->network_device);
 	verbose(level, "pcap sync input      : %s", conf->sync_in_pcap);
 	verbose(level, "ascii sync input     : %s", conf->sync_in_ascii);
@@ -1770,7 +1858,7 @@ void config_print(int level, struct radclock_config *conf, int ns)
 	verbose(level, "ascii clock output   : %s", conf->clock_out_ascii);
 
 	for (int i=0; i<MAX_NTC; i++)
-		if ( strlen(conf->ntc[i].domain) > 0 )
-			verbose(level, "NTC                  : %d %s", conf->ntc[i].id, conf->ntc[i].domain);
+		if ( strlen(conf->ntc[i].domain) > 0 )  // only print non-empty entries
+			verbose(level, "NTC database         : %d %s", conf->ntc[i].id, conf->ntc[i].domain);
 
 }

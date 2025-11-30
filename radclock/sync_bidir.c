@@ -523,8 +523,9 @@ init_algos(struct radclock_config *conf, struct bidir_algostate *state,
 	 * Asym plus rough initialized phat.  Errors in OWDs can be very large here,
 	 * but will not impact the initial Asym value.
 	 */
+	state->base_asym = conf->asym_host + conf->time_server[state->sID].asym;
 	double Df, Db, Asym;
-	Asym = 1e-6 * (conf->asym_host + conf->asym_net);    // params in mus
+	Asym = 0;    // make Asym related to ∆asym only, so initialize to 0
 	Df = (RTT * state->phat + Asym) / 2;
 	Db = Df - Asym;
 	state->Dfhat = Df;
@@ -1206,7 +1207,7 @@ BL_track(struct BLtrack_state *state, double *d, index_t si, index_t detections[
  * parameter. The minimum (Df,Db) baselines, and hence uA is calculated
  * and details of the best (longest) one is stored.
  * Initialization (beyond null init performed by create_calib) performed
- * internally. The algorithm represents the the unification of two scalar
+ * internally. The algorithm represents the unification of two scalar
  * detections into a genuine 2-vector detection algorithm.
  */
 void
@@ -1229,7 +1230,6 @@ asym_calibration(struct bidir_calibstate *state, struct bidir_stamp *bstamp,
 		BL_track_init(&state->Df_state, 1 + state->trim);
 		BL_track_init(&state->Db_state, 1 + state->trim);
 	}
-
 
 	double Df, Db, uA;
 	double *D;    // double history pointer for data extraction
@@ -2162,6 +2162,7 @@ process_thetahat_warmup(struct bidir_metaparam *metaparam, struct bidir_algostat
 	}
 	th_naive = (state->phat*((long double)stamp->Ta + (long double)stamp->Tf) +
 	    (2*state->K - (stamp->Tb + stamp->Te)))/2.0;
+	th_naive += state->base_asym/2.0;    // correct for 'known' asymmetry
 	history_add(&state->thnaive_hist, si, &th_naive);
 
 
@@ -2406,6 +2407,7 @@ void process_thetahat_full(struct bidir_metaparam *metaparam, struct bidir_algos
 	 * Also track last element stored in thnaive_end */
 	th_naive = (state->phat * ((long double)stamp->Ta + (long double)stamp->Tf) +
 	    (2 * state->K - (stamp->Tb + stamp->Te))) / 2.0;
+	th_naive += state->base_asym/2.0;    // correct for 'known' asymmetry
 	history_add(&state->thnaive_hist, si, &th_naive);
 
 	/* Initialize gapsize

@@ -371,12 +371,23 @@ signal_handler(int sig)
 		// This signal should be executed via ansible C&C - (sudo killall -31 radclock)
 		verbose(LOG_NOTICE, "SIGUSR2 received (light config reload)");
 		light_config_parse(clock_handle->conf, &param_mask, clock_handle->is_daemon, &clock_handle->nservers);
+
 		/* Public serving switching */
 		 // nothing to do, server code reacts directly to any change in conf->server_ntp
+
+		/* Base Asymmetry reload (asym part of time_server config) */
+		for (int s=0; s<clock_handle->nservers; s++) {
+			((struct bidir_algodata*)clock_handle->algodata)->state[s].base_asym =
+			    clock_handle->conf->asym_host +
+			    clock_handle->conf->time_server[s].asym;
+			verbose(LOG_NOTICE, "light reload processing: Time server now      : %d %s \t Asym: %4.4lf [ms]", s,
+			    clock_handle->conf->time_server[s].domain, 1e3*clock_handle->conf->time_server[s].asym);
+		}
 
 		/* Asymmetry Calibration control */
 		switch (clock_handle->calibrate) {
 			case 0:
+				verbose(LOG_NOTICE, "light reload processing: calib wasn't active");
 				if (clock_handle->conf->calibrate_asym == 1) {
 					create_calib(clock_handle);
 					clock_handle->calibrate = 1;
@@ -384,6 +395,7 @@ signal_handler(int sig)
 				}  // else nth to do, already off
 				break;
 			case 1:
+				verbose(LOG_NOTICE, "light reload processing:  calib was active");
 				if (clock_handle->conf->calibrate_asym == 0) {
 					clock_handle->calibrate = 2;
 					verbose(LOG_NOTICE, "Calibration signalled to finalize");
@@ -696,9 +708,10 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 	algodata->laststamp = calloc(ns,sizeof(struct stamp_t));
 	algodata->output = calloc(ns,sizeof(struct bidir_algooutput));
 	algodata->state = calloc(ns,sizeof(struct bidir_algostate));
-	for (s=0; s<ns; s++)
+	for (s=0; s<ns; s++) {
+		algodata->state[s].sID = s;
 		algodata->state[s].stamp_i = -1;  // signal no stamps processed yet
-
+	}
 	/* If is_tn, create and initialize the perfdata handle, and all its internal
 	 * variables and structures. */
 	if (handle->conf->is_tn) {
@@ -709,8 +722,10 @@ init_mRADclocks(struct radclock_handle *handle, int ns)
 		perfdata->SHMoutput = calloc(ns,sizeof(struct SHM_output));
 		perfdata->RPoutput  = calloc(ns,sizeof(struct RADperf_output));
 //		memset(perfdata->state, 0, ns * sizeof(struct bidir_perfstate));
-		for (s=0; s<ns; s++)
+		for (s=0; s<ns; s++) {
+			perfdata->state[s].sID = s;
 			perfdata->state[s].stamp_i = -1;  // signal no PERFstamps processed yet
+		}
 		perfdata->RADBUFF_SIZE = ns * 8;
 		perfdata->RADbuff = calloc(perfdata->RADBUFF_SIZE,sizeof(struct stamp_t));
 		perfdata->RADbuff_next = 0;
@@ -1055,7 +1070,7 @@ start_live(struct radclock_handle *handle)
 	 */
 	if ((handle->conf->synchro_type == SYNCTYPE_NTP) ||
 			(handle->conf->synchro_type == SYNCTYPE_1588)) {
-		if (strlen(handle->conf->time_server) == 0) {
+		if (strlen(handle->conf->time_server[0].domain) == 0) {
 			verbose(LOG_ERR, "No time server specified on command line "
 					"or configuration file, attempting suicide.");
 			return (1);
@@ -1612,6 +1627,7 @@ main(int argc, char *argv[])
 
 
 
+
 	/*
 	 * Now 2 cases. Either we are running live or we are replaying some data.
 	 * If we run live, we will spawn some threads and do some smart things.  If
@@ -1662,6 +1678,13 @@ main(int argc, char *argv[])
 	/* Print out last good phat value */
 	verbose(LOG_NOTICE, "Last estimate of the clock source period: %12.10lg",
 			RAD_DATA(handle)->phat);
+
+	/* destroy calibdata if needed */
+	if (handle->calibrate) {
+		destroy_calib(handle);
+		logger(RADLOG_ERR, "Calibration still running at shutdown, saving last results");
+		update_config_asym(handle->conf);
+	}
 
 	/* Say bye and close syslog */
 	verbose(LOG_NOTICE, "RADclock stopped");
@@ -1730,12 +1753,6 @@ main(int argc, char *argv[])
 
 	// destroy perfdata if needed
 	destroy_perf(handle);
-
-	// destroy calibdata if needed
-	if (handle->calibrate) {
-		destroy_calib(handle);
-		verbose(LOG_ERR, "Calibration still running at shutdown, results lost");
-	}
 
 	free(handle);
 	handle = NULL;

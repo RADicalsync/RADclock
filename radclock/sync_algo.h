@@ -254,6 +254,8 @@ struct algo_error {
 
 struct bidir_algostate {
 
+	int sID;    // my server ID
+
 	/* Unique stamp index (C notation [ 0 1 2 ..]) 136 yrs @ 1 stamp/[s] if 32bit */
 	index_t stamp_i;
 
@@ -282,7 +284,8 @@ struct bidir_algostate {
 	double Dbhat_shift_thres;  // threshold in [s] for triggering upward shift detection
 
 	/* Path Asymmetry */
-	double Asymhat;            // Estimate of underlying asymmetry
+	double base_asym;          // base asymmetry known from conf file or calibration
+	double Asymhat;            // Estimate of total tracked asymmetry change since start
 
 	/* Window sizes, measured in [pkt index] These control algorithm, independent of implementation */
 	index_t h_win;             // top level window of held memory/history: must forget past
@@ -453,6 +456,8 @@ struct bidir_calibstate {
  * RADperf: pertains to using Ref timestamps to judge RADclock performance
  */
 struct bidir_perfstate {
+
+	int sID;    // my server ID
 
 	index_t stamp_i;
 	struct bidir_stamp_perf stamp;  // input bidir_perf stamp (hence leap-free)

@@ -99,7 +99,7 @@ ntp_client_init(struct radclock_handle *handle)
 
 	/* Do we have what it takes? */
 	// mRAD: update after integrated conf changes
-	if (strlen(handle->conf->time_server) == 0) {
+	if (strlen(handle->conf->time_server[0].domain) == 0) {
 		verbose(LOG_ERR, "NTPclient: No NTP server specified!");
 		return (1);
 	}
@@ -143,7 +143,7 @@ ntp_client_init(struct radclock_handle *handle)
 		poll_period = (float) handle->conf->poll_period;	// upgrade after
 
 		ntpclient_period[s] = MIN(BURST_DELAY,poll_period);
-		domain = handle->conf->time_server + s*MAXLINE;
+		domain = handle->conf->time_server[s].domain;
 
 		/* Build server infos */
 		client->s_to.sin_family = PF_INET;
@@ -497,13 +497,17 @@ ntp_client(struct radclock_handle *handle)
 	while (retry > 0) {
 
 		// SHM suppression (hack to stop fake SAs to operational OCNs, fix above also!)
-		uint64_t ntc_status_save = ((struct bidir_perfdata *)handle->perfdata)->ntc_status;
-		if (OCN_id == 1 || OCN_id == 5)
-			((struct bidir_perfdata *)handle->perfdata)->ntc_status = 0;
+		uint64_t ntc_status_save;
+		if (handle->conf->is_tn) {
+				ntc_status_save = ((struct bidir_perfdata *)handle->perfdata)->ntc_status;
+				if (OCN_id == 1 || OCN_id == 5)
+					((struct bidir_perfdata *)handle->perfdata)->ntc_status = 0;
+		}
 
 		/* Create and send an NTP packet */
 		ret = create_ntp_request(handle, &spkt, &tv, ntp_key, key_id, &auth_bytes);
-		((struct bidir_perfdata *)handle->perfdata)->ntc_status = ntc_status_save; // reverse hack
+		if (handle->conf->is_tn)
+			((struct bidir_perfdata *)handle->perfdata)->ntc_status = ntc_status_save; // reverse hack
 		if (ret)
 			continue;	// retry never decremented ==> inf loop if create always fails!
 

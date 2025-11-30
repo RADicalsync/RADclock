@@ -100,7 +100,7 @@
 #define DEFAULT_ASYM_HOST        0.0         // [mus]
 #define DEFAULT_ASYM_NET         0.0         // [mus]
 #define DEFAULT_HOSTNAME         "platypus2.tklab.feit.uts.edu.au"
-#define DEFAULT_TIME_SERVER      "tock.une.edu.au"
+#define DEFAULT_TIME_SERVER      "ntp1.net.monash.edu.au"
 #define DEFAULT_NETWORKDEV       "em0"
 #define DEFAULT_SYNC_IN_PCAP     "/etc/sync_input.pcap"
 #define DEFAULT_SYNC_IN_ASCII    "/etc/sync_input.ascii"
@@ -136,7 +136,7 @@
 //#define CONFIG_            21
 #define CONFIG_PHAT_INIT       22
 #define CONFIG_ASYM_HOST       23
-#define CONFIG_ASYM_NET        24
+//#define CONFIG_ASYM_NET        24
 /* Environment */
 #define CONFIG_TEMPQUALITY     30
 #define CONFIG_TSLIMIT         31
@@ -188,7 +188,7 @@
 //#define UPDMASK_              0x0000002
 #define UPDMASK_TEMPQUALITY     0x0000004
 #define UPDMASK_ASYM_HOST       0x0000008
-#define UPDMASK_ASYM_NET        0x0000010
+//#define UPDMASK_ASYM_NET        0x0000010
 #define UPDMASK_SERVER_IPC      0x0000020
 #define UPDMASK_SYNCHRO_TYPE    0x0000040
 #define UPDMASK_SERVER_NTP      0x0000080
@@ -241,10 +241,15 @@
 /* Convert the NTC_id of an OCN into a `OCN_id' starting at 1, or -1 if not an OCN */
 #define OCN_ID(h) (h >= MAX_NTC/2 ? h - MAX_NTC/2 + 1 : -1 )
 struct NTC_Config {
-	int 	id;
-	char 	domain[MAXLINE];
+	int id;
+	char domain[MAXLINE];
 };
 
+struct time_server_Config {
+	char domain[MAXLINE];
+	double asym;
+};
+#define MAXTSLINE (sizeof(struct time_server_Config))
 
 /* Global structure used to keep track of the config parameters Mostly
  * used by signal handlers The fields correspond to the parameters
@@ -274,11 +279,12 @@ struct radclock_config {
 	int adjust_FBclock;                // Boolean
 	double phat_init;                  // Initial value for phat
 	double asym_host;                  // Host asymmetry estimate [s]
-	double asym_net;                   // Network asymmetry estimate [s]
+//	double asym_net;                   // Network asymmetry estimate [s]
 	int ntp_upstream_port;             // NTP Upstream port
 	int ntp_downstream_port;           // NTP Downstream port
 	char hostname[MAXLINE];            // Client hostname
-	char *time_server;                 // Server names, concatenated in MAXLINE blocks
+//	char *time_server;                 // Server names, concatenated in MAXLINE blocks
+	struct time_server_Config *time_server;  // Server configs, concatenated
 	int *time_server_ntc_mapping;      // Maps timer_server id to NTC ids, non NTC servers get -1
 	int *time_server_ntc_indexes;      // Lists the NTC server indexes relative to the time_server ordering.
 	    // Eg given time_servers A B C. If A and C are NTC servers then this would be 0,2
@@ -291,7 +297,7 @@ struct radclock_config {
 	char clock_out_ascii[MAXLINE];     // output matlab requirements
 	char vm_udp_list[MAXLINE];         // File containing list of udp VM's
 	char client_extref[MAXLINE];       // IP address of ExtRef client (eg DAG) // remove? (see ext_ref.h)
-	struct NTC_Config ntc[MAX_NTC];    // NTC definition
+	struct NTC_Config ntc[MAX_NTC];    // NTC database, entry posn = NTC_id
 };
 
 
@@ -308,6 +314,9 @@ int config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, i
  * This should be allowed to run without interferring with live radclock running threads
  */
 int light_config_parse(struct radclock_config *conf, u_int32_t *mask, int is_daemon, int *ns);
+
+/* Update the path asymmetry values recorded along with each time_server */
+void update_config_asym(struct radclock_config *conf);
 
 /* Output the config in config to verbose using level */
 void config_print(int level, struct radclock_config *conf, int ns);
