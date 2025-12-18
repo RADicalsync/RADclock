@@ -1254,14 +1254,14 @@ asym_calibration(struct bidir_calibstate *state, struct bidir_stamp *bstamp,
 	//D = history_find(&state->Df_state.data_hist, si - 1);  // get previous point
 	BL_track(&state->Df_state, &Df, si, detectionsDf);
 	if (detectionsDf[0] || detectionsDf[1] || detectionsDf[2] || detectionsDf[3])
-		verbose(VERB_SYNC, "[%d] i=%lu: Df detections: [%lu %lu %lu %lu], (BL,Df) = (%4.4lf,%4.4lf) [ms]",
+		verbose(LOG_NOTICE, "[%d] i=%lu: Df detections: [%lu %lu %lu %lu], (BL,Df) = (%4.4lf,%4.4lf) [ms]",
 		    state->sID, si, detectionsDf[0], detectionsDf[1], detectionsDf[2], detectionsDf[3],
 		    1000*state->Df_state.BL, 1000*Df);
 
 	//D = history_find(&state->Db_state.data_hist, si - 1);  // get previous point
 	BL_track(&state->Db_state, &Db, si, detectionsDb);
 	if (detectionsDb[0] || detectionsDb[1] || detectionsDb[2] || detectionsDb[3])
-		verbose(VERB_SYNC, "[%d] i=%lu: Db detections: [%lu %lu %lu %lu], (BL,Db) = (%4.4lf,%4.4lf) [ms]",
+		verbose(LOG_NOTICE, "[%d] i=%lu: Db detections: [%lu %lu %lu %lu], (BL,Db) = (%4.4lf,%4.4lf) [ms]",
 		    state->sID, si, detectionsDb[0], detectionsDb[1], detectionsDb[2], detectionsDb[3],
 		    1000*state->Db_state.BL, 1000*Db);
 
@@ -1292,9 +1292,9 @@ asym_calibration(struct bidir_calibstate *state, struct bidir_stamp *bstamp,
 		if (state->lastICP > ICPsafe) {
 			N = state->lastICP - ICPsafe;
 			// in multiple detection case, All detections ignored
-			verbose(VERB_SYNC, "[%d] i=%lu: predates last detection by %lu, ignoring", state->sID, si, N);
+			verbose(LOG_NOTICE, "[%d] i=%lu: predates last detection by %lu, ignoring", state->sID, si, N);
 		} else if (state->lastICP == ICPsafe) {
-			verbose(VERB_SYNC, "[%d] i=%lu: coincides with last detection, no new ICZ to process", state->sID, si);
+			verbose(LOG_NOTICE, "[%d] i=%lu: coincides with last detection, no new ICZ to process", state->sID, si);
 		} else {
 			N = ICPsafe - state->lastICP;        // length of [lastICP, ICPsafe-1]
 			if (N > 2*state->trim + state->minlength) {
@@ -1313,12 +1313,12 @@ asym_calibration(struct bidir_calibstate *state, struct bidir_stamp *bstamp,
 					state->posn_best = R;
 				}
 
-				verbose(VERB_SYNC, "[%d] i=%lu: ** Viable ICZ found at [%lu,%lu], results from trimmed ICZ"
+				verbose(LOG_NOTICE, "[%d] i=%lu: ** Viable ICZ found at [%lu,%lu], results from trimmed ICZ"
 				    " over [%lu,%lu] (len %lu): [mDf,mDb] = [%4.3lf, %4.3lf],  asym = %4.3lf [ms]",
 				    state->sID, si, state->lastICP, ICPsafe - 1, L, R, N,
 				    1000*state->mDf, 1000*state->mDb, 1000*uA);
 			} else
-				verbose(VERB_SYNC, "[%d] i=%lu:  Candidate raw ICZ at [%lu,%lu] too short "
+				verbose(LOG_NOTICE, "[%d] i=%lu:  Candidate raw ICZ at [%lu,%lu] too short "
 				    " ((raw,trim) = (%lu,%d)), skipping",
 				    state->sID, si, state->lastICP, ICPsafe-1, N, N - 2*state->trim);
 		}
@@ -1341,12 +1341,12 @@ asym_calibration(struct bidir_calibstate *state, struct bidir_stamp *bstamp,
 	/* Calibration Exit report */
 	if (finalize) {
 		if (state->N_best > 0)
-			verbose(VERB_SYNC, "[%d] cal_i=%lu: Calibration success: ICZ at [%lu,%lu] selected"
+			verbose(LOG_NOTICE, "[%d] cal_i=%lu: Calibration success: ICZ at [%lu,%lu] selected"
 			    " (len=%lu), [mDf,mDb] = [%4.lf, %4.3lf],  asym = %4.3lf [ms]",
 			    state->sID, si, state->posn_best - state->N_best + 1, state->posn_best, state->N_best,
 			    1000*state->Df_best , 1000*state->Db_best , 1000*state->uA_best);
 		else
-			verbose(VERB_SYNC, "[%d] cal_i=%lu: Calibration failure: no acceptable ICZ found"
+			verbose(LOG_NOTICE, "[%d] cal_i=%lu: Calibration failure: no acceptable ICZ found"
 			    " respecting (trim,minlen) = (%d,%d)\n", state->sID, si, state->trim, state->minlength);
 	}
 }

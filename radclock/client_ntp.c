@@ -279,7 +279,7 @@ create_ntp_request(struct radclock_handle *handle, struct ntp_pkt *pkt,
 	last_xmt.l_int = xmt.l_int;
 	last_xmt.l_fra = xmt.l_fra;
 	
-	UTCld_to_timeval(&time, xmt_tval);			// need to pass back a timeval
+	ld_to_timeval(&time, xmt_tval);    // need to return a timeval
 
 	/* If we are the TN, push the ICN status word to all OCNs inband */
 	if (handle->conf->is_tn) {

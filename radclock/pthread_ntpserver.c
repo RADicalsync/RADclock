@@ -128,8 +128,8 @@ thread_ntp_server(void *c_handle)
 	int PUBLIC_NTP_HASH_BUCKETS = DEFAULT_PUBLIC_NTP_HASH_BUCKETS;
 
 	/* NTP packet related */
-	double rootdelay;				// is uint32_t in ntp_pkt structure
-	double rootdispersion;		// is uint32_t in ntp_pkt structure
+	double rootdelay;         // is uint32_t in ntp_pkt structure
+	double rootdispersion;    // is uint32_t in ntp_pkt structure
 
 	/* Timestamps to send [ NTP format ]
 	 * reftime: last time (this host's) clock was updated (local time)
@@ -153,7 +153,7 @@ thread_ntp_server(void *c_handle)
 	memset((char *) &sin_client, 0, sizeof(struct sockaddr_in));
 	memset((char *) &sin_server, 0, sizeof(struct sockaddr_in));
 	len = sizeof(sin_client);
-	sin_server.sin_family      = AF_INET;
+	sin_server.sin_family = AF_INET;
 	sin_server.sin_addr.s_addr = htonl(INADDR_ANY);
 	sin_server.sin_port = htons((long)handle->conf->ntp_downstream_port);
 
@@ -167,7 +167,7 @@ thread_ntp_server(void *c_handle)
 	/* Initialize public serving rate control */
 	unsigned short ip_hash_current[PUBLIC_NTP_HASH_BUCKETS];
 	char ip_hash_enabled[PUBLIC_NTP_HASH_BUCKETS];
-	long double time;
+	long double time, time_rec;
 	memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
 	memset(ip_hash_enabled, 1, sizeof(char) * PUBLIC_NTP_HASH_BUCKETS);
 
@@ -211,67 +211,70 @@ thread_ntp_server(void *c_handle)
 				(struct sockaddr*)&sin_client, &len);
 		if (n < 0) {	// no bytes read after timeout
 
-			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
-			UTCld_to_NTPtime(&time, &reftime);
-			
-			// Check if we can loosen rejection policy
-			if (public_ntp_start_time + public_ntp_period < time)
-			{
-				// Potentially we can try to loosen policy if we are significantly under message count
-				// We can see how many requests we would have gotten in the last period if we had loosed the policy
-				// If it looked like we could have safely loosened then do it
+//			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
+//			UTCld_to_NTPtime(&time, &reftime);  // FIXME: why read this when have no pkt?  not used!
+//
+//			// Check if we can loosen rejection policy
+//			if (public_ntp_start_time + public_ntp_period < time)
+//			{
+//				// Potentially we can try to loosen policy if we are significantly under message count
+//				// We can see how many requests we would have gotten in the last period if we had loosed the policy
+//				// If it looked like we could have safely loosened then do it
+//
+//				if (public_ntp_current_period_responses < public_ntp_limit && public_ntp_reject_lvl > 0)
+//				{
+//					int bucket_id = get_min_disabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
+//					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
+//						public_ntp_reject_lvl -= 1;
+//						ip_hash_enabled[bucket_id] = 1;
+//						verbose(LOG_WARNING, "NTPserver: Idle - Loosening rejection policy to level %d/%d."
+//						    " Enabling bucket %d. Received lower %d requests in %d >= %d",
+//						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id,
+//						    (int)public_ntp_current_period_responses,
+//						    (int)(time - public_ntp_start_time), (int)public_ntp_period);
+//					} else
+//						verbose(LOG_ERR, "NTPserver: Idle - Loosening rejection error bucket_id %d not in range 0-%d",
+//						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
+//				}
+//
+//				// Reset NTP message counter
+//				public_ntp_current_period_responses = 0;
+//				public_ntp_start_time = time;
+//				memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
+//			}
 
-				if (public_ntp_current_period_responses < public_ntp_limit && public_ntp_reject_lvl > 0)
-				{
-					int bucket_id = get_min_disabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
-					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
-						public_ntp_reject_lvl -= 1;
-						ip_hash_enabled[bucket_id] = 1;
-						verbose(LOG_WARNING, "NTPserver: Idle - Loosening rejection policy to level %d/%d."
-						    " Enabling bucket %d. Received lower %d requests in %d >= %d",
-						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id,
-						    (int)public_ntp_current_period_responses,
-						    (int)(time - public_ntp_start_time), (int)public_ntp_period);
-					} else
-						verbose(LOG_ERR, "NTPserver: Idle - Loosening rejection error bucket_id %d not in range 0-%d",
-						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
-				}
-
-				// Reset NTP message counter
-				public_ntp_current_period_responses = 0;
-				public_ntp_start_time = time;
-				memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
-			}
-
-			continue;	// enable check if thread should STOP
+			continue;    // enable check if thread should STOP
 		}
 
 		/* Raw timestamp the request packet arrival: must be done ASAP */
+		struct timeval sys_tv;
+		if (handle->calibrate) {
+			gettimeofday(&sys_tv, NULL);  // get gtod ts close to raw
+			timeval_to_ld(&sys_tv, &time_rec);
+		}
 		err = radclock_get_vcounter(handle->clock, &vcount_rec);
 		if (err < 0) {
 			verbose(LOG_WARNING, "NTPserver: failed to read raw timestamp of incoming NTP request");
-			continue;			// response will not be sent
+			continue;    // response will not be sent
 		}
 
 		/* Process according to MODE of incoming packet */
 		pkt_in_mode = PKT_MODE( ((struct ntp_pkt*)pkt_in)->li_vn_mode );
 		switch (pkt_in_mode) {
-		case MODE_UNSPEC:
-		case MODE_ACTIVE:
-		case MODE_PASSIVE:
-		case MODE_SERVER:
-		case MODE_BROADCAST:
-			verbose(VERB_DEBUG, "NTPserver: received bad mode, ignoring.");
-			continue;
-
-		case MODE_PRIVATE:
-		case MODE_CONTROL:
-			/* Who is using ntpq or ntpdc? */
-			verbose(VERB_DEBUG, "NTPserver: received control message, ignoring.");
-			continue;
-
-		case MODE_CLIENT:
-			// process_MODEclient(...)    // move to this when process multiple modes
+			case MODE_UNSPEC:
+			case MODE_ACTIVE:
+			case MODE_PASSIVE:
+			case MODE_SERVER:
+			case MODE_BROADCAST:
+				verbose(VERB_DEBUG, "NTPserver: received bad mode, ignoring.");
+				continue;
+			case MODE_PRIVATE:
+			case MODE_CONTROL:
+				/* Who is using ntpq or ntpdc? */
+				verbose(VERB_DEBUG, "NTPserver: received control message, ignoring.");
+				continue;
+			case MODE_CLIENT:
+				// process_MODEclient(...)    // move to this when process multiple modes
 			break;
 		}
 
@@ -281,7 +284,7 @@ thread_ntp_server(void *c_handle)
 			memcpy(&rdata, RAD_DATA(handle), sizeof(struct radclock_data));
 		} while (memcmp(&rdata, RAD_DATA(handle), sizeof(struct radclock_data)) != 0);
 
-		
+
 		/* NTP specification "seems" to indicate that the dispersion grows linear
 		 * at worst case rate error set to 15 PPM. The constant component is twice
 		 * the precision +  the filter dispersion which is a weighted sum of the
@@ -291,10 +294,14 @@ thread_ntp_server(void *c_handle)
 		 * XXX Here I use the clock error as an equivalent to the filter
 		 * dispersion, I think it is safe to use the handle for that value
 		 * (should be some kind of longer term value anyway)
+		 * FIXME:  check defn, I removed rdata.phat, good?
 		 */
 		clockerror = RAD_ERROR(handle)->error_bound_avg;
-		rootdispersion = NTP_SERVER(handle)->rootdispersion + clockerror +
-			rdata.phat + (vcount_rec - rdata.last_changed) * rdata.phat_local * 15e-6;
+		rootdispersion = NTP_SERVER(handle)->rootdispersion + clockerror;
+		if (rdata.last_changed >= vcount_rec)
+			rootdispersion += (rdata.last_changed - vcount_rec) * rdata.phat_local * 15e-6;
+		else
+			rootdispersion += (vcount_rec - rdata.last_changed) * rdata.phat_local * 15e-6;
 
 		rootdelay = NTP_SERVER(handle)->rootdelay + NTP_SERVER(handle)->minRTT;
 
@@ -328,7 +335,7 @@ thread_ntp_server(void *c_handle)
 						if (handle->conf->is_ocn) {
 							uint64_t icn_status = ntohl(((struct ntp_pkt*)pkt_in)->refid);
 							uint64_t inband_trust = 0;
-							uint64_t server_trust_old = handle->servertrust ;
+							uint64_t server_trust_old = handle->servertrust;
 							int NTC_id;
 							/* Use NTC_id-indexed inband status word to update sID-indexed trustword
 							 * Currently a simple overwrite, no clever trust logic */
@@ -357,80 +364,80 @@ thread_ntp_server(void *c_handle)
 
 		/* Drop packets from the public (NTC customers) if public serving is disabled.
 		 * Requests with private TN-OCN keys will always be replied to. */
-		if ( ! handle->conf->public_ntp && !private_signed_ntp )
+		if ( !handle->conf->public_ntp && !private_signed_ntp )
 			continue;
 
 
 		// Once the public_ntp_limit is hit. Stop responding to NTP requests until window has expired
 		// Tighten hash filter
 		// Allow TN messages to always get a reply - possible exploit on replay attacks from the TN
-		if ( !private_signed_ntp && public_ntp_current_period_responses > public_ntp_limit ) {
-			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
-			UTCld_to_NTPtime(&time, &reftime);
-
-			if (public_ntp_start_time + public_ntp_period >= time) {  // if within window still
-				// Tighten hash filter
-				// We received too many messages within the window so tighten the policy
-				if (public_ntp_reject_lvl < PUBLIC_NTP_HASH_BUCKETS) {
-					int bucket_id = get_max_enabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
-					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
-						public_ntp_reject_lvl += 1;
-						ip_hash_enabled[bucket_id] = 0;
-						verbose(LOG_WARNING, "NTPserver: Tightening rejection policy to level %d/%d."
-						    " Disable bucket %d. Received %d requests in %d < %d",
-						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id,
-						    (int)public_ntp_current_period_responses,
-						    (int)(time - public_ntp_start_time), (int)public_ntp_period);
-					} else
-						verbose(LOG_ERR, "NTPserver: Tightening rejection error, bucket_id %d not in range 0-%d",
-						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
-				}
-			} else {
-				if (public_ntp_reject_lvl > 0) {
-					// Potentially we can try to loosen policy if we are significantly under message count
-					// We can see how many requests we would have gotten in the last period if we had loosed the rejection policy
-					// If it looked like we could have safely loosened then do it
-					int bucket_id = get_min_disabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
-					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
-						public_ntp_reject_lvl -= 1;
-						ip_hash_enabled[bucket_id] = 1;
-						verbose(LOG_WARNING, "NTPserver: Loosening rejection policy to level %d/%d."
-						    " Enabling bucket %d. Received lower %d requests in %d >= %d",
-						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id,
-						    (int)public_ntp_current_period_responses,
-						    (int)(time - public_ntp_start_time), (int)public_ntp_period);
-					} else
-						verbose(LOG_ERR, "NTPserver: Loosening rejection error, bucket_id %d not in range 0-%d",
-						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
-				}
-			}
-
-			// Reset NTP message counter
-			public_ntp_current_period_responses = 0;
-			memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
-			public_ntp_start_time = time;
-		}
+//		if ( !private_signed_ntp && public_ntp_current_period_responses > public_ntp_limit ) {
+//			read_RADabs_UTC(RAD_DATA(handle), &rdata.last_changed, &time, PLOCAL_ACTIVE);
+//			UTCld_to_NTPtime(&time, &reftime);
+//
+//			if (public_ntp_start_time + public_ntp_period >= time) {  // if within window still
+//				// Tighten hash filter
+//				// We received too many messages within the window so tighten the policy
+//				if (public_ntp_reject_lvl < PUBLIC_NTP_HASH_BUCKETS) {
+//					int bucket_id = get_max_enabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
+//					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
+//						public_ntp_reject_lvl += 1;
+//						ip_hash_enabled[bucket_id] = 0;
+//						verbose(LOG_WARNING, "NTPserver: Tightening rejection policy to level %d/%d."
+//						    " Disable bucket %d. Received %d requests in %d < %d",
+//						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id,
+//						    (int)public_ntp_current_period_responses,
+//						    (int)(time - public_ntp_start_time), (int)public_ntp_period);
+//					} else
+//						verbose(LOG_ERR, "NTPserver: Tightening rejection error, bucket_id %d not in range 0-%d",
+//						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
+//				}
+//			} else {
+//				if (public_ntp_reject_lvl > 0) {
+//					// Potentially we can try to loosen policy if we are significantly under message count
+//					// We can see how many requests we would have gotten in the last period if we had loosed the rejection policy
+//					// If it looked like we could have safely loosened then do it
+//					int bucket_id = get_min_disabled_bucket(ip_hash_current, ip_hash_enabled, PUBLIC_NTP_HASH_BUCKETS);
+//					if (bucket_id > -1 && bucket_id < PUBLIC_NTP_HASH_BUCKETS) {
+//						public_ntp_reject_lvl -= 1;
+//						ip_hash_enabled[bucket_id] = 1;
+//						verbose(LOG_WARNING, "NTPserver: Loosening rejection policy to level %d/%d."
+//						    " Enabling bucket %d. Received lower %d requests in %d >= %d",
+//						    (int)public_ntp_reject_lvl, PUBLIC_NTP_HASH_BUCKETS, bucket_id,
+//						    (int)public_ntp_current_period_responses,
+//						    (int)(time - public_ntp_start_time), (int)public_ntp_period);
+//					} else
+//						verbose(LOG_ERR, "NTPserver: Loosening rejection error, bucket_id %d not in range 0-%d",
+//						    bucket_id, PUBLIC_NTP_HASH_BUCKETS-1);
+//				}
+//			}
+//
+//			// Reset NTP message counter
+//			public_ntp_current_period_responses = 0;
+//			memset(ip_hash_current, 0, sizeof(unsigned short) * PUBLIC_NTP_HASH_BUCKETS);
+//			public_ntp_start_time = time;
+//		}
 
 		// Map IPS into the range of 0 - PUBLIC_NTP_HASH_BUCKETS inclusive
-		int ip_hash = hash_ip(&sin_client.sin_addr) % PUBLIC_NTP_HASH_BUCKETS ; 
+//		int ip_hash = hash_ip(&sin_client.sin_addr) % PUBLIC_NTP_HASH_BUCKETS ;
 
 		// Check if we reject public NTP request based on dis/en-able status of its bucket
-		if (!private_signed_ntp && public_ntp_reject_lvl > 0) {
-			if (! ip_hash_enabled[ip_hash]) {
-				ip_hash_current[ip_hash] += 1;
-				handle->rejected_public_ntp += 1;
-				verbose(VERB_DEBUG, "NTPserver: Rejected public packet %d - %d\n",
-				    ip_hash, public_ntp_current_period_responses);
-				continue;
-			}
-		}
-		ip_hash_current[ip_hash] += 1;
-		if (!private_signed_ntp) {
-			public_ntp_current_period_responses += 1;
-			handle->accepted_public_ntp += 1;
-			verbose(VERB_DEBUG, "NTPserver: Accepted public packet %d - %d\n",
-			    ip_hash, public_ntp_current_period_responses);
-		}
+//		if (!private_signed_ntp && public_ntp_reject_lvl > 0) {
+//			if (! ip_hash_enabled[ip_hash]) {
+//				ip_hash_current[ip_hash] += 1;
+//				handle->rejected_public_ntp += 1;
+//				verbose(VERB_DEBUG, "NTPserver: Rejected public packet %d - %d\n",
+//				    ip_hash, public_ntp_current_period_responses);
+//				continue;
+//			}
+//		}
+//		ip_hash_current[ip_hash] += 1;
+//		if (!private_signed_ntp) {
+//			public_ntp_current_period_responses += 1;
+//			handle->accepted_public_ntp += 1;
+//			verbose(VERB_DEBUG, "NTPserver: Accepted public packet %d - %d\n",
+//			    ip_hash, public_ntp_current_period_responses);
+//		}
 
 
 		/* Fill the outgoing packet
@@ -451,9 +458,9 @@ thread_ntp_server(void *c_handle)
 			pkt_out->li_vn_mode = PKT_LI_VN_MODE(LEAP_NOWARNING, ntpversion, MODE_SERVER);
 		}
 
-		pkt_out->ppoll			= ((struct ntp_pkt*)pkt_in)->ppoll;
-		pkt_out->precision		= -18;	/* TODO: should pass min(STA_NANO (or mus), phat) in power of 2 or so */
-		pkt_out->rootdelay 		= htonl( (uint32_t)(rootdelay * 65536. + 0.5));
+		pkt_out->ppoll = ((struct ntp_pkt*)pkt_in)->ppoll;
+		pkt_out->precision = -18;  /* TODO: should pass min(STA_NANO (or mus), phat) in power of 2 or so */
+		pkt_out->rootdelay = htonl( (uint32_t)(rootdelay * 65536. + 0.5));
 		pkt_out->rootdispersion = htonl( (uint32_t)(rootdispersion * 65536. + 0.5));
 
 		/* refid:  wording in the standard, for daemons with stratum>1, is unclear
@@ -474,6 +481,7 @@ thread_ntp_server(void *c_handle)
 
 
 		// inet_ntoa(NTP_CLIENT(handle)->s_from.sin_addr)
+
 
 
 
@@ -498,32 +506,50 @@ thread_ntp_server(void *c_handle)
 		pkt_out->org = ((struct ntp_pkt*)pkt_in)->xmt;
 
 		/* Receive Timestamp (Tb in algo language) */
-		read_RADabs_UTC(RAD_DATA(handle), &vcount_rec, &time, PLOCAL_ACTIVE);
-		UTCld_to_NTPtime(&time, &rec);
+		if (!handle->calibrate)  // otherwise time filled earlier with gtod
+			read_RADabs_UTC(RAD_DATA(handle), &vcount_rec, &time_rec, PLOCAL_ACTIVE);
+
+		UTCld_to_NTPtime(&time_rec, &rec);
 		pkt_out->rec.l_int = htonl(rec.l_int);
 		pkt_out->rec.l_fra = htonl(rec.l_fra);
 
-		verbose(VERB_DEBUG, "NTPserver: Reply to NTP client %s with statum=%d rdelay=%.06f "
-				"rdisp= %.06f clockerror= %.06f diff= %"VC_FMT" Tb= %d.%06d",
-				inet_ntoa(sin_client.sin_addr), pkt_out->stratum, rootdelay,
-				rootdispersion, clockerror, (vcount_rec - rdata.last_changed),
-				rec.l_int, rec.l_fra );
+		if ( VERB_LEVEL>2 )
+			verbose(VERB_DEBUG, "NTPserver: Reply to NTP client %s with statum=%d rdelay=%.06f "
+		    "rdisp= %.06f clockerror= %.06f diff= %"VC_FMT" Tb= %"PRIu32".%06"PRIu32 "[bin]",
+		    inet_ntoa(sin_client.sin_addr), pkt_out->stratum, rootdelay,
+		    rootdispersion, clockerror, (vcount_rec - rdata.last_changed),
+		    rec.l_int, rec.l_fra);
 
 		/* Transmit Timestamp (Te in algo language) */
-		err = radclock_get_vcounter(handle->clock, &vcount_xmt); // send ASAP after this
+		err = radclock_get_vcounter(handle->clock, &vcount_xmt);  // send ASAP after this
 		if (err < 0) {
 			verbose(LOG_WARNING, "NTPserver: failed to read raw timestamp of outgoing NTP response");
-			continue;			// response will not be sent
+			continue;    // response will not be sent
 		}
 		/* Use difference clock:  xmt = rec + Cd(vcount_xmt) - Cd(vcount_rec)
+		 * ==> SD of this server will be literally a Cd reading - NO info on Ca behaviour
 		 * Ignore plocal refinement for greater robustness and simplicity:
 		 * at these timescales, the difference is sub-ns */
-		time += RAD_DATA(handle)->phat*(vcount_xmt - vcount_rec);
+
+//		if (handle->calibrate) {  // test version using gtod for xmt
+//			gettimeofday(&sys_tv, NULL);
+//			timeval_to_ld(&sys_tv, &time);
+//		} else
+			time = time_rec + RAD_DATA(handle)->phat*(vcount_xmt - vcount_rec);
+
 		UTCld_to_NTPtime(&time, &xmt);
 		pkt_out->xmt.l_int = htonl(xmt.l_int);
 		pkt_out->xmt.l_fra = htonl(xmt.l_fra);
 
-		/* Prove to remote client that the same key was used for auth in reply */
+		/* Add comparison with Te in same format to ease visual diff [debug only] */
+//		verbose(VERB_DEBUG, "NTPserver: Reply to NTP client %s with statum=%d rdelay=%.06f "
+//		    "rdisp= %.06f clockerror= %.06f diff= %"VC_FMT" Te= %"PRIu32".%06"PRIu32 "[bin]",
+//		    inet_ntoa(sin_client.sin_addr), pkt_out->stratum, rootdelay,
+//		    rootdispersion, clockerror, (vcount_xmt - rdata.last_changed),
+//		    xmt.l_int, xmt.l_fra);
+
+		/* Prove to remote client that the same key was used for auth in reply
+		 * Must be done after last change to pkt, hence after Te timestamp :-( */
 		if (auth_bytes) {
 			pkt_out->exten[0] = ((struct ntp_pkt*)pkt_in)->exten[0];
 
@@ -551,7 +577,7 @@ thread_ntp_server(void *c_handle)
 	free(pkt_in);
 	JDEBUG_MEMORY(JDBG_FREE, pkt_out);
 	free(pkt_out);
-	close(s_server);		// test this
+	close(s_server);    // test this
 	
 	pthread_exit(NULL);
 }

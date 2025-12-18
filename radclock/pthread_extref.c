@@ -445,14 +445,16 @@ RADperfeval(struct radclock_handle *handle,
 
 	/* Output a measure of clock error for this stamp by comparing midpoints
 	 *  clockerr = ( ( rAd(Ta) + rAd(Tf) ) - ( Tout + Tin ) / 2
+	 * ** Outgoing noise seems far better than incoming, so compare on out only
 	 */
 	read_RADabs_UTC(rad_data, &BST(PERFstamp)->Ta, &time, 1);
 	clockerr = time;
-	read_RADabs_UTC(rad_data, &BST(PERFstamp)->Tf, &time, 1);
-	clockerr += time;
+	//read_RADabs_UTC(rad_data, &BST(PERFstamp)->Tf, &time, 1);
+	//clockerr += time;
 	/* If both references available, use Ext */
 	if (PERFstamp->type == STAMP_NTP_PERF) {
-		clockerr = ( clockerr - (PERFstamp->ExtRef.Tout + PERFstamp->ExtRef.Tin) ) / 2;
+		clockerr -= PERFstamp->ExtRef.Tout;
+		//clockerr = ( clockerr - (PERFstamp->ExtRef.Tout + PERFstamp->ExtRef.Tin) ) / 2;
 		verbose(VERB_QUALITY, "Error in this rAdclock (using ExtRef) on this stamp is %4.2lf [ms]", 1000*clockerr);
 	}
 	if (PERFstamp->type == STAMP_NTP_INT) {

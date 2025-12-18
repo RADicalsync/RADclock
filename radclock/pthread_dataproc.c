@@ -162,7 +162,7 @@ read_clocks(struct radclock_handle *handle, struct timeval *sys_tv,
 
 	*counter = (vcounter_t) ((before + after)/2);
 	read_RADabs_UTC(RAD_DATA(handle), counter, &time, PLOCAL_ACTIVE);
-	UTCld_to_timeval(&time, rad_tv);
+	ld_to_timeval(&time, rad_tv);
 }
 
 
@@ -181,8 +181,8 @@ update_FBclock(struct radclock_handle *handle)
 	struct timeval sys_tv;
 	struct timeval delta_tv;
 	struct timex tx;
-	double offset; 		/* [sec] */
-	double freq; 		/* [PPM] */
+	double offset;  /* [sec] */
+	double freq;    /* [PPM] */
 	static vcounter_t sys_init;
 	static struct timeval sys_init_tv;
 	static int next_stamp;
@@ -208,13 +208,13 @@ update_FBclock(struct radclock_handle *handle)
 	if (OUTPUT(handle, n_stamps) == NTP_BURST) {
 		radclock_get_vcounter(handle->clock, &vcount);
 		read_RADabs_UTC(RAD_DATA(handle), &vcount, &time, PLOCAL_ACTIVE);
-		UTCld_to_timeval(&time, &rad_tv);
+		ld_to_timeval(&time, &rad_tv);
 		err = settimeofday(&rad_tv, NULL);
 		if ( err < 0 )
 			verbose(LOG_WARNING, "System clock update failed on settimeofday()");
 		else
 			verbose(VERB_CONTROL, "System clock set to %d.%06d [sec]", rad_tv.tv_sec,
-					rad_tv.tv_usec);
+			    rad_tv.tv_usec);
 
 		memset(&tx, 0, sizeof(struct timex));
 		tx.modes = MOD_FREQUENCY | MOD_STATUS;
@@ -246,8 +246,8 @@ update_FBclock(struct radclock_handle *handle)
 		memset(&tx, 0, sizeof(struct timex));
 		err = NTP_ADJTIME(&tx);
 		verbose(VERB_DEBUG, "System clock stats (offset freq status) %.09f %.2f %d",
-				(double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
-				tx.status);
+		    (double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
+		    tx.status);
 
 		/* If we have reach a fairly good quality and brought the system clock
 		 * close enough, set clock UNSYNC and make freq estimate over ~ 60 sec.
@@ -270,17 +270,16 @@ update_FBclock(struct radclock_handle *handle)
 			tx.freq = 0;
 			err = NTP_ADJTIME(&tx);
 
-			verbose(VERB_DEBUG, "System clock stats (offset freq status) %.09f %.2f %d",
-				(double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
-				tx.status);
+			verbose(VERB_DEBUG, "System clock stats (offset freq status) %4.3f[mus] %.2f %d",
+			    (double)(1e6*tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC), tx.status);
 
 			/* Left hand side of freq skew estimation */
 			read_clocks(handle, &sys_tv, &rad_tv, &vcount);
 			sys_init_tv = sys_tv;
 			sys_init = vcount;
 			verbose(VERB_DEBUG, "System clock frequency skew estimation start "
-					"(%d.%.06d | %"VC_FMT")", sys_init_tv.tv_sec,
-					sys_init_tv.tv_usec, sys_init);
+			    "(%d.%.06d | %"VC_FMT")", sys_init_tv.tv_sec,
+			    sys_init_tv.tv_usec, sys_init);
 		}
 
 		return (err);
@@ -312,9 +311,8 @@ update_FBclock(struct radclock_handle *handle)
 		tx.freq = freq * (1L << SHIFT_USEC);
 		err = NTP_ADJTIME(&tx);
 
-		verbose(VERB_DEBUG, "System clock frequency skew estimation end "
-			"(%d.%.06d | %"VC_FMT")",
-			sys_tv.tv_sec, sys_tv.tv_usec, vcount);
+		verbose(VERB_DEBUG, "System clock frequency skew estimation end (%d.%.06d | %"VC_FMT")",
+		    sys_tv.tv_sec, sys_tv.tv_usec, vcount);
 
 		/* Make up for the frantic run */
 		read_clocks(handle, &sys_tv, &rad_tv, &vcount);
@@ -323,10 +321,8 @@ update_FBclock(struct radclock_handle *handle)
 
 		memset(&tx, 0, sizeof(struct timex));
 		err = NTP_ADJTIME(&tx);
-		verbose(VERB_DEBUG, "System clock freq skew estimated "
-			"(offset freq status) %.09f %.2f %d",
-			(double)(tx.offset / KERN_RES), (double)tx.freq / (1L<<SHIFT_USEC),
-			tx.status);
+		verbose(VERB_DEBUG, "System clock freq skew estimated (offset freq status) %.09f %.2f %d",
+		    (double)(tx.offset / KERN_RES), (double)tx.freq / (1L<<SHIFT_USEC), tx.status);
 	}
 
 	/* Here is the normal mode of operation for updating the system clock. Use
@@ -349,7 +345,7 @@ update_FBclock(struct radclock_handle *handle)
 	 * to converge faster when it is further away
 	 * Also set a the status of the sysclock when it gets very good.
 	 */
-	if (fabs(offset) > 100e-6) {
+	if (fabs(offset) > 150e-6) {    // 100 seemed often on the edge
 		tx.constant = TIME_CONSTANT - 2;
 		DEL_STATUS(RAD_DATA(handle), STARAD_SYSCLOCK);
 	} else {
@@ -363,17 +359,17 @@ update_FBclock(struct radclock_handle *handle)
 	err = NTP_ADJTIME(&tx);
 
 	verbose(VERB_DEBUG, "System clock PLL adjusted "
-		"(offset freq status maxerr esterr) %.09f %.2f %d %.06f %.06f",
-		(double)(tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
-		tx.status, (double)tx.maxerror/1e6, (double)tx.esterror/1e6 );
+	    "(offset[mus] freq status maxerr esterr) %.09f %.2f %d %.06f %.06f",
+	    (double)(1e6*tx.offset/KERN_RES), (double)tx.freq/(1L<<SHIFT_USEC),
+	    tx.status, (double)tx.maxerror/1e6, (double)tx.esterror/1e6 );
 
 	poll_period = ((struct bidir_algodata*)handle->algodata)->state[handle->pref_sID].poll_period;
 
 	if (VERB_LEVEL && !(OUTPUT(handle, n_stamps) % (int)(3600*6/poll_period))) {
-		verbose(VERB_CONTROL, "System clock PLL adjusted (offset freq status "
-			"maxerr esterr) %.09f %.2f %d %.06f %.06f",
-			(double)(tx.offset / KERN_RES), (double)tx.freq / (1L<<SHIFT_USEC),
-			tx.status, (double)tx.maxerror / 1e6, (double)tx.esterror / 1e6 );
+		verbose(VERB_CONTROL, "System clock PLL adjusted (offset[mus] freq status "
+		    "maxerr esterr) %.09f %.2f %d %.06f %.06f",
+		    (double)(1e6*tx.offset/KERN_RES), (double)tx.freq / (1L<<SHIFT_USEC),
+		    tx.status, (double)tx.maxerror / 1e6, (double)tx.esterror / 1e6 );
 	}
 
 	return (err);
@@ -1006,7 +1002,7 @@ process_stamp(struct radclock_handle *handle)
 			replaystamp = &algodata->laststamp[s];
 			calstate = &((struct bidir_caldata *)handle->caldata)->state[s];
 			state   = &algodata->state[s];
-			verbose(VERB_SYNC, "Calibration results for server %d (started at %lu):", s,calstate->stamp_start);
+			verbose(LOG_NOTICE, "Calibration results for server %d (started at %lu):", s,calstate->stamp_start);
 			asym_calibration(calstate, &replaystamp->st.bstamp, &replaystamp->IntRef, 1);
 
 			/* If calibration succeeds, update algo asym state, and record in conf */
@@ -1361,7 +1357,7 @@ process_stamp(struct radclock_handle *handle)
 			}
 
 			/* Adjust system FBclock if requested (and if not piggybacking on ntpd) */
-			if (handle->conf->adjust_FBclock == BOOL_ON) { // TODO: catch errors
+			if (handle->conf->adjust_FBclock == BOOL_ON && handle->calibrate == 0) { // TODO: catch errors
 				update_FBclock(handle);
 				verbose(VERB_DEBUG, "Kernel FBclock has been set.");
 			}

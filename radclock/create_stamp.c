@@ -53,6 +53,7 @@
 #include "sync_algo.h"
 #include "ntohll.h"
 #include "create_stamp.h"
+#include "config_mgr.h"
 #include "jdebug.h"
 
 // Required to authenticate some packets
@@ -949,13 +950,8 @@ update_stamp_queue(struct radclock_handle *handle, struct stamp_queue *q, radpca
 	}
 
 	/* Access and transform internal pcap timestamp */
-	// TODO: replace with more general "want IntRef" flag in due course
-	if ( handle->calibrate )  {
-		// manually sync with tsmode PKTCAP_TSMODE_INTREF selected in livepcapstamp_init
-		#define	BPF_T_NANOTIME		0x0001  // TODO: consider moving these from pcap-fsbd.c to radclock.h
-		ts_format_to_double(&((struct pcap_pkthdr *)packet->header)->ts, BPF_T_NANOTIME, &ts);
-	} else
-		ts = 0;
+	#define	BPF_T_NANOTIME		0x0001 // manual sync with tsmode selected in livepcapstamp_init
+	ts_format_to_double(&((struct pcap_pkthdr *)packet->header)->ts, BPF_T_NANOTIME, &ts);
 
 	ss = &packet->ss_if;		// host's interface address
 	err = 0;

@@ -817,6 +817,7 @@ update_data(struct radclock_config *conf, u_int32_t *mask, int codekey, char *va
 	 * TODO: make this list more visible (macro?) or move to light_config_parse? */
 	if (light_update
 	    && codekey != CONFIG_PUBLIC_NTP
+	    && codekey != CONFIG_ADJUST_FBCLOCK
 	    && codekey != CONFIG_TIME_SERVER    // for changing of asym member only
 	    && codekey != CONFIG_CALIBRATE_ASYM) {
 		return 0;

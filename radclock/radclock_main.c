@@ -375,6 +375,9 @@ signal_handler(int sig)
 		/* Public serving switching */
 		 // nothing to do, server code reacts directly to any change in conf->server_ntp
 
+		/* adjust_FBclock switching */
+		 // nothing to do, server code reacts directly to any change in conf->adjust_FBclock
+
 		/* Base Asymmetry reload (asym part of time_server config) */
 		for (int s=0; s<clock_handle->nservers; s++) {
 			((struct bidir_algodata*)clock_handle->algodata)->state[s].base_asym =
